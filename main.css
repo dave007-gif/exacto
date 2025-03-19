@@ -1,0 +1,122 @@
+/* Main landing section */
+.landing {
+    position: relative;
+    height: 90vh; /* Full viewport height */
+    background: url('./uploads/bg-image.webp') no-repeat center/auto; /* Background image */
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    overflow: hidden;
+}
+
+/* Navbar with curve and transparency */
+.navbar-bg {
+    position: fixed; /* Stick to the top */
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 150px;
+    padding: 5px 60px; /* Ensure spacing */
+    display: flex; 
+    justify-content: space-between; /* Space logo & menu */
+    align-items: center; /* Align items vertically */
+    background: rgba(0, 0, 0, 0.6); /* Transparent dark background */
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 85%); /* Curved background */
+    z-index: 1000; /* Ensure navbar is on top */
+}
+
+/* Logo styling */
+.logo {
+    font-size: 48px;
+    font-weight: bold;
+    color: white;
+}
+
+/* Menu container */
+.menu {
+    display: flex;
+    align-items: center; /* Vertical alignment */
+}
+
+/* Menu links styling */
+.menu-links {
+    list-style: none; /* Ensure bullet removal */
+    padding: 20px; /* Ensure padding is visible */
+    display: flex;
+    gap: 1.5rem;
+    margin: 4rem;
+}
+
+/* Links styling */
+.menu-links a {
+    text-decoration: none; /* No underline */
+    color: white;
+    font-weight: 500;
+    transition: color 0.3s ease; /* Smooth hover effect */
+}
+
+/* Hover effect for links */
+.menu-links a:hover {
+    color: #0a74da; /* Blue highlight */
+}
+
+/* Button container (Centering the button) */
+.btn_container {
+    display: flex;
+    justify-content: center; /* Center horizontally */
+    margin-top: 10px;
+}
+
+/* Button styling */
+.btn {
+    padding: 18px 24px; 
+    font-size: 1rem;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+/* Button color */
+.btn_color {
+    background: #0a74da; /* Primary button color */
+    color: white;
+    transition: background 0.3s ease;
+}
+
+/* Button hover */
+.btn_color:hover {
+    background: #0953a6; /* Darker on hover */
+}
+
+/* Center Main Content */
+.info-container {
+    display: flex;              /* Flexbox for centering */
+    flex-direction: column;     /* Stack children vertically */
+    justify-content: center;    /* Center vertically */
+    align-items: center;        /* Center horizontally */
+    text-align: center;         /* Align the text */
+    height: calc(90vh - 100px); /* Adjust to fit below navbar */
+    padding: 20px;
+}
+
+/* Section Subtitle */
+.sect-text-1 {
+    font-size: 2.5rem; /* Moderate size */
+    color: #fff;       /* White text */
+    margin-bottom: 10px;
+}
+
+/* Main Title */
+.title {
+    font-size: 3.5rem;   /* Larger heading */
+    color: #fff;       /* White text */
+    margin: 0;
+}
+
+/* Section Description */
+.sct-text-2 {
+    font-size: 1.5rem;   /* Normal text size */
+    color: #ccc;       /* Light gray for contrast */
+    max-width: 600px;  /* Limit width for better readability */
+    line-height: 1.6;  /* Improve text spacing */
+}
