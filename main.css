@@ -1,7 +1,27 @@
+/* GENERSL STYLING */
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@200..700&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+}
+ body {
+    font-family: "Oswald", serif;
+    background-color: white;
+ }
+
+ html {
+    scroll-behavior: smooth;
+ }
+  
+ p {
+    color: black;
+ }
+
 /* Main landing section */
 .landing {
     position: relative;
-    height: 90vh; /* Full viewport height */
+    height: 100vh; /* Full viewport height */
     background: url('./uploads/bg-image.webp') no-repeat center/auto; /* Background image */
     display: flex;
     flex-direction: column;
@@ -95,28 +115,77 @@
     justify-content: center;    /* Center vertically */
     align-items: center;        /* Center horizontally */
     text-align: center;         /* Align the text */
-    height: calc(90vh - 100px); /* Adjust to fit below navbar */
+    height: calc(100vh - 200px); /* Adjust to fit below navbar */
     padding: 20px;
 }
 
 /* Section Subtitle */
 .sect-text-1 {
     font-size: 2.5rem; /* Moderate size */
-    color: #fff;       /* White text */
+    color: #F7F7FF;       /* White text */
     margin-bottom: 10px;
 }
 
 /* Main Title */
 .title {
     font-size: 3.5rem;   /* Larger heading */
-    color: #fff;       /* White text */
+    color: #F7F7FF;       /* White text */
     margin: 0;
 }
 
 /* Section Description */
 .sct-text-2 {
     font-size: 1.5rem;   /* Normal text size */
-    color: #ccc;       /* Light gray for contrast */
+    color: #BDD5EA;       /* Light for contrast */
     max-width: 600px;  /* Limit width for better readability */
     line-height: 1.6;  /* Improve text spacing */
 }
+
+/* ABOUT */
+#about {
+    position: relative;
+    padding: 4rem 10%;
+    max-height: 90vh;
+}
+.about-container {
+    display: flex;
+    justify-content: space-around; /* Distribute items evenly */
+    align-items: center; /* Vertically align items */
+    flex-wrap: wrap; /* Allow wrapping on smaller screens */
+}
+
+.about-details-container {
+    text-align: center; /* Center content */
+    max-width: 300px; /* Limit the size of each box */
+    gap: 1.5rem;
+}
+
+.about-icon {
+    width: 100px; /* Set the width of the icon */
+    height: auto; /* Maintain aspect ratio */
+    margin-bottom: 10px; /* Space below the icon */
+}
+
+.sect-text-1 {
+    font-size: 1.5rem; /* Adjust heading size */
+}
+
+.sct-text-2 {
+    font-size: 1rem; /* Adjust paragraph size */
+}
+
+hr {
+    margin: 5.5rem;
+}
+
+.about-text-container {
+    display: flex;
+    flex-direction: column; /* Stack children vertically */
+    align-items: center;    /* Center horizontally */
+    justify-content: center; /* Center vertically */
+    text-align: center;      /* Ensure text is centered */
+    margin: 50px auto;       /* Top & Bottom: 50px, Auto: Center horizontally */
+    max-width: 600px;        /* Control width for better layout */
+    gap: 1.5rem;
+}
+
