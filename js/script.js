@@ -1,37 +1,56 @@
 // 1. Get DOM elements
 const componentSelect = document.getElementById("elements");
 const trenchFieldset = document.getElementById("trenchField");
+const blockworkFieldset = document.getElementById("blockworkField");
 
-// 2. Hide trench fields by default on page load
+// 2. Hide fields by default
 trenchFieldset.style.display = "none";
+blockworkFieldset.style.display = "none";
 
 // 3. Event listener for dropdown changes
 componentSelect.addEventListener("change", function() {
-    // Check if "concrete in trench" is selected
-    let isTrenchSelected = false;
+    // Get all selected options
     const selectedOptions = componentSelect.selectedOptions;
     
+    // Check for trench selection
+    let isTrenchSelected = false;
+    let isBlockworkSelected = false;
+
+    // Check all selected options
     for (let i = 0; i < selectedOptions.length; i++) {
-        if (selectedOptions[i].value === "concrete in trench") {
+        const optionValue = selectedOptions[i].value;
+        
+        if (optionValue === "concrete in trench") {
             isTrenchSelected = true;
-            break;
+        }
+        if (optionValue === "blockwork in foundation") {
+            isBlockworkSelected = true;
         }
     }
 
-    // Toggle visibility using if/else
+    // Handle trench fields
     if (isTrenchSelected) {
         trenchFieldset.style.display = "block";
+        trenchFieldset.querySelectorAll("input").forEach(input => {
+            input.required = true;
+        });
     } else {
         trenchFieldset.style.display = "none";
+        trenchFieldset.querySelectorAll("input").forEach(input => {
+            input.required = false;
+        });
     }
-    
-    // Toggle required attribute
-    const inputs = trenchFieldset.querySelectorAll("input");
-    for (let i = 0; i < inputs.length; i++) {
-        if (isTrenchSelected) {
-            inputs[i].required = true;
-        } else {
-            inputs[i].required = false;
-        }
+
+    // Handle blockwork fields
+    if (isBlockworkSelected) {
+        blockworkFieldset.style.display = "block";
+        blockworkFieldset.querySelectorAll("input").forEach(input => {
+            input.required = true;
+        });
+    } else {
+        blockworkFieldset.style.display = "none";
+        blockworkFieldset.querySelectorAll("input").forEach(input => {
+            input.required = false;
+        });
     }
 });

@@ -3,6 +3,11 @@
     display: none;
   }
   
+/* Hide blockwork fields by default */
+#blockworkField {
+  display: none;
+}
+
   /* Basic styling for multi-select */
   #elements {
     width: 100%;
