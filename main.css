@@ -35,7 +35,7 @@
     top: 0;
     left: 0;
     width: 100%;                     /* Full width */
-    height: 70px;                    /* Adjust height to match */
+    height: 50px;                    /* Adjust height to match */
     z-index: 1000;                   /* Keep navbar above other content */
     display: flex;
     justify-content: space-between;  /* Space between logo and links */
@@ -299,4 +299,105 @@ input {
     margin-top: 20px;
     font-size: 1.2rem;
     color: #0a74da;
+}
+
+.estimate-title-container {
+    text-align: center; /* Center the content */
+    margin: 50px auto; /* Add space above and below */
+    max-width: 800px; /* Limit width for better readability */
+}
+
+/* Ensure the hr is centered */
+.estimate-title-container hr {
+    width: 60%; /* Set a reasonable width */
+    margin: 15px auto; /* Auto centers the hr */
+    border: none;
+    height: 2px;
+    background: #ccc;
+    display: block; /* Ensures it doesn't behave like an inline element */
+}
+
+
+#estimate {
+    display: flex;
+    margin: 20px; 
+    padding: 20px;
+}
+
+#side-menu {
+    width: 300px;
+    position: sticky;
+    left: 0;
+    top: 50px;
+    height: 60vh;
+    background: rgba(255, 255, 255, 0.8);
+    border-right: 2px solid #ddd;
+    padding: 20px;
+    overflow-y: auto;
+    box-shadow: 2px 0 8px rgba(0, 0, 0, 0.1);
+}
+
+#side-menu fieldset {
+    border: 2px solid #ccc;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    padding: 10px;
+    transition: all 0.3s ease;
+}
+
+#side-menu fieldset:hover {
+    border-color: #4CAF50;
+    background: rgba(76, 175, 80, 0.1);
+}
+
+#side-menu legend {
+    font-weight: bold;
+    color: #2C3E50;
+}
+
+#side-menu ul {
+    list-style: none;
+    padding: 0;
+}
+
+#side-menu li {
+    padding: 8px 0;
+    cursor: pointer;
+    transition: color 0.3s;
+}
+
+#side-menu li:hover {
+    color: #4CAF50;
+}
+
+#estimate fieldset {
+    border: 2px solid #ccc;
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 40px;
+}
+
+#estimate label {
+    display: block;
+    margin: 10px 0 5px;
+}
+
+#estimate input, #estimate select {
+    padding: 8px;
+    width: 100%;
+    margin-bottom: 10px;
+}
+
+.btnf {
+    padding: 10px 20px;
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+.btnf:hover {
+    background-color: #45a049;
 }

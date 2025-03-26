@@ -80,35 +80,69 @@
         </div>
     </section>
     <section id="estimate">
-        <div>
-            <div>
-
-            </div>
+        <div class="estimate-title-container">
+          <h2>TakeOff And Estimation Plan.</h2>
+          <h3>Component Type</h3>
+          <p>Select Building Element Type</p>
         </div>
+      
+        <hr> <!-- Horizontal line for separation -->
+      
+        <aside id="side-menu">
+          <fieldset>
+            <legend>Foundation Plan</legend>
+            <ul>
+              <li>Clearing of Construction Site</li>
+              <li>Excavation of Top Soil</li>
+              <li>Trench Excavation (Back Hoe)</li>
+              <li>Column Pit Excavation</li>
+              <li>Iron Rod Application</li>
+              <li>Concrete Application in Foundation</li>
+              <li>Block Work</li>
+              <li>Hard Core Filling</li>
+              <li>Damp Proof Membrane</li>
+              <li>Ground Floor Slab</li>
+            </ul>
+          </fieldset>
+      
+          <fieldset>
+            <legend>Super Structure</legend>
+            <ul>
+              <li>Pillar (Iron Rod & Concrete)</li>
+              <li>Upper Concrete Slab (Optional)</li>
+              <li>Block Work</li>
+              <li>Wall Plastering</li>
+              <li>Roofing</li>
+              <li>Interior Finishes</li>
+            </ul>
+          </fieldset>
+        </aside>
+      
         <fieldset>
-            <legend>Land Size Estimation</legend>
-    
-            <label for="length">Length (in meters):</label>
-            <input type="number" id="length" placeholder="Enter length" required>
-    
-            <label for="width">Width (in meters):</label>
-            <input type="number" id="width" placeholder="Enter width" required>
-    
-            <label for="area">Area (in square meters):</label>
-            <input type="number" id="area" placeholder="Or enter area" required>
-    
-            <label for="unit">Unit of Measurement:</label>
-            <select id="unit">
-                <option value="sqm">Square Meters</option>
-                <option value="sqft">Square Feet</option>
-                <option value="acre">Acre</option>
-            </select>
-    
-            <button class="btnf" onclick="">Calculate</button>
-    
-            <div class="result" id="result"></div>
+          <legend>Land Size Estimation</legend>
+      
+          <label for="length">Length (in meters):</label>
+          <input type="number" id="length" placeholder="Enter length" required>
+      
+          <label for="width">Width (in meters):</label>
+          <input type="number" id="width" placeholder="Enter width" required>
+      
+          <label for="area">Area (in square meters):</label>
+          <input type="number" id="area" placeholder="Or enter area" required>
+      
+          <label for="unit">Unit of Measurement:</label>
+          <select id="unit">
+            <option value="sqm">Square Meters</option>
+            <option value="sqft">Square Feet</option>
+            <option value="acre">Acre</option>
+          </select>
+      
+          <button class="btnf" onclick="">Calculate</button>
+      
+          <div class="result" id="result"></div>
         </fieldset>
-    </section>
+      </section>
+    
     
     <script src="./script.js"></script>
 
