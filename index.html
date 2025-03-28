@@ -20,14 +20,15 @@
           <legend>Concrete in Trench dimensions</legend>
           <p>
             <label for="trench_length">Length</label>
+            
+            <!-- Inputs with unique IDs -->
             <input
-              type="number"
-              name="trench_length"
-              id="trench_length"
-              placeholder="1000"
-              autocomplete="off"
-              required
-            />
+            type="number"
+            name="trench_length"
+            id="trench_length"
+            placeholder="1000"
+            autocomplete="off"/>
+
           </p>
           <p>
             <label for="trench_width">Width</label>
@@ -36,9 +37,7 @@
               name="trench_width"
               id="trench_width"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
           <p>
             <label for="trench_height">Height</label>
@@ -47,10 +46,11 @@
               name="trench_height"
               id="trench_height"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
+          <!-- Component-specific button -->
+          <button type="button" class="calculate-btn" data-component="concrete in trench">
+            Calculate Trench</button>
         </fieldset>
 
         <fieldset id="blockworkField">
@@ -62,9 +62,7 @@
               name="blockwork_length"
               id="blockwork_length"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
           <p>
             <label for="blockwork_height">Height</label>
@@ -73,10 +71,12 @@
               name="blockwork_height"
               id="blockwork_height"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
+
+          <!-- Component-specific button -->
+          <button type="button" class="calculate-btn" data-component="blockwork in foundation">
+            Calculate Blockwork</button>
         </fieldset>
 
         <fieldset>
