@@ -1,3 +1,17 @@
+
+/* Hide trench fields by default */
 #trenchField {
     display: none;
+  }
+  
+/* Hide blockwork fields by default */
+#blockworkField {
+  display: none;
 }
+
+  /* Basic styling for multi-select */
+  #elements {
+    width: 100%;
+    padding: 8px;
+    margin: 10px 0;
+  }

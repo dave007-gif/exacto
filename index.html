@@ -4,13 +4,9 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BuildCost</title>
-    <link rel="stylesheet" href="css/style.css" />
+    <link rel="stylesheet" href="css/style.css">
     <script defer src="js/script.js"></script>
-    <style>
-      #trenchField {
-        display: none;
-      }
-    </style>
+
   </head>
   <body>
     <h1>Takeoff and Estimation</h1>
@@ -19,69 +15,71 @@
       <h2>Component Type</h2>
       <p>Select the building element type</p>
 
-      <form action="/" method="get">
+      <form action="/Calculate" method="post">
+
         <fieldset id="trenchField">
           <legend>Concrete in Trench dimensions</legend>
           <p>
-            <label for="length">Length</label>
+            <label for="trench_length">Length</label>
+            
+            <!-- Inputs with unique IDs -->
             <input
-              type="number"
-              name="length"
-              id="length"
-              placeholder="1000"
-              autocomplete="off"
-              required
-            />
+            type="number"
+            name="trench_length"
+            id="trench_length"
+            placeholder="1000"
+            autocomplete="off"/>
+
           </p>
           <p>
-            <label for="width">Width</label>
+            <label for="trench_width">Width</label>
             <input
               type="number"
-              name="width"
-              id="width"
+              name="trench_width"
+              id="trench_width"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
           <p>
-            <label for="height">Height</label>
+            <label for="trench_height">Height</label>
             <input
               type="number"
-              name="height"
-              id="height"
+              name="trench_height"
+              id="trench_height"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
+          <!-- Component-specific button -->
+          <button type="button" class="calculate-btn" data-component="concrete in trench">
+            Calculate Trench</button>
         </fieldset>
 
         <fieldset id="blockworkField">
-          <legend>Blockwork in Foundtion dimensions</legend>
+          <legend>Blockwork in Foundation dimensions</legend>
           <p>
-            <label for="length">Length</label>
+            <label for="blockwork_length">Length</label>
             <input
               type="number"
-              name="length"
-              id="length"
+              name="blockwork_length"
+              id="blockwork_length"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
           <p>
-            <label for="height">Height</label>
+            <label for="blockwork_height">Height</label>
             <input
               type="number"
-              name="height"
-              id="height"
+              name="blockwork_height"
+              id="blockwork_height"
               placeholder="1000"
-              autocomplete="off"
-              required
-            />
+              autocomplete="off"/>
           </p>
+
+          <!-- Component-specific button -->
+          <button type="button" class="calculate-btn" data-component="blockwork in foundation">
+            Calculate Blockwork</button>
         </fieldset>
+
         <fieldset>
           <p>
             <label for="elements"> Component Type:</label>
@@ -101,6 +99,9 @@
             </select>
           </p>
         </fieldset>
+
+        <button type="submit">Calculate</button>
+
       </form>
     </article>
   </body>
