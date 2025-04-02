@@ -40,10 +40,12 @@ document.addEventListener('DOMContentLoaded', function() {
             showError(input, errorSpan, 'This field is required');
             return false;
         }
-            
+
+        // Convert value to number here, so it can be used later
+        const numericValue = parseFloat(value);    
         
         // Check for valid number using html 5 validation
-        if (!input.checkValidity()) {
+        if (!input.checkValidity() || isNaN(numericValue)) {
             showError(input, errorSpan, 'Please enter a valid number');
             return false;
         }
@@ -52,6 +54,7 @@ document.addEventListener('DOMContentLoaded', function() {
             showError(input, errorSpan, 'Value cannot be negative');
             return false;
         }
+        console.log("Input value is valid:", numericValue); // Debugging line here
 
         return true;
     }
@@ -104,7 +107,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const buttons = document.querySelectorAll('.calculate-btn');
     for (let i = 0; i < buttons.length; i++) {
         buttons[i].addEventListener('click', function() {
+            
             const componentType = this.dataset.component;
+            console.log("Button clicked for component:", componentType); // Debugging line
             const fieldset = this.closest('fieldset');
             const inputs = fieldset.querySelectorAll('input');
             let isValid = true;
@@ -113,6 +118,8 @@ document.addEventListener('DOMContentLoaded', function() {
             for (let j = 0; j < inputs.length; j++) {
                 if (!validateInput(inputs[j])) isValid = false;
             }
+
+            console.log("Input is valid:", isValid); // Debugging line here
 
             if (!isValid) return;
 
@@ -131,23 +138,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 totalCost += quantity * MATERIAL_PRICES[materials[k]];
             }
 
-            // Display results
-            const output = document.getElementById('output');
-            
-            //clear previous results for this component
-            output.innerHTML = '';
-
-            //display results
-            output.innerHTML += `
-                <div class="result-item">
-                    <h4>${componentType}</h4>
-                    <p>Quantity: ${quantity.toFixed(2)} m³</p>
-                    <p>Total Cost: GHS ${totalCost.toFixed(2)}</p>
-                </div>
-            `;
+            // Log quantity and total cost for debugging
+            console.log("Quantity:", quantity); // Debugging line here
+            console.log("Total Cost:", totalCost); // Debugging line here
+           // Display results - UPDATED SECTION
+           const output = document.getElementById('output');
+           const resultHTML = `
+               <div class="result-item">
+                   <h4>${componentType}</h4>
+                   <p>Quantity: ${quantity.toFixed(2)} m³</p>
+                   <p>Total Cost: GHS ${totalCost.toFixed(2)}</p>
+               </div>
+           `;
 
             // either append or replace results
-            output.insertAdjacentHTML('beforeend', resultHtml);
+            output.insertAdjacentHTML('beforeend', resultHTML);
         });
     }
 });
