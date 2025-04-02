@@ -4,9 +4,8 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>BuildCost</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css" />
     <script defer src="js/script.js"></script>
-
   </head>
   <body>
     <h1>Takeoff and Estimation</h1>
@@ -16,20 +15,21 @@
       <p>Select the building element type</p>
 
       <form action="/Calculate" method="post">
-
         <fieldset id="trenchField">
           <legend>Concrete in Trench dimensions</legend>
           <p>
             <label for="trench_length">Length</label>
-            
+
             <!-- Inputs with unique IDs -->
             <input
-            type="number"
-            name="trench_length"
-            id="trench_length"
-            placeholder="1000"
-            autocomplete="off"/>
-
+              type="number"
+              name="trench_length"
+              id="trench_length"
+              placeholder="1000"
+              autocomplete="off"
+              required
+            />
+            <span class="error-message"></span>
           </p>
           <p>
             <label for="trench_width">Width</label>
@@ -38,7 +38,10 @@
               name="trench_width"
               id="trench_width"
               placeholder="1000"
-              autocomplete="off"/>
+              autocomplete="off"
+              required
+            />
+            <span class="error-message"></span>
           </p>
           <p>
             <label for="trench_height">Height</label>
@@ -47,11 +50,19 @@
               name="trench_height"
               id="trench_height"
               placeholder="1000"
-              autocomplete="off"/>
+              autocomplete="off"
+              required
+            />
+            <span class="error-message"></span>
           </p>
           <!-- Component-specific button -->
-          <button type="button" class="calculate-btn" data-component="concrete in trench">
-            Calculate Trench</button>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="concrete in trench"
+          >
+            Calculate Trench
+          </button>
         </fieldset>
 
         <fieldset id="blockworkField">
@@ -63,21 +74,32 @@
               name="blockwork_length"
               id="blockwork_length"
               placeholder="1000"
-              autocomplete="off"/>
+              autocomplete="off"
+              required
+            />
+            <span class="error-message"></span>
           </p>
           <p>
             <label for="blockwork_height">Height</label>
             <input
-              type="number"
+              type="numberh"
               name="blockwork_height"
               id="blockwork_height"
               placeholder="1000"
-              autocomplete="off"/>
+              autocomplete="off"
+              required
+            />
+            <span class="error-message"></span>
           </p>
 
           <!-- Component-specific button -->
-          <button type="button" class="calculate-btn" data-component="blockwork in foundation">
-            Calculate Blockwork</button>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="blockwork in foundation"
+          >
+            Calculate Blockwork
+          </button>
         </fieldset>
 
         <fieldset>
@@ -101,8 +123,12 @@
         </fieldset>
 
         <button type="submit">Calculate</button>
-
       </form>
+
+      <section id="results">
+        <h3>Calculation Results</h3>
+        <div id="output"></div>
+      </section>
     </article>
   </body>
 </html>
