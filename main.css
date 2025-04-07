@@ -324,8 +324,13 @@ input {
     padding: 20px;
 }
 
+.container {
+    display: flex;
+}
+
 #side-menu {
-    width: 300px;
+    width: 250px;
+    margin-right: 20px;
     position: sticky;
     left: 0;
     top: 50px;
@@ -401,3 +406,110 @@ input {
 .btnf:hover {
     background-color: #45a049;
 }
+
+.form-container {
+    display: none; 
+    border: 1px solid #ddd; 
+    padding: 10px; 
+    margin-top: 20px;
+}
+.list-item { 
+    cursor: pointer; 
+    padding: 5px; 
+    border-bottom: 1px solid #eee; 
+}
+.list-item:hover { 
+    background-color: #f0f0f0; 
+}
+
+
+/* SIGN WITH MODAL */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0,0,0,0.5);
+  }
+
+  .modal-content {
+    background-color: #fff;
+    margin: 10% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 90%;
+    max-width: 400px;
+    position: relative;
+  }
+
+  .close {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    font-size: 28px;
+    cursor: pointer;
+  }
+
+  .modal-content form input[type="text"],
+  .modal-content form input[type="email"],
+  .modal-content form input[type="password"] {
+    width: 100%;
+    padding: 10px;
+    margin: 10px 0;
+  }
+
+  .modal-content form button {
+    padding: 10px;
+    width: 100%;
+    background-color: #333;
+    color: white;
+    border: none;
+    cursor: pointer;
+  }
+
+  .switch-link {
+    margin-top: 10px;
+    text-align: center;
+    font-size: 14px;
+  }
+
+  .switch-link a {
+    color: #007bff;
+    cursor: pointer;
+  }
+
+  /* FOOTER */
+.site-footer {
+    background-color: rgba(57, 61, 62, 0.4); /* Light transparent sky color */
+    backdrop-filter: blur(7px);
+    color: #fff;
+    text-align: center;
+    padding: 2rem 1rem;
+  }
+  
+  .footer-content {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+  
+  .footer-links a {
+    color: #fff;
+    text-decoration: none;
+    margin: 0 10px;
+    font-size: 14px;
+  }
+  
+  .footer-links a:hover {
+    color: #2C3E50;
+  }
+  
+  .footer-copy {
+    font-size: 13px;
+    color: #888;
+    margin-top: 1rem;
+  }
+  
