@@ -1,0 +1,51 @@
+
+/* Hide trench fields by default */
+#trenchField {
+    display: none;
+  }
+  
+/* Hide blockwork fields by default */
+#blockworkField {
+  display: none;
+}
+
+  /* Basic styling for multi-select */
+  #elements {
+    width: 100%;
+    padding: 8px;
+    margin: 10px 0;
+  }
+  .calculate-btn {
+    margin-top: 15px;
+    padding: 10px 20px;
+    background: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  
+  #results {
+    margin: 2rem 0;
+    padding: 1.5rem;
+    background: #f5f5f5;
+    border-radius: 8px;
+  }
+  
+  .result-item {
+    margin: 1rem 0;
+    padding: 1rem;
+    background: white;
+    border-radius: 4px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  }
+
+  .error-message {
+    color: #dc3545;
+    font-size: 0.875em;
+    display: none;
+  }
+  
+  input.invalid {
+    border-color: #dc3545;
+  }

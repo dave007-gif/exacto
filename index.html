@@ -1,177 +1,139 @@
 <!DOCTYPE html>
-<html lang="en"> 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Exacto</title>
-    <link rel="stylesheet" href="./main.css">
-</head> 
-<body>
-    <section id="landing">
-        <!-- Navbar -->
-        <nav id="nav" class="navbar-bg navbar-transparent">
-            <div class="logo">EXACTO</div>
-    
-            <!-- Menu -->
-            <div class="menu">
-                <ul class="menu-links" id="menu-links">
-                    <li><a href="#landing">HOME</a></li>
-                    <li><a href="#about">ABOUT</a></li>
-                    <li><a href="#estimate">SERVICES</a></li>
-                    <li><a href="#">PROJECTS</a></li>
-                    <li><a href="#">CONTACTS</a></li>
-                    <li><a onclick="openModal('login-modal')">LOGIN</a></li>
-                    <li><a onclick="openModal('signup-modal')">SIGN UP</a></li>
-                </ul>
-            </div>
-        </nav>
-         <!-- Login Modal -->
-        <div id="login-modal" class="modal">
-            <div class="modal-content">
-            <span class="close" onclick="closeModal('login-modal')">&times;</span>
-            <h2>Login</h2>
-            <form>
-                <input type="text" placeholder="Email or Username" required />
-                <input type="password" placeholder="Password" required />
-                <label><input type="checkbox"> Keep me signed in</label><br><br>
-                <button type="submit">Login</button>
-                <div class="switch-link">
-                Don’t have an account? <a onclick="switchModal('login-modal', 'signup-modal')">Sign Up</a>
-                </div>
-            </form>
-            </div>
-        </div>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BuildCost</title>
+    <link rel="stylesheet" href="css/style.css" />
+    <script defer src="js/script.js"></script>
+  </head>
+  <body>
+    <h1>Takeoff and Estimation</h1>
 
-        <!-- Sign Up Modal -->
-        <div id="signup-modal" class="modal">
-            <div class="modal-content">
-            <span class="close" onclick="closeModal('signup-modal')">&times;</span>
-            <h2>Sign Up</h2>
-            <form>
-                <input type="text" placeholder="Full Name" required />
-                <input type="text" placeholder="Username" required />
-                <input type="email" placeholder="Email" required />
-                <input type="password" placeholder="Password" required />
-                <input type="password" placeholder="Confirm Password" required />
-                <label><input type="checkbox"> Keep me signed in</label><br><br>
-                <button type="submit">Register</button>
-                <div class="switch-link">
-                Already have an account? <a onclick="switchModal('signup-modal', 'login-modal')">Login</a>
-                </div>
-            </form>
-            </div>
-        </div>
-    
-        <!-- Main Content -->
-        <div class="info-container">
-            <h3 class="sect-text-1">GET STARTED WITH</h3>
-            <h1 class="title">ESTIMATE FOR BUILDING MATERIAL PRICES</h1>
-            <p class="sct-text-2">
-                Easily calculate the cost of your building project with up-to-date material prices. Get reliable estimates instantly.
-            </p>
-        </div>
-        
-    
-        <!-- Button -->
-        <div class="btn_container">
-            <button class="btn btn_color">KNOW NOW</button>
-        </div>
-    </section>  
-    <section id="about">
-        <div class="about-container">
-            <div class="about-details-container">
-                <img 
-                    src="./uploads/plan.png"
-                    alt="Building Plan"
-                    class="about-icon"
-                />
-                <h3>Building Plan</h3>
-                <p>
-                    Lorem ipsum dolor sit amet consectetur <br />
-                    adipisicing elit. <br />
-                    Vero, consectetur!
-                </p>
-            </div>
-            <div class="about-details-container">
-                <img 
-                    src="./uploads/cost.png"
-                    alt="Estimate Cost"
-                    class="about-icon"
-                />
-                <h3>Estimate Cost</h3>
-                <p>
-                    Lorem ipsum dolor sit amet consectetur <br />
-                    adipisicing elit. <br />
-                    Libero, temporibus?
-                </p>
-            </div>
-        </div>
-        <hr>
-        <div class="estimate-container">
-            <img src="./uploads/estimate.jpg" alt="Estimate Cost" class="estimate-image">
-            <div class="estimate-content">
-                <h2 class="estimate-title">Estimate Your Project Cost</h2>
-                <p class="estimate-description">
-                    Quickly estimate your project's total cost with our easy-to-use tool. Click below to get started and receive accurate estimates instantly.
-                </p>
-                <a href="#estimate" target="_blank" class="estimate-link">Get an Estimate</a>
-            </div>
-        </div>
-    </section>
-     
-    <section id="estimate">
-        <div class="estimate-title-container">
-          <h2>TakeOff And Estimation Plan.</h2>
-          <h3>Component Type</h3>
-          <p>Select Building Element Type</p>
-        </div>
-    
-        <hr>
-    
-        <div class="container">
-            <aside id="side-menu">
-              <fieldset>
-                <legend>Foundation Plan</legend>
-                <ul>
-                  <li class="list-item" onclick="showForm('clearing')">Clearing of Construction Site</li>
-                  <li class="list-item" onclick="showForm('excavation')">Excavation of Top Soil</li>
-                  <li class="list-item" onclick="showForm('trench')">Trench Excavation (Back Hoe)</li>
-                  <li class="list-item" onclick="showForm('column')">Column Pit Excavation</li>
-                </ul>
-              </fieldset>
-            </aside>
-        
-            <div id="form-container" class="form-container">
-                <h3 id="form-title"></h3>
-                <form id="dynamic-form">
-                    <div id="form-fields"></div>
-                    <br><br>
-                    <button type="submit">Submit</button>
-                </form>
-            </div>
-        </div>
-    </section>
-    <script src="./script.js"></script>
+    <article id="input-section">
+      <h2>Component Type</h2>
+      <p>Select the building element type</p>
 
-</body>
-<!-- Footer -->
-<footer class="site-footer">
-    <div class="footer-content">
-      <h3>EXACTO</h3>
-      <p>Taking the guesswork out of construction estimates.</p>
-  
-      <div class="footer-links">
-        <a href="#landing">Home</a>
-        <a href="#about">About</a>
-        <a href="#estimate">Services</a>
-        <a href="#">Projects</a>
-        <a href="#">Contact</a>
-      </div>
-  
-      <div class="footer-copy">
-        &copy; 2025 Exacto. All rights reserved.
-      </div>
-    </div>
-</footer>
-  
+      <form action="/Calculate" method="post">
+        <fieldset id="trenchField">
+          <legend>Concrete in Trench dimensions</legend>
+          <p>
+            <label for="trench_length">Length</label>
+
+            <!-- Inputs with unique IDs -->
+            <input
+              type="text"
+              name="trench_length"
+              id="trench_length"
+              placeholder="1000"
+              autocomplete="off"
+              pattern="[0-9]+([\.,][0-9]+)?"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="trench_width">Width</label>
+            <input
+              type="text"
+              name="trench_width"
+              id="trench_width"
+              placeholder="1000"
+              autocomplete="off"
+              pattern="[0-9]+([\.,][0-9]+)?"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="trench_height">Height</label>
+            <input
+              type="text"
+              name="trench_height"
+              id="trench_height"
+              placeholder="1000"
+              autocomplete="off"
+              pattern="[0-9]+([\.,][0-9]+)?"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <!-- Component-specific button -->
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="concrete in trench"
+          >
+            Calculate Trench
+          </button>
+        </fieldset>
+
+        <fieldset id="blockworkField">
+          <legend>Blockwork in Foundation dimensions</legend>
+          <p>
+            <label for="blockwork_length">Length</label>
+            <input
+              type="text"
+              name="blockwork_length"
+              id="blockwork_length"
+              placeholder="1000"
+              autocomplete="off"
+              pattern="[0-9]+([\.,][0-9]+)?"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="blockwork_height">Height</label>
+            <input
+              type="text"
+              name="blockwork_height"
+              id="blockwork_height"
+              placeholder="1000"
+              autocomplete="off"
+              pattern="[0-9]+([\.,][0-9]+)?"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+
+          <!-- Component-specific button -->
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="blockwork in foundation"
+          >
+            Calculate Blockwork
+          </button>
+        </fieldset>
+
+        <fieldset>
+          <p>
+            <label for="elements"> Component Type:</label>
+            <select name="elements" id="elements" multiple size="5">
+              <optgroup label="E. Insitu Concrete">
+                <option value="concrete in trench">
+                  Concrete in Trench Excavation
+                </option>
+                <option value="concrete in pit">Concrete in Column Pits</option>
+              </optgroup>
+              <optgroup label="F. Masonary">
+                <option value="blockwork in foundation">
+                  Blockwork in foundation
+                </option>
+                <option value="blockwork in walls">Blockwork in Walls</option>
+              </optgroup>
+            </select>
+          </p>
+        </fieldset>
+
+        <button type="submit">Calculate</button>
+      </form>
+
+      <section id="results">
+        <h3>Calculation Results</h3>
+        <div id="output"></div>
+      </section>
+    </article>
+  </body>
 </html>
