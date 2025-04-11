@@ -1,4 +1,11 @@
 document.addEventListener('DOMContentLoaded', function() {
+    // Check for authentication token
+    const token = localStorage.getItem("authToken");
+    if (!token) {
+        alert("You must be logged in to access this page.");
+        window.location.href = "/login"; // Redirect to login page
+    }
+
     // DOM Elements
     const componentSelect = document.getElementById("elements");
     const trenchFieldset = document.getElementById("trenchField");
