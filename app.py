@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, redirect
+from flask import Flask, request, jsonify, render_template, redirect, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import jwt
@@ -6,9 +6,11 @@ import datetime
 import sqlite3
 import os
 from datetime import datetime, timedelta, timezone
+from flask_cors import CORS
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_secret_key')  # Load from environment variable
+CORS(app, supports_credentials=True)
 
 # Initialize SQLite database
 def init_db():
@@ -31,20 +33,18 @@ init_db()
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.headers.get('Authorization')
+        token = request.cookies.get('authToken')  # Read token from cookies
         if not token:
             return jsonify({'message': 'Token is missing!'}), 401
-
-        # Extract the token from the "Bearer <token>" format
-        if token.startswith("Bearer "):
-            token = token.split(" ")[1]
 
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
             request.user_email = data['email']
         except jwt.ExpiredSignatureError:
+            print("Token has expired!")
             return jsonify({'message': 'Token has expired!'}), 401
         except jwt.InvalidTokenError:
+            print("Invalid token!")
             return jsonify({'message': 'Invalid token!'}), 401
         return f(*args, **kwargs)
     return decorated
@@ -65,7 +65,8 @@ def signup():
     if not email or not password or not user_type:
         return jsonify({'message': 'Missing required fields'}), 400
 
-    # Use 'pbkdf2:sha256' as the hashing method
+# Use 'pbkdf2:sha256' as the hashing method
+# Use 'pbkdf2:sha256' as the hashing method
     hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
 
     try:
@@ -79,7 +80,9 @@ def signup():
 
     token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
                        app.config['SECRET_KEY'], algorithm="HS256")
-    return jsonify({'token': token, 'user': {'email': email, 'user_type': user_type}})
+    response = make_response(jsonify({'message': 'Signup successful!'}))
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
+    return response
 
 # GET /login
 @app.route('/login', methods=['GET'])
@@ -101,9 +104,11 @@ def login():
     if not user or not check_password_hash(user[0], password):
         return jsonify({'message': 'Invalid credentials'}), 401
 
-    token = jwt.encode({'email': email, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)},
+    token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
                        app.config['SECRET_KEY'], algorithm="HS256")
-    return jsonify({'token': token})
+    response = make_response(jsonify({'message': 'Login successful!'}))
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
+    return response
 
 # GET /protected (Example of a protected route)
 @app.route('/protected', methods=['GET'])
@@ -119,14 +124,14 @@ def refresh_token():
                            app.config['SECRET_KEY'], algorithm="HS256")
     return jsonify({'token': new_token})
 
-@app.route('/')
-def home():
-    return render_template('index.html')
-
 @app.route('/calculation', methods=['GET'])
 @token_required
 def calculation_page():
     return render_template('calculation.html')
+
+@app.route('/')
+def home():
+    return render_template('index.html')
 
 if __name__ == '__main__':
     app.run(debug=True)
