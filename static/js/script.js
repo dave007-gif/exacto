@@ -6,6 +6,27 @@ document.addEventListener('DOMContentLoaded', function() {
         window.location.href = "/login"; // Redirect to login page
     }
 
+    // Handle Logout
+    const logoutButton = document.getElementById("logout-btn");
+    if (logoutButton) {
+        console.log("Logout button found. Attaching event listener...");
+        logoutButton.addEventListener("click", async () => {
+            console.log("Logout button clicked."); // Debugging log
+            try {
+                // Clear the authToken cookie
+                document.cookie = "authToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+                console.log("Cookie cleared."); // Debugging log
+                alert("You have been logged out.");
+                window.location.href = "/login"; // Redirect to login page
+            } catch (err) {
+                console.error("Error during logout:", err);
+                alert("An error occurred during logout. Please try again.");
+            }
+        });
+    } else {
+        console.error("Logout button not found on the page.");
+    }
+
     // DOM Elements
     const componentSelect = document.getElementById("elements");
     const trenchFieldset = document.getElementById("trenchField");

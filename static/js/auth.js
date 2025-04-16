@@ -15,13 +15,8 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         if (response.ok) {
-          const data = await response.json();
           alert("Signup successful! Redirecting to the calculation page...");
-          console.log("Token:", data.token); // Log the token for debugging
-          // Save the token to localStorage for future use
-          localStorage.setItem("authToken", data.token);
-          // Redirect to the calculation page
-          window.location.href = "/calculation";
+          window.location.href = "/calculation"; // Redirect
         } else {
           const error = await response.json();
           alert("Signup failed: " + error.message);
@@ -48,12 +43,8 @@ document.addEventListener("DOMContentLoaded", () => {
         });
 
         if (response.ok) {
-          const data = await response.json();
           alert("Login successful!");
-          // Save the token to localStorage for future use
-          localStorage.setItem("authToken", data.token);
-          // Redirect to the calculation page
-          window.location.href = "/calculation";
+          window.location.href = "/calculation"; // Redirect
         } else {
           const error = await response.json();
           alert("Login failed: " + error.message);
@@ -63,7 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
         alert("An error occurred during login. Please try again.");
       }
     });
-  }
+  
 
   // Handle Logout
   const logoutButton = document.getElementById("logout-btn");
