@@ -54,50 +54,5 @@ document.addEventListener("DOMContentLoaded", () => {
         alert("An error occurred during login. Please try again.");
       }
     });
-  
-
-  // Handle Logout
-  const logoutButton = document.getElementById("logout-btn");
-  if (logoutButton) {
-    logoutButton.addEventListener("click", () => {
-      // Remove the token from localStorage
-      localStorage.removeItem("authToken");
-      alert("You have been logged out.");
-      // Redirect to the login page
-      window.location.href = "/login";
-    });
-  }
-
-  // Handle loading the calculation page
-  if (window.location.pathname === "/calculation") {
-    const token = localStorage.getItem("authToken");
-    if (!token) {
-      alert("You must be logged in to access this page.");
-      window.location.href = "/login";
-      return;
-    }
-
-    console.log("Token:", token);
-
-    // Fetch the calculation page content with the token
-    fetch("/calculation", {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}` }, // Correct format for Authorization header
-    })
-      .then((response) => {
-        if (response.ok) {
-          return response.text();
-        } else {
-          throw new Error("Unauthorized access. Please log in again.");
-        }
-      })
-      .then((html) => {
-        document.body.innerHTML = html; // Replace the page content with the response
-      })
-      .catch((err) => {
-        console.error(err);
-        alert(err.message);
-        window.location.href = "/login";
-      });
   }
 });

@@ -16,6 +16,8 @@ CORS(app, supports_credentials=True)
 def init_db():
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
+
+    # Users table (already exists)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -24,6 +26,75 @@ def init_db():
             user_type TEXT NOT NULL
         )
     ''')
+
+    # Projects table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Projects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_name TEXT NOT NULL,
+            total_cost REAL DEFAULT 0
+        )
+    ''')
+
+    # Materials table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Materials (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            project_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            quantity REAL NOT NULL,
+            unit_cost REAL NOT NULL,
+            FOREIGN KEY (project_id) REFERENCES Projects(id)
+        )
+    ''')
+
+    # SMM Rules table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS SMMRules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL,
+            component TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            formula TEXT NOT NULL
+        )
+    ''')
+
+    # Sources table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Sources (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            type TEXT NOT NULL,
+            region TEXT NOT NULL,
+            contact TEXT
+        )
+    ''')
+
+    # Material Prices table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS MaterialPrices (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL,
+            material TEXT NOT NULL,
+            unit_cost REAL NOT NULL,
+            valid_from DATE NOT NULL,
+            valid_to DATE NOT NULL,
+            FOREIGN KEY (source_id) REFERENCES Sources(id)
+        )
+    ''')
+
+    # Labor Rates table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS LaborRates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_id INTEGER NOT NULL,
+            task TEXT NOT NULL,
+            rate REAL NOT NULL,
+            valid_from DATE NOT NULL,
+            FOREIGN KEY (source_id) REFERENCES Sources(id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -132,6 +203,58 @@ def calculation_page():
 @app.route('/')
 def home():
     return render_template('index.html')
+
+@app.route('/projects', methods=['GET'])
+@token_required
+def get_projects():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM Projects')
+        projects = cursor.fetchall()
+    return jsonify({'projects': projects})
+
+
+@app.route('/projects', methods=['POST'])
+@token_required
+def create_project():
+    data = request.json
+    project_name = data.get('project_name')
+
+    if not project_name:
+        return jsonify({'message': 'Project name is required'}), 400
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('INSERT INTO Projects (project_name) VALUES (?)', (project_name,))
+        conn.commit()
+    return jsonify({'message': 'Project created successfully'}), 201
+
+@app.route('/materials', methods=['GET'])
+@token_required
+def get_materials():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM MaterialPrices')
+        materials = cursor.fetchall()
+    return jsonify({'materials': materials})
+
+@app.route('/labor-rates', methods=['GET'])
+@token_required
+def get_labor_rates():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM LaborRates')
+        labor_rates = cursor.fetchall()
+    return jsonify({'labor_rates': labor_rates})
+
+@app.route('/smm-rules', methods=['GET'])
+@token_required
+def get_smm_rules():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM SMMRules')
+        smm_rules = cursor.fetchall()
+    return jsonify({'smm_rules': smm_rules})
 
 if __name__ == '__main__':
     app.run(debug=True)
