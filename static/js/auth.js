@@ -86,6 +86,8 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    console.log("Token:", token);
+
     // Fetch the calculation page content with the token
     fetch("/calculation", {
       method: "GET",
@@ -93,17 +95,13 @@ document.addEventListener("DOMContentLoaded", () => {
     })
       .then((response) => {
         if (response.ok) {
-          return response.json();
+          return response.text();
         } else {
           throw new Error("Unauthorized access. Please log in again.");
         }
       })
-      .then((data) => {
-        // Dynamically display the calculation page content
-        document.body.innerHTML = `
-          <h1>${data.message}</h1>
-          <p>Here you can calculate building costs.</p>
-        `;
+      .then((html) => {
+        document.body.innerHTML = html; // Replace the page content with the response
       })
       .catch((err) => {
         console.error(err);
