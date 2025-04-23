@@ -1,10 +1,42 @@
-document.addEventListener('DOMContentLoaded', function () {
+import { SMM7_2023 } from './formulas.js';
+
+document.addEventListener('DOMContentLoaded', async function () {
     // Check for authentication token
     const token = localStorage.getItem("authToken");
     if (!token) {
         alert("You must be logged in to access this page.");
         window.location.href = "/login"; // Redirect to login page
     }
+
+    // Check formula version
+    const response = await fetch('/api/version');
+    const { version } = await response.json();
+    const storedVersion = localStorage.getItem('formulaVersion');
+
+    if (version !== storedVersion) {
+        alert('New calculation methods are available. Please refresh the page.');
+        localStorage.setItem('formulaVersion', version);
+    }
+
+    // Fetch dynamic adjustments
+    const region = 'greater-accra'; // Example region
+    const adjustmentsResponse = await fetch(`/api/adjustments?region=${region}`);
+    const adjustments = await adjustmentsResponse.json();
+    console.log("Adjustments:", adjustments);
+
+    // Example: Fetch the rate for cement
+    fetchMaterialRate('cement').then(data => {
+        if (data) {
+            console.log(`Cement rate: ${data.unit_cost} GHS`);
+        }
+    });
+
+    // Example: Fetch the labor rate for bricklaying
+    fetchLaborRate('bricklaying').then(data => {
+        if (data) {
+            console.log(`Bricklaying rate: ${data.rate} GHS`);
+        }
+    });
 
     // Handle Logout
     const logoutButton = document.getElementById("logout-btn");
@@ -137,6 +169,11 @@ console.log("Input value is valid:", numericValue); // Debugging line here
 
     // Function to save a project
     function saveProject(projectName, totalCost) {
+        if (!projectName || isNaN(totalCost)) {
+            console.error("Invalid project data:", { projectName, totalCost });
+            return;
+        }
+
         const projects = JSON.parse(localStorage.getItem('projects')) || [];
         projects.push({ name: projectName, cost: totalCost, date: new Date().toLocaleDateString() });
         localStorage.setItem('projects', JSON.stringify(projects));
@@ -150,6 +187,11 @@ console.log("Input value is valid:", numericValue); // Debugging line here
 
         for (let i = 0; i < projects.length; i++) {
             const project = projects[i];
+            if (!project.cost || isNaN(project.cost)) {
+                console.error("Invalid project data:", project);
+                continue; // Skip invalid projects
+            }
+
             const projectItem = document.createElement('div');
             projectItem.classList.add('project-item');
             projectItem.innerHTML = `
@@ -164,14 +206,15 @@ console.log("Input value is valid:", numericValue); // Debugging line here
     // Calculate button handlers
     const buttons = document.querySelectorAll('.calculate-btn');
     for (let i = 0; i < buttons.length; i++) {
-        buttons[i].addEventListener('click', function () {
-            const componentType = this.dataset.component;
-console.log("Button clicked for component:", componentType); // Debugging line
+        buttons[i].addEventListener('click', async function () {
+            const componentType = this.dataset.component; // Get the component type from the button's data attribute
+            console.log("Button clicked for component:", componentType); // Debugging line
+
             const fieldset = this.closest('fieldset');
             const inputs = fieldset.querySelectorAll('input');
             let isValid = true;
 
-// Validate all inputs
+            // Validate all inputs
             for (let j = 0; j < inputs.length; j++) {
                 if (!validateInput(inputs[j])) isValid = false;
             }
@@ -180,45 +223,90 @@ console.log("Button clicked for component:", componentType); // Debugging line
 
             if (!isValid) return;
 
-// Collect input values
+            // Collect input values
             const inputValues = {};
             for (let j = 0; j < inputs.length; j++) {
-                inputValues[inputs[j].name] = parseFloat(inputs[j].value);
+                const inputName = inputs[j].name;
+                const inputValue = parseFloat(inputs[j].value);
+                if (isNaN(inputValue)) {
+                    console.error(`Invalid input for ${inputName}:`, inputs[j].value);
+                    alert(`Please enter a valid number for ${inputName}`);
+                    return;
+                }
+                inputValues[inputName] = inputValue;
+            }
+            console.log("Collected input values:", inputValues);
+
+            // Fetch material and labor prices for the selected component type
+            const prices = await fetchPricesForComponent(componentType);
+            if (!prices) {
+                alert(`Failed to fetch prices for ${componentType}. Please try again.`);
+                return;
             }
 
-// Perform calculation
-            const quantity = SMM7_FORMULAS[componentType].quantity(inputValues);
+            const { materialPrices, laborRates } = prices;
+
+            // Perform calculation
+            const formula = SMM7_2023[componentType].formula;
+            const quantity = formula(
+                inputValues.length || 0,
+                inputValues.width || 0,
+                inputValues.height || 0,
+                adjustments.concrekte_waste_factor || 1
+            );
+            if (isNaN(quantity)) {
+                console.error("Failed to calculate quantity. Check input values:", inputValues);
+                alert("Failed to calculate quantity. Please check your inputs.");
+                return;
+            }
+            console.log("Formula inputs:", inputValues.length, inputValues.width, inputValues.height, adjustments.concrete_waste_factor);
+            console.log("Calculated quantity:", quantity); // Debugging line here
+
+            // Calculate total material cost
             let totalMaterialCost = 0;
-            const materials = SMM7_FORMULAS[componentType].materials;
-
-            for (let k = 0; k < materials.length; k++) {
-                totalMaterialCost += quantity * MATERIAL_PRICES[materials[k]];
+            for (const material of SMM7_2023[componentType].materials) {
+                totalMaterialCost += (materialPrices[material] || 0) * quantity;
             }
+            console.log("Material Prices:", materialPrices);
+            console.log("Total Material Cost:", totalMaterialCost); // Debugging line here
 
-            const laborHoursPerUnit = 8; // Example: 8 hours per unit
-            const workers = 5; // Example: 5 workers
-            const hoursPerDay = 8; // Example: 8 hours per day
-            const dailyRate = LABOR_RATES[componentType === 'blockwork in foundation' ? 'bricklaying' : 'concreting'];
-
-            const { totalDays, laborCost } = calculateLaborCost(quantity, laborHoursPerUnit, workers, hoursPerDay, dailyRate);
-
+            // Calculate labor cost
+            const labor = SMM7_2023.calculateLaborCost(
+                quantity,
+                8, // Example labor hours per unit
+                adjustments.labor_efficiency,
+                8, // Hours per day
+                laborRates[SMM7_2023[componentType].laborTasks[0]] || 0 // Daily rate
+            );
+            console.log("Labor Rates:", laborRates);
+            console.log("Calculated labor cost:", labor); // Debugging line here
+           
+           
+            // Display the results
             const output = document.getElementById('output');
             const resultHTML = `
                 <div class="result-item">
                     <h4>${componentType}</h4>
                     <p>Quantity: ${quantity.toFixed(2)} m³</p>
                     <p>Total Material Cost: GHS ${totalMaterialCost.toFixed(2)}</p>
-                    <p>Total Days: ${totalDays.toFixed(2)} days</p>
-                    <p>Labor Cost: GHS ${laborCost.toFixed(2)}</p>
-                    <p>Total Cost: GHS ${(totalMaterialCost + laborCost).toFixed(2)}</p>
+                    <p>Total Days: ${labor.totalDays.toFixed(2)} days</p>
+                    <p>Labor Cost: GHS ${labor.laborCost.toFixed(2)}</p>
+                    <p>Total Cost: GHS ${(totalMaterialCost + labor.laborCost).toFixed(2)}</p>
                 </div>
             `;
             output.insertAdjacentHTML('beforeend', resultHTML);
 
             // Save the project
+            const totalCost = totalMaterialCost + labor.laborCost;
+            if (isNaN(totalCost)) {
+                console.error("Failed to calculate total cost. Check material and labor costs.");
+                alert("Failed to calculate total cost. Please try again.");
+                return;
+            }
+
             const projectName = prompt("Enter a name for this project:");
             if (projectName) {
-                saveProject(projectName, totalMaterialCost + laborCost);
+                saveProject(projectName, totalCost);
                 displayProjects();
             }
         });
@@ -228,29 +316,89 @@ console.log("Button clicked for component:", componentType); // Debugging line
     displayProjects();
 });
 
+// Fetch material rate for a specific material
+async function fetchMaterialRate(material) {
+    const response = await fetch(`/api/prices/${material}?region=greater-accra`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
+    });
+    if (!response.ok) {
+        console.error(`Failed to fetch material rate for ${material}:`, response.statusText);
+        return null;
+    }
+    const data = await response.json();
+    console.log(`Material Rate for ${material}:`, data);
+    return data; // Example: { material: 'cement', unit_cost: 85.00, valid_from: '2023-04-01', valid_to: '2023-10-01' }
+}
+
+// Fetch labor rate for a specific trade
+async function fetchLaborRate(trade) {
+    const response = await fetch(`/api/labor/${trade}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
+    });
+    if (!response.ok) {
+        console.error(`Failed to fetch labor rate for ${trade}:`, response.statusText);
+        return null;
+    }
+    const data = await response.json();
+    console.log(`Labor Rate for ${trade}:`, data);
+    return data; // Example: { trade: 'bricklaying', rate: 25.00, valid_from: '2023-04-01', valid_to: '2023-10-01' }
+}
+
+// Fetch all materials
 async function fetchMaterials() {
     const response = await fetch('/materials', {
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
     });
+    if (!response.ok) {
+        console.error('Failed to fetch materials:', response.statusText);
+        return [];
+    }
     const data = await response.json();
     console.log('Materials:', data.materials);
     return data.materials;
 }
 
+// Fetch all labor rates
 async function fetchLaborRates() {
     const response = await fetch('/labor-rates', {
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
     });
+    if (!response.ok) {
+        console.error('Failed to fetch labor rates:', response.statusText);
+        return [];
+    }
     const data = await response.json();
     console.log('Labor Rates:', data.labor_rates);
     return data.labor_rates;
 }
 
-async function fetchSMMRules() {
-    const response = await fetch('/smm-rules', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
-    const data = await response.json();
-    console.log('SMM Rules:', data.smm_rules);
-    return data.smm_rules;
+async function fetchPricesForComponent(componentType) {
+    const component = SMM7_2023[componentType];
+    if (!component) {
+        console.error(`Unknown component type: ${componentType}`);
+        return null;
+    }
+
+    // Fetch material prices
+    const materialPrices = {};
+    for (const material of component.materials) {
+        const materialData = await fetchMaterialRate(material);
+        if (materialData) {
+            materialPrices[material] = materialData.unit_cost;
+        }
+    }
+    console.log(`Material Prices for ${componentType}:`, materialPrices);
+
+    // Fetch labor rates
+    const laborRates = {};
+    for (const task of component.laborTasks || []) {
+        const laborData = await fetchLaborRate(task);
+        if (laborData) {
+            laborRates[task] = laborData.rate;
+        }
+    }
+    console.log(`Labor Rates for ${componentType}:`, laborRates);
+
+    return { materialPrices, laborRates };
 }
+
