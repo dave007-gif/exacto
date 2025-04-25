@@ -168,14 +168,22 @@ console.log("Input value is valid:", numericValue); // Debugging line here
     });
 
     // Function to save a project
-    function saveProject(projectName, totalCost) {
+    function saveProject(projectName, componentType, quantity, totalMaterialCost, laborCost, totalCost) {
         if (!projectName || isNaN(totalCost)) {
             console.error("Invalid project data:", { projectName, totalCost });
             return;
         }
-
+    
         const projects = JSON.parse(localStorage.getItem('projects')) || [];
-        projects.push({ name: projectName, cost: totalCost, date: new Date().toLocaleDateString() });
+        projects.push({
+            name: projectName,
+            component: componentType,
+            quantity: quantity.toFixed(2),
+            materialCost: totalMaterialCost.toFixed(2),
+            laborCost: laborCost.toFixed(2),
+            totalCost: totalCost.toFixed(2),
+            date: new Date().toLocaleDateString()
+        });
         localStorage.setItem('projects', JSON.stringify(projects));
     }
 
@@ -184,24 +192,30 @@ console.log("Input value is valid:", numericValue); // Debugging line here
         const projects = JSON.parse(localStorage.getItem('projects')) || [];
         const projectList = document.getElementById('project-list');
         projectList.innerHTML = ''; // Clear existing projects
-
+    
         for (let i = 0; i < projects.length; i++) {
             const project = projects[i];
-            if (!project.cost || isNaN(project.cost)) {
+            if (!project.totalCost || isNaN(project.totalCost)) {
                 console.error("Invalid project data:", project);
                 continue; // Skip invalid projects
             }
-
+    
             const projectItem = document.createElement('div');
             projectItem.classList.add('project-item');
             projectItem.innerHTML = `
-                <h4>${project.name}</h4>
-                <p>Total Cost: GHS ${project.cost.toFixed(2)}</p>
+                <h4>${project.name} (${project.component})</h4>
+                <p>Quantity: ${project.quantity} m³</p>
+                <p>Material Cost: GHS ${project.materialCost}</p>
+                <p>Labor Cost: GHS ${project.laborCost}</p>
+                <p>Total Cost: GHS ${project.totalCost}</p>
                 <p>Date: ${project.date}</p>
             `;
             projectList.appendChild(projectItem);
         }
     }
+
+    // Track calculated components
+    let calculatedComponents = new Set();
 
     // Calculate button handlers
     const buttons = document.querySelectorAll('.calculate-btn');
@@ -248,12 +262,7 @@ console.log("Input value is valid:", numericValue); // Debugging line here
 
             // Perform calculation
             const formula = SMM7_2023[componentType].formula;
-            const quantity = formula(
-                inputValues.length || 0,
-                inputValues.width || 0,
-                inputValues.height || 0,
-                adjustments.concrekte_waste_factor || 1
-            );
+            const quantity = formula(inputValues, adjustments.concrete_waste_factor || 1);
             if (isNaN(quantity)) {
                 console.error("Failed to calculate quantity. Check input values:", inputValues);
                 alert("Failed to calculate quantity. Please check your inputs.");
@@ -264,8 +273,19 @@ console.log("Input value is valid:", numericValue); // Debugging line here
 
             // Calculate total material cost
             let totalMaterialCost = 0;
-            for (const material of SMM7_2023[componentType].materials) {
-                totalMaterialCost += (materialPrices[material] || 0) * quantity;
+
+            if (componentType === 'concrete in trench') {
+                // Calculate material cost based on volume
+                for (const material of SMM7_2023[componentType].materials) {
+                    totalMaterialCost += (materialPrices[material] || 0) * quantity;
+                }
+            } else if (componentType === 'blockwork in foundation') {
+                // Calculate material cost based on blocks and mortar
+                const blockCost = (materialPrices['blocks'] || 0) * quantity / adjustments.thickness; // Blocks per m³
+                const mortarCost = (materialPrices['mortar'] || 0) * quantity; // Mortar per m³
+                totalMaterialCost = blockCost + mortarCost;
+            } else {
+                console.error(`Unknown component type for material cost calculation: ${componentType}`);
             }
             console.log("Material Prices:", materialPrices);
             console.log("Total Material Cost:", totalMaterialCost); // Debugging line here
@@ -274,10 +294,25 @@ console.log("Input value is valid:", numericValue); // Debugging line here
             const labor = SMM7_2023.calculateLaborCost(
                 quantity,
                 8, // Example labor hours per unit
-                adjustments.labor_efficiency,
+                adjustments.labor_efficiency || 1, // Default to 1 if undefined
                 8, // Hours per day
-                laborRates[SMM7_2023[componentType].laborTasks[0]] || 0 // Daily rate
+                laborRates[SMM7_2023[componentType].laborTasks[0]] || 0, // Daily rate
+                SMM7_2023[componentType].laborTasks[0] // Task type (e.g., 'bricklaying' or 'concreting')
             );
+
+            if (isNaN(labor.laborCost)) {
+                console.error("Failed to calculate labor cost. Check inputs:", {
+                    quantity,
+                    laborHoursPerUnit: 8,
+                    efficiency: adjustments.labor_efficiency,
+                    hoursPerDay: 8,
+                    dailyRate: laborRates[SMM7_2023[componentType].laborTasks[0]],
+                    taskType: SMM7_2023[componentType].laborTasks[0]
+                });
+                alert("Failed to calculate labor cost. Please check your inputs.");
+                return;
+            }
+
             console.log("Labor Rates:", laborRates);
             console.log("Calculated labor cost:", labor); // Debugging line here
            
@@ -296,6 +331,18 @@ console.log("Input value is valid:", numericValue); // Debugging line here
             `;
             output.insertAdjacentHTML('beforeend', resultHTML);
 
+            // Track calculated components
+            calculatedComponents.add(componentType);
+
+            // Show the "Save Project" button if all selected components are calculated
+            const selectedComponents = Array.from(componentSelect.selectedOptions).map(option => option.value);
+            if (selectedComponents.every(component => calculatedComponents.has(component))) {
+                document.getElementById('save-project-btn').style.display = 'block';
+            }
+
+            // Show the "Save Project" button after any calculation
+            document.getElementById('save-project-btn').style.display = 'block';
+
             // Save the project
             const totalCost = totalMaterialCost + labor.laborCost;
             if (isNaN(totalCost)) {
@@ -306,7 +353,7 @@ console.log("Input value is valid:", numericValue); // Debugging line here
 
             const projectName = prompt("Enter a name for this project:");
             if (projectName) {
-                saveProject(projectName, totalCost);
+                saveProject(projectName, componentType, quantity, totalMaterialCost, labor.laborCost, totalCost);
                 displayProjects();
             }
         });
@@ -401,4 +448,29 @@ async function fetchPricesForComponent(componentType) {
 
     return { materialPrices, laborRates };
 }
+
+document.getElementById('save-project-btn').addEventListener('click', function () {
+    const projectName = prompt("Enter a name for this project:");
+    if (!projectName) {
+        alert("Project name is required.");
+        return;
+    }
+
+    // Collect all results
+    const results = document.querySelectorAll('.result-item');
+    let totalCost = 0;
+
+    results.forEach(result => {
+        const component = result.querySelector('h4').textContent;
+        const quantity = parseFloat(result.querySelector('p:nth-child(2)').textContent.split(': ')[1]);
+        const materialCost = parseFloat(result.querySelector('p:nth-child(3)').textContent.split(': ')[1].replace('GHS ', ''));
+        const laborCost = parseFloat(result.querySelector('p:nth-child(5)').textContent.split(': ')[1].replace('GHS ', ''));
+        totalCost += materialCost + laborCost;
+
+        saveProject(projectName, component, quantity, materialCost, laborCost, materialCost + laborCost);
+    });
+
+    alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
+    displayProjects();
+});
 

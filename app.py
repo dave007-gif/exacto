@@ -72,6 +72,17 @@ def init_db():
         )
     ''')
 
+    # Adjustments table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            region TEXT UNIQUE NOT NULL,
+            concrete_waste_factor REAL NOT NULL,
+            labor_efficiency REAL NOT NULL,
+            thickness REAL NOT NULL
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -120,6 +131,17 @@ def populate_initial_data():
         VALUES (?, ?, ?, ?, ?)
     ''', labor_rates)
 
+    # Populate Adjustments table
+    adjustments = [
+        ('default', 1.05, 1.0, 0.2),  # Default region
+        ('greater-accra', 1.07, 0.92, 0.25),  # Greater Accra region
+        ('ashanti', 1.06, 0.95, 0.22)  # Example for another region
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO Adjustments (region, concrete_waste_factor, labor_efficiency, thickness)
+        VALUES (?, ?, ?, ?)
+    ''', adjustments)
+
     conn.commit()
     conn.close()
 
@@ -156,17 +178,20 @@ def get_formula_version():
 @token_required
 def get_adjustments():
     region = request.args.get('region', 'default').lower()
-    adjustments = {
-        'default': {
-            'concrete_waste_factor': 1.05,
-            'labor_efficiency': 1.0
-        },
-        'greater-accra': {
-            'concrete_waste_factor': 1.07,
-            'labor_efficiency': 0.92
-        }
-    }
-    return jsonify(adjustments.get(region, adjustments['default']))
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT concrete_waste_factor, labor_efficiency, thickness FROM Adjustments WHERE region = ?', (region,))
+        result = cursor.fetchone()
+
+    if not result:
+        return jsonify({'message': f'Adjustments for region "{region}" not found'}), 404
+
+    concrete_waste_factor, labor_efficiency, thickness = result
+    return jsonify({
+        'concrete_waste_factor': concrete_waste_factor,
+        'labor_efficiency': labor_efficiency,
+        'thickness': thickness
+    })
 
 # GET /signup
 @app.route('/signup', methods=['GET'])
