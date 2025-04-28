@@ -167,53 +167,6 @@ console.log("Input value is valid:", numericValue); // Debugging line here
         });
     });
 
-    // Function to save a project
-    function saveProject(projectName, componentType, quantity, totalMaterialCost, laborCost, totalCost) {
-        if (!projectName || isNaN(totalCost)) {
-            console.error("Invalid project data:", { projectName, totalCost });
-            return;
-        }
-    
-        const projects = JSON.parse(localStorage.getItem('projects')) || [];
-        projects.push({
-            name: projectName,
-            component: componentType,
-            quantity: quantity.toFixed(2),
-            materialCost: totalMaterialCost.toFixed(2),
-            laborCost: laborCost.toFixed(2),
-            totalCost: totalCost.toFixed(2),
-            date: new Date().toLocaleDateString()
-        });
-        localStorage.setItem('projects', JSON.stringify(projects));
-    }
-
-    // Function to display saved projects
-    function displayProjects() {
-        const projects = JSON.parse(localStorage.getItem('projects')) || [];
-        const projectList = document.getElementById('project-list');
-        projectList.innerHTML = ''; // Clear existing projects
-    
-        for (let i = 0; i < projects.length; i++) {
-            const project = projects[i];
-            if (!project.totalCost || isNaN(project.totalCost)) {
-                console.error("Invalid project data:", project);
-                continue; // Skip invalid projects
-            }
-    
-            const projectItem = document.createElement('div');
-            projectItem.classList.add('project-item');
-            projectItem.innerHTML = `
-                <h4>${project.name} (${project.component})</h4>
-                <p>Quantity: ${project.quantity} m³</p>
-                <p>Material Cost: GHS ${project.materialCost}</p>
-                <p>Labor Cost: GHS ${project.laborCost}</p>
-                <p>Total Cost: GHS ${project.totalCost}</p>
-                <p>Date: ${project.date}</p>
-            `;
-            projectList.appendChild(projectItem);
-        }
-    }
-
     // Track calculated components
     let calculatedComponents = new Set();
 
@@ -344,18 +297,18 @@ console.log("Input value is valid:", numericValue); // Debugging line here
             document.getElementById('save-project-btn').style.display = 'block';
 
             // Save the project
-            const totalCost = totalMaterialCost + labor.laborCost;
-            if (isNaN(totalCost)) {
-                console.error("Failed to calculate total cost. Check material and labor costs.");
-                alert("Failed to calculate total cost. Please try again.");
-                return;
-            }
+            //const totalCost = totalMaterialCost + labor.laborCost;
+            //if (isNaN(totalCost)) {
+            //    console.error("Failed to calculate total cost. Check material and labor costs.");
+            //    alert("Failed to calculate total cost. Please try again.");
+            //    return;
+            //}
 
-            const projectName = prompt("Enter a name for this project:");
-            if (projectName) {
-                saveProject(projectName, componentType, quantity, totalMaterialCost, labor.laborCost, totalCost);
-                displayProjects();
-            }
+            //const projectName = prompt("Enter a name for this project:");
+            //if (projectName) {
+            //    saveProject(projectName, componentType, quantity, totalMaterialCost, labor.laborCost, totalCost);
+            //    displayProjects();
+            //}
         });
     }
 
@@ -449,6 +402,64 @@ async function fetchPricesForComponent(componentType) {
     return { materialPrices, laborRates };
 }
 
+// Clear invalid projects from local storage
+function clearInvalidProjects() {
+    const projects = JSON.parse(localStorage.getItem('projects')) || [];
+    const validProjects = projects.filter(project => project.totalCost && !isNaN(project.totalCost) && project.totalCost > 0);
+    localStorage.setItem('projects', JSON.stringify(validProjects));
+    console.log("Cleared invalid projects. Remaining projects:", validProjects);
+}
+clearInvalidProjects();
+
+// Function to display saved projects
+function displayProjects() {
+    const projects = JSON.parse(localStorage.getItem('projects')) || [];
+    console.log("Displaying projects:", projects); // Debugging line
+
+    const projectList = document.getElementById('project-list');
+    projectList.innerHTML = ''; // Clear existing projects
+
+    projects.forEach(project => {
+        if (!project.totalCost || isNaN(project.totalCost)) {
+            console.error("Invalid project data:", project);
+            return; // Skip invalid projects
+        }
+
+        const projectItem = document.createElement('div');
+        projectItem.classList.add('project-item');
+        projectItem.innerHTML = `
+            <h4>${project.name} (${project.component})</h4>
+            <p>Quantity: ${project.quantity} m³</p>
+            <p>Material Cost: GHS ${project.materialCost}</p>
+            <p>Labor Cost: GHS ${project.laborCost}</p>
+            <p>Total Cost: GHS ${project.totalCost}</p>
+            <p>Date: ${project.date}</p>
+        `;
+        projectList.appendChild(projectItem);
+    });
+}
+
+// Function to save a project
+function saveProject(projectName, componentType, quantity, totalMaterialCost, laborCost, totalCost) {
+    if (!projectName || isNaN(totalCost)) {
+        console.error("Invalid project data:", { projectName, totalCost });
+        return;
+    }
+
+    const projects = JSON.parse(localStorage.getItem('projects')) || [];
+    projects.push({
+        name: projectName,
+        component: componentType,
+        quantity: quantity.toFixed(2),
+        materialCost: totalMaterialCost.toFixed(2),
+        laborCost: laborCost.toFixed(2),
+        totalCost: totalCost.toFixed(2),
+        date: new Date().toLocaleDateString()
+    });
+    localStorage.setItem('projects', JSON.stringify(projects));
+    console.log("Saved projects:", projects); // Debugging line
+}
+
 document.getElementById('save-project-btn').addEventListener('click', function () {
     const projectName = prompt("Enter a name for this project:");
     if (!projectName) {
@@ -471,6 +482,8 @@ document.getElementById('save-project-btn').addEventListener('click', function (
     });
 
     alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
+
+    // Call displayProjects to update the DOM
     displayProjects();
 });
 
