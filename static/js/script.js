@@ -1,4 +1,87 @@
 import { SMM7_2023 } from './formulas.js';
+import { SMM7_CATEGORIES } from './smm7_categories.js';
+import jsPDF from 'jspdf';
+
+// BOQ Data Structure
+let boqData = {
+    workSections: {},
+    mainCategories: {
+        "Substructure": { items: [], total: 0 },
+        "Superstructure": { items: [], total: 0 },
+        "Other": { items: [], total: 0 }
+    },
+    summary: {}
+};
+
+// Function to add an item to the BOQ
+function addToBOQ(category, workSection, quantity, unitCost) {
+    const totalCost = quantity * unitCost;
+    boqData.push({ category, workSection, quantity, unitCost, totalCost });
+}
+
+// Function to generate the BOQ PDF
+function generateBOQPDF() {
+    const doc = new jsPDF();
+    let yPos = 30;
+
+    // Work Sections
+    Object.entries(boqData.workSections).forEach(([section, data]) => {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(12);
+        doc.text(`${section}: ${data.description}`, 15, yPos);
+        yPos += 8;
+
+        // Table Header
+        doc.setFillColor(200);
+        doc.rect(15, yPos, 180, 8, 'F');
+        doc.setTextColor(0);
+        ["Item", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"].forEach(
+            (text, i) => doc.text(text, 15 + (i * 35), yPos + 6)
+        );
+        yPos += 10;
+
+        // Items
+        doc.setFont('helvetica', 'normal');
+        data.items.forEach(item => {
+            doc.text(item.item.toString(), 20, yPos);
+            doc.text(item.description, 55, yPos);
+            doc.text(item.quantity.toFixed(2), 120, yPos);
+            doc.text(item.unit, 140, yPos);
+            doc.text(item.rate.toFixed(2), 160, yPos);
+            doc.text(item.total.toFixed(2), 180, yPos);
+            yPos += 8;
+        });
+
+        // Work Section Total
+        doc.setFont('helvetica', 'bold');
+        doc.text(`Subtotal for ${section}:`, 160, yPos + 5);
+        doc.text(data.total.toFixed(2), 180, yPos + 5);
+        yPos += 15;
+    });
+
+    // Main Category Summary
+    doc.addPage();
+    doc.setFontSize(14);
+    doc.text("Cost Summary by Main Category", 105, 20, { align: "center" });
+    yPos = 30;
+
+    Object.entries(boqData.mainCategories).forEach(([category, data]) => {
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${category}:`, 20, yPos);
+        doc.text(data.total.toFixed(2), 180, yPos);
+        yPos += 10;
+    });
+
+    // Grand Total
+    const grandTotal = Object.values(boqData.summary).reduce((a, b) => a + b, 0);
+    doc.text("GRAND TOTAL:", 20, yPos + 5);
+    doc.text(grandTotal.toFixed(2), 180, yPos + 5);
+
+    doc.save("SMM7-BOQ.pdf");
+}
+
+// Export functions for use in other modules
+export { addToBOQ, generateBOQPDF };
 
 document.addEventListener('DOMContentLoaded', async function () {
     // Check for authentication token
@@ -486,4 +569,79 @@ document.getElementById('save-project-btn').addEventListener('click', function (
     // Call displayProjects to update the DOM
     displayProjects();
 });
+
+// Function to classify a component
+function classifyComponent(component) {
+    const workSection = Object.keys(SMM7_CATEGORIES).find(ws =>
+        SMM7_CATEGORIES[ws].components.includes(component.type)
+    );
+
+    return {
+        workSection: workSection || "Z. Unclassified Works",
+        mainCategory: workSection
+            ? SMM7_CATEGORIES[workSection].mainCategory
+            : "Other"
+    };
+}
+
+async function getAESLRate(component) {
+    const response = await fetch(`/api/aesl-rates/${component}?standard=SMM7`);
+    const rateData = await response.json();
+
+    return {
+        ...rateData,
+        workSection: SMM7_CATEGORIES[rateData.workSection]
+            ? rateData.workSection
+            : "Z. Unclassified Works"
+    };
+}
+
+async function generateSMM7BOQ() {
+    const components = await fetchCalculatedComponents();
+
+    components.forEach(component => {
+        const { workSection, mainCategory } = classifyComponent(component);
+
+        // Add to Work Section
+        if (!boqData.workSections[workSection]) {
+            boqData.workSections[workSection] = {
+                description: SMM7_CATEGORIES[workSection]?.description || "Unclassified",
+                items: [],
+                total: 0
+            };
+        }
+
+        const boqItem = {
+            item: component.itemNumber,
+            description: component.description,
+            quantity: component.quantity,
+            unit: component.unit,
+            rate: component.rate,
+            total: component.total
+        };
+
+        // Add to both structures
+        boqData.workSections[workSection].items.push(boqItem);
+        boqData.mainCategories[mainCategory].items.push(boqItem);
+
+        // Update totals
+        boqData.workSections[workSection].total += component.total;
+        boqData.mainCategories[mainCategory].total += component.total;
+    });
+
+    // Generate summary
+    Object.entries(boqData.mainCategories).forEach(([category, data]) => {
+        boqData.summary[category] = data.total;
+    });
+
+    generateBOQPDF();
+}
+
+function validateBOQStructure() {
+    return Object.values(boqData.workSections).every(section =>
+        section.items.every(item =>
+            SMM7_CATEGORIES[section.code]?.components.includes(item.type)
+        )
+    );
+}
 
