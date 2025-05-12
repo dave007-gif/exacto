@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EXACTO | Register/Login</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: url('https://images.unsplash.com/photo-1605902711622-cfb43c44367f?auto=format&fit=crop&w=1470&q=80') no-repeat center center fixed;
+            background-size: cover;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            backdrop-filter: blur(20px); /* background blur for full page */
+        }
+
+        .container {
+            background: rgba(255, 255, 255, 0.3); /* semi-transparent background */
+            padding: 30px;
+            border-radius: 15px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(25px); /* glass blur effect */
+            -webkit-backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            width: 350px;
+            transition: all 0.3s ease;
+        }
+
+        h2 {
+            text-align: center;
+            color: #333;
+        }
+
+        label {
+            display: block;
+            margin-top: 15px;
+            color: #444;
+        }
+
+        input[type="text"],
+        input[type="email"],
+        input[type="password"] {
+            width: 100%;
+            padding: 8px 10px;
+            margin-top: 5px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            outline: none;
+        }
+
+        input[type="checkbox"] {
+            margin-right: 5px;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            margin-top: 20px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        .toggle-link {
+            text-align: center;
+            margin-top: 20px;
+        }
+
+        .toggle-link a {
+            color: #007bff;
+            text-decoration: none;
+            font-weight: bold;
+        }
+
+        .toggle-link a:hover {
+            text-decoration: underline;
+        }
+
+        #password-error {
+            color: red;
+            font-size: 13px;
+            margin-top: 5px;
+            display: none;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="form-title"><h2>Registration</h2></div>
+
+        <!-- Registration Form -->
+        <form id="registration-form">
+            <label for="username">Username</label>
+            <input type="text" id="username" required>
+
+            <label for="fullname">Full Name</label>
+            <input type="text" id="fullname" required>
+
+            <label for="email">Email</label>
+            <input type="email" id="email" required>
+
+            <label for="password">Password</label>
+            <input type="password" id="password" required>
+
+            <label for="confirm-password">Confirm Password</label>
+            <input type="password" id="confirm-password" required>
+
+            <div id="password-error">Passwords do not match or are too weak.</div>
+
+            <label for="accept-terms">
+                <input type="checkbox" id="accept-terms" required> I accept the Terms and Conditions
+            </label>
+
+            <button type="submit">Register</button>
+        </form>
+
+        <!-- Login Form -->
+        <form id="login-form" class="hidden">
+            <label for="login-email">Email</label>
+            <input type="email" id="login-email" required>
+
+            <label for="login-password">Password</label>
+            <input type="password" id="login-password" required>
+
+            <button type="submit">Login</button>
+        </form>
+
+        <!-- Toggle Links -->
+        <div class="toggle-link">
+            <p id="to-login">Already have an account? <a href="#" onclick="switchToLogin()">Login here</a></p>
+            <p id="to-register" class="hidden">Don't have an account? <a href="#" onclick="switchToRegister()">Register here</a></p>
+        </div>
+    </div>
+
+    <script>
+        function switchToLogin() {
+            document.getElementById("registration-form").classList.add("hidden");
+            document.getElementById("login-form").classList.remove("hidden");
+            document.getElementById("to-login").classList.add("hidden");
+            document.getElementById("to-register").classList.remove("hidden");
+            document.getElementById("form-title").innerHTML = "<h2>Login</h2>";
+        }
+
+        function switchToRegister() {
+            document.getElementById("login-form").classList.add("hidden");
+            document.getElementById("registration-form").classList.remove("hidden");
+            document.getElementById("to-register").classList.add("hidden");
+            document.getElementById("to-login").classList.remove("hidden");
+            document.getElementById("form-title").innerHTML = "<h2>Registration</h2>";
+        }
+
+        // Optional password matching logic
+        document.getElementById("registration-form").addEventListener("submit", function(e) {
+            const pass = document.getElementById("password").value;
+            const confirm = document.getElementById("confirm-password").value;
+            const error = document.getElementById("password-error");
+
+            if (pass !== confirm || pass.length < 6) {
+                e.preventDefault();
+                error.style.display = "block";
+            } else {
+                error.style.display = "none";
+            }
+        });
+    </script>
+</body>
+</html>

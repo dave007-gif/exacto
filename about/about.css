@@ -1,0 +1,277 @@
+/* GENERAL STYLING */
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@200..700&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+}
+ body {
+    font-family: "Oswald", serif;
+    background-color: white;
+ }
+
+ html {
+    scroll-behavior: smooth;
+ }
+  
+ p {
+    color: black;
+    font-size: larger;
+ }
+
+
+  /* Navbar Styling */
+  .navbar-bg {
+    position: fixed;                 /* Fixed at the top */
+    top: 0;
+    left: 0;
+    width: 100%;                     /* Full width */
+    height: 50px;                    /* Adjust height to match */
+    z-index: 1000;                   /* Keep navbar above other content */
+    display: flex;
+    justify-content: space-between;  /* Space between logo and links */
+    align-items: center;             /* Vertical centering */
+    padding: 0 60px;                 /* Horizontal padding */
+    background: rgba(0, 0, 0, 0.8);  /* Dark background with opacity */
+    backdrop-filter: blur(8px);      /* Glassmorphism blur effect */
+}
+
+.navbar-transparent {
+    background-color: rgba(57, 61, 62, 0.4); /* Light transparent sky color */
+    backdrop-filter: blur(5px);
+}
+
+
+/* Logo */
+.logo {
+    font-size: 28px;                 /* Larger logo size */
+    font-weight: 600;                /* Bold for emphasis */
+    color: white;
+    display: flex;
+    align-items: center;
+}
+
+/* Menu Links */
+.menu-links {
+    display: flex;
+    list-style: none;
+    gap: 30px;                       /* Space between menu items */
+    margin: 100px;
+    padding: 0;
+}
+
+.menu-links li a {
+    text-decoration: none;
+    font-size: 16px;                 /* Menu font size */
+    color: white;
+    font-weight: 500;                /* Slightly bold */
+    text-transform: uppercase;       /* Capital letters */
+    letter-spacing: 1px;             /* Spaced letters */
+    transition: color 0.3s ease;
+}
+
+/* Hover Effect */
+.menu-links li a:hover {
+    color: #f0f0f0;                  /* Lighter on hover */
+}
+
+/* Dropdown Arrow */
+.menu-links li .dropdown {
+    display: inline-block;
+    margin-left: 5px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .navbar-bg {
+        padding: 0 20px;
+    }
+
+    .menu-links {
+        gap: 20px;                   /* Reduce gap on smaller screens */
+    }
+}
+  
+
+  body {
+    background-color: #f4f8fb;
+    color: #333;
+    line-height: 1.7;
+  }
+  
+ /* Hero Banner */
+.about-hero {
+  background: url('../uploads/about.jpg') center/cover no-repeat;
+  height: 60vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  color: #fff;
+}
+
+.about-hero::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.about-content {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  max-width: 700px;
+  padding: 0 20px;
+}
+
+.about-content h1 {
+  font-size: 3rem;
+  margin-bottom: 10px;
+}
+
+.typewriter-text {
+  font-size: 1.4rem;
+  font-style: italic;
+  color: #f0f0f0;
+}
+
+/* Main Details */
+.about-details {
+  background: #fdfdfd;
+  padding: 60px 20px;
+  color: #333;
+}
+
+.about-container {
+  max-width: 960px;
+  margin: auto;
+}
+
+.about-container h2 {
+  color: #111;
+  margin-top: 30px;
+}
+
+.about-container ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.about-container li {
+  margin-bottom: 10px;
+  font-size: 1.05rem;
+}
+
+/* WHY EXACTO CARDS */
+.why-exacto {
+  background: linear-gradient(to bottom right, #e9f1fc, #ffffff);
+  padding: 60px 20px;
+}
+
+.why-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 30px;
+  max-width: 1000px;
+  margin: auto;
+}
+
+.why-card {
+  background: white;
+  padding: 30px;
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+  flex: 1 1 280px;
+  text-align: center;
+  transition: transform 0.3s;
+}
+
+.why-card:hover {
+  transform: translateY(-5px);
+}
+
+/* Testimonials */
+.testimonials {
+  padding: 60px 20px;
+  background: #fafafa;
+  text-align: center;
+}
+
+.testimonials-container {
+  max-width: 800px;
+  margin: auto;
+}
+
+.testimonial {
+  background: #fff;
+  padding: 25px;
+  border-left: 5px solid #0074cc;
+  margin-bottom: 30px;
+  border-radius: 8px;
+}
+
+.testimonial h4 {
+  margin-top: 15px;
+  font-weight: normal;
+  color: #444;
+}
+
+/* Footer */
+.footer {
+  background: #111;
+  color: #ccc;
+  padding: 40px 20px;
+}
+
+.footer-container {
+  max-width: 1000px;
+  margin: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.footer-links {
+  margin-top: 10px;
+}
+
+.footer-links a {
+  color: #ccc;
+  margin: 0 10px;
+  text-decoration: none;
+  font-size: 0.95rem;
+}
+
+.footer-links a:hover {
+  color: #fff;
+}
+
+/* Fade-in animation */
+.fade-in {
+  opacity: 0;
+  transform: translateY(20px);
+  animation: fadeInUp 1s forwards;
+}
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+  .why-container {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .about-content h1 {
+    font-size: 2.2rem;
+  }
+}
+

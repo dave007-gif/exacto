@@ -3,8 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Exacto</title>
+    <title>Home | Exacto</title>
     <link rel="stylesheet" href="./main.css">
+    <link rel="icon" href="./uploads/favicon.ico" type="image/x-icon">
 </head> 
 <body>
     <section id="landing">
@@ -15,11 +16,11 @@
             <!-- Menu -->
             <div class="menu">
                 <ul class="menu-links" id="menu-links">
-                    <li><a href="#landing">HOME</a></li>
-                    <li><a href="#about">ABOUT</a></li>
-                    <li><a href="#estimate">SERVICES</a></li>
-                    <li><a href="#">PROJECTS</a></li>
-                    <li><a href="#">CONTACTS</a></li>
+                    <li><a href="index.html">HOME</a></li>
+                    <li><a href="./about/about.html">ABOUT</a></li>
+                    <li><a href="./estimate/estimate.html">SERVICES</a></li>
+                    <li><a href="./projects/projects.html">PROJECTS</a></li>
+                    <li><a href="./contact/contact.html">CONTACTS</a></li>
                     <li><a onclick="openModal('login-modal')">LOGIN</a></li>
                     <li><a onclick="openModal('signup-modal')">SIGN UP</a></li>
                 </ul>
@@ -64,18 +65,19 @@
     
         <!-- Main Content -->
         <div class="info-container">
-            <h3 class="sect-text-1">GET STARTED WITH</h3>
-            <h1 class="title">ESTIMATE FOR BUILDING MATERIAL PRICES</h1>
-            <p class="sct-text-2">
-                Easily calculate the cost of your building project with up-to-date material prices. Get reliable estimates instantly.
+            <h3 class="sect-text-1 fade-in">NO GUESSWORK.</h3>
+            <h1 class="title fade-in">Accurate Estimates for Every Build</h1>
+            <p class="sct-text-2 fade-in">
+              Upload your plan or select materials — get the quantities and costs instantly. Made for planners, builders, and contractors.
             </p>
+            
         </div>
         
     
-        <!-- Button -->
-        <div class="btn_container">
-            <button class="btn btn_color">KNOW NOW</button>
+        <div class="btn_container fade-in">
+            <a href="./estimate/estimate.html" class="btn btn_color">Estimate Now</a>
         </div>
+          
     </section>  
     <section id="about">
         <div class="about-container">
@@ -87,10 +89,9 @@
                 />
                 <h3>Building Plan</h3>
                 <p>
-                    Lorem ipsum dolor sit amet consectetur <br />
-                    adipisicing elit. <br />
-                    Vero, consectetur!
+                    Upload your building plan and let Exacto break down the materials needed with precision.
                 </p>
+                  
             </div>
             <div class="about-details-container">
                 <img 
@@ -100,61 +101,27 @@
                 />
                 <h3>Estimate Cost</h3>
                 <p>
-                    Lorem ipsum dolor sit amet consectetur <br />
-                    adipisicing elit. <br />
-                    Libero, temporibus?
+                    Get accurate material costs and quantity breakdowns — perfect for budgeting and purchase planning.
                 </p>
+                  
             </div>
         </div>
         <hr>
         <div class="estimate-container">
             <img src="./uploads/estimate.jpg" alt="Estimate Cost" class="estimate-image">
             <div class="estimate-content">
-                <h2 class="estimate-title">Estimate Your Project Cost</h2>
+                <h2 class="estimate-title">Planning a build? Know your costs first!</h2>
                 <p class="estimate-description">
                     Quickly estimate your project's total cost with our easy-to-use tool. Click below to get started and receive accurate estimates instantly.
                 </p>
-                <a href="#estimate" target="_blank" class="estimate-link">Get an Estimate</a>
-            </div>
-        </div>
-    </section>
-     
-    <section id="estimate">
-        <div class="estimate-title-container">
-          <h2>TakeOff And Estimation Plan.</h2>
-          <h3>Component Type</h3>
-          <p>Select Building Element Type</p>
-        </div>
-    
-        <hr>
-    
-        <div class="container">
-            <aside id="side-menu">
-              <fieldset>
-                <legend>Foundation Plan</legend>
-                <ul>
-                  <li class="list-item" onclick="showForm('clearing')">Clearing of Construction Site</li>
-                  <li class="list-item" onclick="showForm('excavation')">Excavation of Top Soil</li>
-                  <li class="list-item" onclick="showForm('trench')">Trench Excavation (Back Hoe)</li>
-                  <li class="list-item" onclick="showForm('column')">Column Pit Excavation</li>
-                </ul>
-              </fieldset>
-            </aside>
-        
-            <div id="form-container" class="form-container">
-                <h3 id="form-title"></h3>
-                <form id="dynamic-form">
-                    <div id="form-fields"></div>
-                    <br><br>
-                    <button type="submit">Submit</button>
-                </form>
+                <a href="./estimate/estimate.html" target="_blank" class="estimate-link">Get an Estimate</a>
             </div>
         </div>
     </section>
     <script src="./script.js"></script>
 
 </body>
-<!-- Footer -->
+<!-- Footer
 <footer class="site-footer">
     <div class="footer-content">
       <h3>EXACTO</h3>
@@ -172,6 +139,6 @@
         &copy; 2025 Exacto. All rights reserved.
       </div>
     </div>
-</footer>
+</footer> -->
   
 </html>
