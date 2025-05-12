@@ -1,9 +1,10 @@
 export const SMM7_2023 = {
     'concrete in trench': {
-        formula: (inputs, concrete_waste_factor) => 
+        formula: (inputs, concrete_waste_factor) =>
             inputs.trench_length * inputs.trench_width * inputs.trench_height * concrete_waste_factor,
         materials: ['cement', 'sand', 'aggregate'],
         laborTasks: ['concreting'],
+        equipment: ['Mixer'], // Specify the equipment required
         reference: 'SMM7 Clause E20',
         calculateMaterialCost: (quantity, materialPrices) => {
             let totalCost = 0;
@@ -30,5 +31,13 @@ export const SMM7_2023 = {
         const totalDays = totalHours / hoursPerDay;
         const laborCost = totalDays * dailyRate;
         return { totalDays, laborCost };
+    },
+    calculatePlantCost: (quantity, plants) => {
+        let totalCost = 0;
+        for (const plant of plants) {
+            const plantCost = plant.dailyRate * (plant.durationPerUnit * quantity);
+            totalCost += plantCost;
+        }
+        return totalCost;
     }
 };

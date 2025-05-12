@@ -83,6 +83,16 @@ def init_db():
         )
     ''')
 
+    # Plants table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Plants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            equipment TEXT NOT NULL,
+            daily_rate REAL NOT NULL,
+            duration_per_unit REAL NOT NULL -- Days per unit (e.g., m³)
+        )
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -141,6 +151,16 @@ def populate_initial_data():
         INSERT OR IGNORE INTO Adjustments (region, concrete_waste_factor, labor_efficiency, thickness)
         VALUES (?, ?, ?, ?)
     ''', adjustments)
+
+    # Populate Plants table
+    plants = [
+        ('Mixer', 400.00, 0.2),  # Mixer: GHS 400/day, 0.2 days per m³
+        ('Crane', 1000.00, 0.1)  # Crane: GHS 1000/day, 0.1 days per m³
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO Plants (equipment, daily_rate, duration_per_unit)
+        VALUES (?, ?, ?)
+    ''', plants)
 
     conn.commit()
     conn.close()
@@ -372,6 +392,21 @@ def get_labor_rate(trade):
         'valid_to': valid_to
     })
 
+@app.route('/api/plants', methods=['GET'])
+@token_required
+def get_plants():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT equipment, daily_rate, duration_per_unit FROM Plants')
+        plants = cursor.fetchall()
+
+    if not plants:
+        return jsonify({'message': 'No plant data found'}), 404
+
+    return jsonify([
+        {'equipment': plant[0], 'dailyRate': plant[1], 'durationPerUnit': plant[2]}
+        for plant in plants
+    ])
 
 if __name__ == '__main__':
     app.run(debug=True)

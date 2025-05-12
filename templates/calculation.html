@@ -64,7 +64,7 @@
           <button
             type="button"
             class="calculate-btn"
-            data-component="concrete in trench"
+            data-component="Foundations"
           >
             Calculate Trench
           </button>
@@ -103,7 +103,7 @@
           <button
             type="button"
             class="calculate-btn"
-            data-component="blockwork in foundation"
+            data-component="Blockwork"
           >
             Calculate Blockwork
           </button>
@@ -144,8 +144,14 @@
       <div id="project-list"></div>
     </section>
 
+    <button id="generate-boq" class="boq-button">
+      <img src="pdf-icon.svg" alt="PDF" />
+      Generate BOQ Report
+    </button>
+
     <button id="logout-btn">Log Out</button>
     <script type="module" src="static/js/formulas.js"></script>
     <script type="module" src="static/js/script.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
   </body>
 </html>
