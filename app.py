@@ -2,7 +2,6 @@ from flask import Flask, request, jsonify, render_template, redirect, make_respo
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import jwt
-import datetime
 import sqlite3
 import os
 from datetime import datetime, timedelta, timezone
@@ -17,7 +16,7 @@ def init_db():
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
 
-    # Users table (already exists)
+    # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,29 +32,6 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             project_name TEXT NOT NULL,
             total_cost REAL DEFAULT 0
-        )
-    ''')
-
-    # Materials table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Materials (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id INTEGER NOT NULL,
-            name TEXT NOT NULL,
-            quantity REAL NOT NULL,
-            unit_cost REAL NOT NULL,
-            FOREIGN KEY (project_id) REFERENCES Projects(id)
-        )
-    ''')
-
-    # SMM Rules table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS SMMRules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            category TEXT NOT NULL,
-            component TEXT NOT NULL,
-            unit TEXT NOT NULL,
-            formula TEXT NOT NULL
         )
     ''')
 
@@ -91,7 +67,29 @@ def init_db():
             task TEXT NOT NULL,
             rate REAL NOT NULL,
             valid_from DATE NOT NULL,
+            valid_to DATE NOT NULL, 
             FOREIGN KEY (source_id) REFERENCES Sources(id)
+        )
+    ''')
+
+    # Adjustments table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Adjustments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            region TEXT UNIQUE NOT NULL,
+            concrete_waste_factor REAL NOT NULL,
+            labor_efficiency REAL NOT NULL,
+            thickness REAL NOT NULL
+        )
+    ''')
+
+    # Plants table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS Plants (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            equipment TEXT NOT NULL,
+            daily_rate REAL NOT NULL,
+            duration_per_unit REAL NOT NULL -- Days per unit (e.g., m³)
         )
     ''')
 
@@ -99,6 +97,76 @@ def init_db():
     conn.close()
 
 init_db()
+
+def populate_initial_data():
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+
+    # Populate Sources table
+    cursor.execute('''
+        INSERT OR IGNORE INTO Sources (name, type, region, contact)
+        VALUES ('Ghacem Ltd', 'supplier', 'greater-accra', '123-456-789'),
+               ('Local Supplier', 'supplier', 'greater-accra', '987-654-321'),
+               ('Block Factory', 'supplier', 'greater-accra', '555-555-555')
+    ''')
+
+    # Get source IDs
+    cursor.execute('SELECT id FROM Sources WHERE name = "Ghacem Ltd"')
+    ghacem_id = cursor.fetchone()[0]
+    cursor.execute('SELECT id FROM Sources WHERE name = "Local Supplier"')
+    local_supplier_id = cursor.fetchone()[0]
+    cursor.execute('SELECT id FROM Sources WHERE name = "Block Factory"')
+    block_factory_id = cursor.fetchone()[0]
+
+    # Populate MaterialPrices table
+    materials = [
+        (ghacem_id, 'cement', 85.00, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'sand', 30.00, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'aggregate', 60.00, '2023-01-01', '2023-12-31'),
+        (block_factory_id, 'blocks', 5.50, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'mortar', 40.00, '2023-01-01', '2023-12-31')
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO MaterialPrices (source_id, material, unit_cost, valid_from, valid_to)
+        VALUES (?, ?, ?, ?, ?)
+    ''', materials)
+
+    # Populate LaborRates table
+    labor_rates = [
+        (local_supplier_id, 'bricklaying', 25.00, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'concreting', 30.00, '2023-01-01', '2023-12-31')
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO LaborRates (source_id, task, rate, valid_from, valid_to)
+        VALUES (?, ?, ?, ?, ?)
+    ''', labor_rates)
+
+    # Populate Adjustments table
+    adjustments = [
+        ('default', 1.05, 1.0, 0.2),  # Default region
+        ('greater-accra', 1.07, 0.92, 0.25),  # Greater Accra region
+        ('ashanti', 1.06, 0.95, 0.22)  # Example for another region
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO Adjustments (region, concrete_waste_factor, labor_efficiency, thickness)
+        VALUES (?, ?, ?, ?)
+    ''', adjustments)
+
+    # Populate Plants table
+    plants = [
+        ('Mixer', 400.00, 0.2),  # Mixer: GHS 400/day, 0.2 days per m³
+        ('Crane', 1000.00, 0.1)  # Crane: GHS 1000/day, 0.1 days per m³
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO Plants (equipment, daily_rate, duration_per_unit)
+        VALUES (?, ?, ?)
+    ''', plants)
+
+    conn.commit()
+    conn.close()
+
+# Call the function to populate the database
+populate_initial_data()
 
 # Helper function to validate tokens
 def token_required(f):
@@ -119,6 +187,31 @@ def token_required(f):
             return jsonify({'message': 'Invalid token!'}), 401
         return f(*args, **kwargs)
     return decorated
+
+# Formula version endpoint
+@app.route('/api/version', methods=['GET'])
+def get_formula_version():
+    return jsonify({'version': '2023.1'})  # Update this version as needed
+
+# Dynamic adjustments API
+@app.route('/api/adjustments', methods=['GET'])
+@token_required
+def get_adjustments():
+    region = request.args.get('region', 'default').lower()
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT concrete_waste_factor, labor_efficiency, thickness FROM Adjustments WHERE region = ?', (region,))
+        result = cursor.fetchone()
+
+    if not result:
+        return jsonify({'message': f'Adjustments for region "{region}" not found'}), 404
+
+    concrete_waste_factor, labor_efficiency, thickness = result
+    return jsonify({
+        'concrete_waste_factor': concrete_waste_factor,
+        'labor_efficiency': labor_efficiency,
+        'thickness': thickness
+    })
 
 # GET /signup
 @app.route('/signup', methods=['GET'])
@@ -204,6 +297,7 @@ def calculation_page():
 def home():
     return render_template('index.html')
 
+# GET /projects
 @app.route('/projects', methods=['GET'])
 @token_required
 def get_projects():
@@ -213,19 +307,20 @@ def get_projects():
         projects = cursor.fetchall()
     return jsonify({'projects': projects})
 
-
+# POST /projects
 @app.route('/projects', methods=['POST'])
 @token_required
 def create_project():
     data = request.json
     project_name = data.get('project_name')
+    total_cost = data.get('total_cost', 0)
 
     if not project_name:
         return jsonify({'message': 'Project name is required'}), 400
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('INSERT INTO Projects (project_name) VALUES (?)', (project_name,))
+        cursor.execute('INSERT INTO Projects (project_name, total_cost) VALUES (?, ?)', (project_name, total_cost))
         conn.commit()
     return jsonify({'message': 'Project created successfully'}), 201
 
@@ -247,6 +342,41 @@ def get_labor_rates():
         labor_rates = cursor.fetchall()
     return jsonify({'labor_rates': labor_rates})
 
+# Consolidated Pricing Endpoint
+@app.route('/api/pricing-bundle', methods=['GET'])
+@token_required
+def get_pricing_bundle():
+    region = request.args.get('region', 'default')
+    
+    with sqlite3.connect('users.db') as conn:
+        # Materials
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT material, unit_cost 
+            FROM MaterialPrices
+            WHERE source_id IN (
+                SELECT id FROM Sources WHERE region = ?
+            )
+        ''', (region,))
+        materials = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        # Labor
+        cursor.execute('''
+            SELECT task, rate 
+            FROM LaborRates
+            WHERE source_id IN (
+                SELECT id FROM Sources WHERE region = ?
+            )
+        ''', (region,))
+        labor = {row[0]: row[1] for row in cursor.fetchall()}
+        
+    return jsonify({
+        'materials': materials,
+        'labor': labor,
+        'region': region,
+        'timestamp': datetime.now().isoformat()
+    })
+
 @app.route('/smm-rules', methods=['GET'])
 @token_required
 def get_smm_rules():
@@ -255,6 +385,67 @@ def get_smm_rules():
         cursor.execute('SELECT * FROM SMMRules')
         smm_rules = cursor.fetchall()
     return jsonify({'smm_rules': smm_rules})
+
+# GET /api/prices/:material
+@app.route('/api/prices/<material>', methods=['GET'])
+@token_required
+def get_material_price(material):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT unit_cost, valid_from, valid_to FROM MaterialPrices WHERE material = ?', (material,))
+        result = cursor.fetchone()
+
+    if not result:
+        return jsonify({'message': f'Price for material "{material}" not found'}), 404
+
+    unit_cost, valid_from, valid_to = result
+    return jsonify({
+        'material': material,
+        'unit_cost': unit_cost,
+        'valid_from': valid_from,
+        'valid_to': valid_to
+    })
+
+# GET /api/labor/:trade
+@app.route('/api/labor/<trade>', methods=['GET'])
+@token_required
+def get_labor_rate(trade):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        # Use the correct column name 'task' instead of 'trade'
+        cursor.execute('SELECT rate, valid_from, valid_to FROM LaborRates WHERE task = ?', (trade,))
+        result = cursor.fetchone()
+
+    if not result:
+        return jsonify({'message': f'Labor rate for task "{trade}" not found'}), 404
+
+    rate, valid_from, valid_to = result
+    return jsonify({
+        'trade': trade,
+        'rate': rate,
+        'valid_from': valid_from,
+        'valid_to': valid_to
+    })
+
+@app.route('/pdf-icon.svg')
+def pdf_icon():
+    return send_file('static/pdf-icon.svg', mimetype='image/svg+xml')
+
+@app.route('/api/plants', methods=['GET'])
+@token_required
+def get_plants():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT equipment, daily_rate, duration_per_unit FROM Plants')
+        plants = cursor.fetchall()
+
+    if not plants:
+        return jsonify({'message': 'No plant data found'}), 404
+
+    return jsonify([
+        {'equipment': plant[0], 'dailyRate': plant[1], 'durationPerUnit': plant[2]}
+        for plant in plants
+    ])
 
 if __name__ == '__main__':
     app.run(debug=True)
