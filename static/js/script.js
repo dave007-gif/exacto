@@ -35,90 +35,127 @@ let boqData = {
 };
 
 // Function to add an item to the BOQ
+// Modified addToBOQ to match your data structure
 function addToBOQ(component, quantity, unitCost) {
-// Map the component to its corresponding formula key
     const formulaKey = COMPONENT_TO_FORMULA_MAP[component];
-    if (!formulaKey) {
-        console.warn(`No mapping found for component: ${component}. Skipping.`);
-        return;
-    }
-
-    if (!SMM7_2023[formulaKey]) {
-        console.warn(`No formula found for mapped key: ${formulaKey}. Skipping.`);
-        return;
-    }
+    if (!formulaKey || !SMM7_2023[formulaKey]) return;
 
     const { workSection, mainCategory } = classifyComponent(component);
-    const totalCost = quantity * unitCost;
+    const total = quantity * unitCost;
 
+    // Standardized BOQ item with correct properties
+    const boqItem = {
+        itemCode: `ITEM-${Date.now().toString(36)}`,
+        category: component,
+        description: SMM7_2023[formulaKey].reference || component,
+        quantity: Number(quantity.toFixed(2)),
+        unit: "m³",
+        rate: Number(unitCost.toFixed(2)),  // Changed from unitCost
+        total: Number(total.toFixed(2))     // Changed from totalCost
+    };
+
+    // Initialize section if needed
     if (!boqData.workSections[workSection]) {
         boqData.workSections[workSection] = {
             description: SMM7_CATEGORIES[workSection]?.description || "Unclassified",
-            items: {},
-            total: 0,
+            items: [],
+            total: 0
         };
     }
 
-    const itemId = `item-${Date.now()}`;
-    boqData.workSections[workSection].items[itemId] = {
-        category: component,
-        quantity,
-        unitCost,
-        totalCost,
-    };
-
-    boqData.workSections[workSection].total += totalCost;
-    boqData.mainCategories[mainCategory].total += totalCost;
+    // Add to structures
+    boqData.workSections[workSection].items.push(boqItem);
+    boqData.workSections[workSection].total += boqItem.total;
+    boqData.mainCategories[mainCategory].total += boqItem.total;
 }
 
 // Function to generate the BOQ PDF
 async function generateBOQPDF() {
     const { PDFDocument, rgb } = PDFLib;
+    
+    // Validate BOQ data
     if (!boqData || Object.keys(boqData.workSections).length === 0) {
-        console.warn("No BOQ data available to generate the PDF.");
-        alert("No BOQ data available to generate the PDF.");
+        console.warn("No BOQ data available");
+        alert("No data to generate PDF");
         return;
     }
 
-    const pdfDoc = await document.create();
-    let page = pdfDoc.addPage([595, 842]);
-    let yPos = 800;
-    const margin = 50;
+    try {
+        const pdfDoc = await PDFDocument.create();
+        let page = pdfDoc.addPage([595, 842]);
+        let yPos = 800;
+        const margin = 50;
 
-    page.drawText("SMM7 BOQ Report", { x: margin, y: yPos, size: 18, color: rgb(0, 0, 0) });
-    yPos -= 30;
+        // Header
+        page.drawText("SMM7 BILL OF QUANTITIES", { 
+            x: margin, y: yPos, size: 16, color: rgb(0, 0, 0) 
+        });
+        yPos -= 40;
 
-    Object.entries(boqData.workSections).forEach(([section, data]) => {
-        page.drawText(`${section}: ${data.description}`, { x: margin, y: yPos, size: 14, color: rgb(0, 0, 0) });
-        yPos -= 20;
+        // Sections
+        Object.entries(boqData.workSections).forEach(([section, data]) => {
+            // Section header
+            page.drawText(`${section}: ${data.description}`, { 
+                x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) 
+            });
+            yPos -= 25;
 
-        page.drawText("Item | Description | Qty | Unit | Rate (GHS) | Total (GHS)", { x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) });
-        yPos -= 20;
-
-        Object.values(data.items).forEach((item) => {
-            const row = `${item.category} | N/A | ${item.quantity.toFixed(2)} | Unit | ${item.unitCost.toFixed(2)} | ${item.totalCost.toFixed(2)}`;
-            page.drawText(row, { x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) });
+            // Table headers
+            const headers = ["Code", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"];
+            page.drawText(headers.join(" | "), { 
+                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
+            });
             yPos -= 20;
 
-            if (yPos < 50) {
-                page = pdfDoc.addPage([595, 842]);
-                yPos = 800;
-            }
+            // Items
+            data.items.forEach(item => {
+                const row = [
+                    item.itemCode,
+                    item.description,
+                    item.quantity.toFixed(2),
+                    item.unit,
+                    `GHS ${item.rate.toFixed(2)}`,
+                    `GHS ${item.total.toFixed(2)}`
+                ].join(" | ");
+                
+                page.drawText(row, { 
+                    x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
+                });
+                yPos -= 15;
+
+                // New page if needed
+                if (yPos < 50) {
+                    page = pdfDoc.addPage([595, 842]);
+                    yPos = 800;
+                }
+            });
+
+            // Section total
+            page.drawText(`Section Total: GHS ${data.total.toFixed(2)}`, { 
+                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
+            });
+            yPos -= 30;
         });
 
-        page.drawText(`Subtotal for ${section}: GHS ${data.total.toFixed(2)}`, { x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) });
-        yPos -= 30;
-    });
+        // Grand total
+        const grandTotal = Object.values(boqData.workSections)
+            .reduce((sum, section) => sum + section.total, 0);
+        page.drawText(`GRAND TOTAL: GHS ${grandTotal.toFixed(2)}`, { 
+            x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) 
+        });
 
-    const grandTotal = Object.values(boqData.workSections).reduce((sum, section) => sum + section.total, 0);
-    page.drawText(`GRAND TOTAL: GHS ${grandTotal.toFixed(2)}`, { x: margin, y: yPos, size: 14, color: rgb(0, 0, 0) });
+        // Generate and download
+        const pdfBytes = await pdfDoc.save();
+        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `BOQ-${new Date().toISOString().slice(0,10)}.pdf`;
+        link.click();
 
-    const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([pdfBytes], { type: "application/pdf" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "SMM7-BOQ.pdf";
-    link.click();
+    } catch (error) {
+        console.error("PDF generation failed:", error);
+        alert("Failed to generate PDF. Check console for details.");
+    }
 }
 
 // Export functions for use in other modules
@@ -677,59 +714,103 @@ function classifyComponent(component) {
 }
 
 async function calculateCompositeRate(componentType, quantity) {
+    if (!componentType || !quantity || quantity <= 0) {
+        console.error('Invalid input:', { componentType, quantity });
+        return null;
+    }
+
     const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
     if (!formulaKey) {
-        console.warn(`No mapping found for component: ${componentType}. Skipping.`);
+        console.warn(`No mapping for component: ${componentType}`);
         return null;
     }
 
-    if (!SMM7_2023[formulaKey]) {
-        console.warn(`No formula found for mapped key: ${formulaKey}. Skipping.`);
+    const formulaConfig = SMM7_2023[formulaKey];
+    if (!formulaConfig) {
+        console.warn(`No formula config for key: ${formulaKey}`);
         return null;
     }
 
-    // Fetch material prices
-    const materialResponse = await fetch('/api/prices', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
-    const materialPrices = await materialResponse.json();
+    try {
+        // Single fetch for pricing bundle
+        const pricingResponse = await fetch(`/api/pricing-bundle?region=greater-accra`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
+        });
+        
+        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
+        const { materials, labor } = await pricingResponse.json();
 
-    // Fetch labor rates
-    const laborResponse = await fetch('/api/labor-rates', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
-    const laborRates = await laborResponse.json();
+        // Material cost with null checks
+        const materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
 
-    // Calculate material cost
-    const materialCost = SMM7_2023[formulaKey].calculateMaterialCost(quantity, materialPrices);
+        // Labor cost with fallbacks
+        const laborTask = formulaConfig.laborTasks?.[0];
+        const dailyRate = laborTask ? labor[laborTask] || 0 : 0;
+        const laborCalc = SMM7_2023.calculateLaborCost(
+            quantity,
+            8, // laborHoursPerUnit
+            1.0, // efficiency
+            8, // hoursPerDay
+            dailyRate,
+            laborTask // Added taskType parameter
+        );
+        const laborCost = laborCalc?.laborCost || 0;
 
-    // Calculate labor cost
-    const laborCost = SMM7_2023.calculateLaborCost(
-        quantity,
-        8, // Example labor hours per unit
-        1.0, // Efficiency factor
-        8, // Hours per day
-        laborRates[SMM7_2023[formulaKey].laborTasks[0]] || 0
-    ).laborCost;
+        // Plant cost using SMM7_2023 method with equipment validation
+        let plantCost = 0;
+        const equipmentList = formulaConfig.equipment || [];
 
-    // Calculate plant cost
-    const plantCost = await calculatePlantCost(quantity, SMM7_2023[formulaKey].equipment);
+        if (equipmentList.length > 0) {
+            try {
+                const plantData = await fetchPlantData();
+                const availablePlants = plantData.filter(p => 
+                    p.equipment && equipmentList.includes(p.equipment)
+                );
 
-    // Calculate overheads and profit
-    const overheads = (materialCost + laborCost + plantCost) * 0.15; // 15% overheads
-    const profit = (materialCost + laborCost + plantCost + overheads) * 0.10; // 10% profit
+                // Validate equipment availability
+                const missingEquipment = equipmentList.filter(e => 
+                    !plantData.some(p => p.equipment === e)
+                );
 
-    // Total composite rate
-    const totalCost = materialCost + laborCost + plantCost + overheads + profit;
+                if (missingEquipment.length > 0) {
+                    console.warn(`Missing equipment for ${componentType}:`, missingEquipment);
+                    // Optional: Add placeholder cost for missing equipment
+                    // missingEquipment.forEach(e => {
+                    //     console.warn(`Using default rate for missing equipment: ${e}`);
+                    //     availablePlants.push({ equipment: e, dailyRate: 0, durationPerUnit: 0 });
+                    // });
+                }
 
-    return {
-        materialCost,
-        laborCost,
-        plantCost,
-        overheads,
-        profit,
-        totalCost
-    };
+                if (availablePlants.length > 0) {
+                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
+                } else {
+                    console.warn(`No available plants found for ${componentType}`);
+                }
+            } catch (plantError) {
+                console.error(`Plant data error for ${componentType}:`, plantError);
+                // Consider whether to continue with plantCost=0 or abort
+            }
+        } else {
+            console.log(`No equipment required for ${componentType}`);
+        }
+
+        // Financial calculations with safeguards
+        const baseCost = materialCost + laborCost + plantCost;
+        const overheads = (baseCost * 0.15) || 0;
+        const profit = ((baseCost + overheads) * 0.10) || 0;
+        
+        return {
+            materialCost: Number(materialCost.toFixed(2)),
+            laborCost: Number(laborCost.toFixed(2)),
+            plantCost: Number(plantCost.toFixed(2)),
+            overheads: Number(overheads.toFixed(2)),
+            profit: Number(profit.toFixed(2)),
+            totalCost: Number((baseCost + overheads + profit).toFixed(2))
+        };
+    } catch (error) {
+        console.error(`Composite rate error for ${componentType}:`, error);
+        return null;
+    }
 }
 
 async function getAESLRate(component) {
@@ -747,65 +828,105 @@ async function getAESLRate(component) {
 
 
 async function generateSMM7BOQ() {
-    const components = await fetchCalculatedComponents(); // Fetch calculated components
+    // Reset BOQ data on each generation
+    boqData = {
+        workSections: {},
+        mainCategories: {
+            "Substructure": { items: [], total: 0 },
+            "Superstructure": { items: [], total: 0 },
+            "Other": { items: [], total: 0 }
+        },
+        summary: {}
+    };
 
-    for (const component of components) {
-        const { workSection, mainCategory } = classifyComponent(component.type);
-
-        // Calculate the composite rate for the component
-        const compositeRate = await calculateCompositeRate(component.type, component.quantity);
-
-        // Calculate the unit rate (rate per unit of quantity)
-        const unitRate = compositeRate.totalCost / component.quantity;
-
-        // Add to Work Section
-        if (!boqData.workSections[workSection]) {
-            boqData.workSections[workSection] = {
-                description: SMM7_CATEGORIES[workSection]?.description || "Unclassified",
-                items: [],
-                total: 0
-            };
+    try {
+        const components = await fetchCalculatedComponents();
+        if (!components?.length) {
+            alert("No components found to generate BOQ");
+            return;
         }
 
-        const boqItem = {
-            item: component.itemNumber,
-            description: component.description,
-            quantity: component.quantity,
-            unit: component.unit,
-            rate: unitRate, // Insert the calculated unit rate
-            total: compositeRate.totalCost // Total cost for the component
-        };
+        let validComponents = 0;
+        
+        for (const component of components) {
+            try {
+                const compositeRate = await calculateCompositeRate(component.type, component.quantity);
+                if (!compositeRate?.totalCost) {
+                    console.warn(`Skipping ${component.type} - invalid composite rate`);
+                    continue;
+                }
 
-        // Add to both structures
-        boqData.workSections[workSection].items.push(boqItem);
-        boqData.mainCategories[mainCategory].items.push(boqItem);
+                // Use addToBOQ instead of manual insertion
+                addToBOQ(
+                    component.type,
+                    component.quantity,
+                    compositeRate.totalCost / component.quantity // unitCost
+                );
+                
+                validComponents++;
+            } catch (componentError) {
+                console.error(`Error processing ${component.type}:`, componentError);
+                continue;
+            }
+        }
 
-        // Update totals
-        boqData.workSections[workSection].total += compositeRate.totalCost;
-        boqData.mainCategories[mainCategory].total += compositeRate.totalCost;
+        if (validComponents === 0) {
+            alert("No valid components to generate BOQ");
+            return;
+        }
+
+        if (!validateBOQStructure()) {
+            alert("Cannot generate PDF - invalid BOQ structure");
+            return;
+        }
+
+        await generateBOQPDF();
+        alert("BOQ Report has been successfully generated!");
+
+    } catch (globalError) {
+        console.error("BOQ generation failed:", globalError);
+        alert("Failed to generate BOQ. See console for details.");
     }
-
-    // Validate BOQ structure
-    if (!validateBOQStructure()) {
-        alert("The BOQ structure is invalid. Please check your inputs.");
-        return;
-    }
-
-    // Generate summary
-    Object.entries(boqData.mainCategories).forEach(([category, data]) => {
-        boqData.summary[category] = data.total;
-    });
-
-    // Generate the BOQ PDF
-    await generateBOQPDF();
 }
 
 function validateBOQStructure() {
-    return Object.values(boqData.workSections).every(section =>
-        section.items.every(item =>
-            SMM7_CATEGORIES[section.code]?.components.includes(item.type)
-        )
-    );
+    const errors = [];
+    
+    // Validate work sections
+    Object.entries(boqData.workSections).forEach(([sectionKey, section]) => {
+        if (!SMM7_CATEGORIES[sectionKey]) {
+            errors.push(`Invalid work section: ${sectionKey}`);
+        }
+        
+        // Validate items
+        section.items.forEach(item => {
+            if (!COMPONENT_TO_FORMULA_MAP[item.category]) {
+                errors.push(`Unmapped component: ${item.category}`);
+            }
+            if (isNaN(item.quantity)) {
+                errors.push(`Invalid quantity for ${item.category}`);
+            }
+            if (isNaN(item.rate)) {
+                errors.push(`Invalid rate for ${item.category}`);
+            }
+            if (isNaN(item.total)) {
+                errors.push(`Invalid total cost for ${item.category}`);
+            }
+        });
+    });
+
+    // Validate main categories
+    Object.keys(boqData.mainCategories).forEach(category => {
+        if (!['Substructure', 'Superstructure', 'Other'].includes(category)) {
+            errors.push(`Invalid main category: ${category}`);
+        }
+    });
+
+    if (errors.length > 0) {
+        console.error("BOQ Validation Errors:\n- " + errors.join("\n- "));
+        return false;
+    }
+    return true;
 }
 
 async function fetchPlantData() {

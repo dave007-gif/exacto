@@ -342,6 +342,41 @@ def get_labor_rates():
         labor_rates = cursor.fetchall()
     return jsonify({'labor_rates': labor_rates})
 
+# Consolidated Pricing Endpoint
+@app.route('/api/pricing-bundle', methods=['GET'])
+@token_required
+def get_pricing_bundle():
+    region = request.args.get('region', 'default')
+    
+    with sqlite3.connect('users.db') as conn:
+        # Materials
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT material, unit_cost 
+            FROM MaterialPrices
+            WHERE source_id IN (
+                SELECT id FROM Sources WHERE region = ?
+            )
+        ''', (region,))
+        materials = {row[0]: row[1] for row in cursor.fetchall()}
+        
+        # Labor
+        cursor.execute('''
+            SELECT task, rate 
+            FROM LaborRates
+            WHERE source_id IN (
+                SELECT id FROM Sources WHERE region = ?
+            )
+        ''', (region,))
+        labor = {row[0]: row[1] for row in cursor.fetchall()}
+        
+    return jsonify({
+        'materials': materials,
+        'labor': labor,
+        'region': region,
+        'timestamp': datetime.now().isoformat()
+    })
+
 @app.route('/smm-rules', methods=['GET'])
 @token_required
 def get_smm_rules():
