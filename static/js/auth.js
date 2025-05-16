@@ -14,16 +14,17 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({ email, password, user_type: userType }),
         });
 
+        const data = await response.json();
+
         if (response.ok) {
-          alert("Signup successful! Redirecting to the calculation page...");
-          window.location.href = "/calculation"; // Redirect
+          alert("Signup successful! Redirecting to login...");
+          window.location.href = "/login"; // Redirect to login page
         } else {
-          const error = await response.json();
-          alert("Signup failed: " + error.message);
+          alert(`Error: ${data.message}`);
         }
-      } catch (err) {
-        console.error("Error during signup:", err);
-        alert("An error occurred during signup. Please try again.");
+      } catch (error) {
+        console.error("Error during signup:", error);
+        alert("An error occurred. Please try again.");
       }
     });
   }
