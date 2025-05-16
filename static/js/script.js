@@ -35,90 +35,127 @@ let boqData = {
 };
 
 // Function to add an item to the BOQ
+// Modified addToBOQ to match your data structure
 function addToBOQ(component, quantity, unitCost) {
-// Map the component to its corresponding formula key
     const formulaKey = COMPONENT_TO_FORMULA_MAP[component];
-    if (!formulaKey) {
-        console.warn(`No mapping found for component: ${component}. Skipping.`);
-        return;
-    }
-
-    if (!SMM7_2023[formulaKey]) {
-        console.warn(`No formula found for mapped key: ${formulaKey}. Skipping.`);
-        return;
-    }
+    if (!formulaKey || !SMM7_2023[formulaKey]) return;
 
     const { workSection, mainCategory } = classifyComponent(component);
-    const totalCost = quantity * unitCost;
+    const total = quantity * unitCost;
 
+    // Standardized BOQ item with correct properties
+    const boqItem = {
+        itemCode: `ITEM-${Date.now().toString(36)}`,
+        category: component,
+        description: SMM7_2023[formulaKey].reference || component,
+        quantity: Number(quantity.toFixed(2)),
+        unit: "m³",
+        rate: Number(unitCost.toFixed(2)),  // Changed from unitCost
+        total: Number(total.toFixed(2))     // Changed from totalCost
+    };
+
+    // Initialize section if needed
     if (!boqData.workSections[workSection]) {
         boqData.workSections[workSection] = {
             description: SMM7_CATEGORIES[workSection]?.description || "Unclassified",
-            items: {},
-            total: 0,
+            items: [],
+            total: 0
         };
     }
 
-    const itemId = `item-${Date.now()}`;
-    boqData.workSections[workSection].items[itemId] = {
-        category: component,
-        quantity,
-        unitCost,
-        totalCost,
-    };
-
-    boqData.workSections[workSection].total += totalCost;
-    boqData.mainCategories[mainCategory].total += totalCost;
+    // Add to structures
+    boqData.workSections[workSection].items.push(boqItem);
+    boqData.workSections[workSection].total += boqItem.total;
+    boqData.mainCategories[mainCategory].total += boqItem.total;
 }
 
 // Function to generate the BOQ PDF
 async function generateBOQPDF() {
     const { PDFDocument, rgb } = PDFLib;
+    
+    // Validate BOQ data
     if (!boqData || Object.keys(boqData.workSections).length === 0) {
-        console.warn("No BOQ data available to generate the PDF.");
-        alert("No BOQ data available to generate the PDF.");
+        console.warn("No BOQ data available");
+        alert("No data to generate PDF");
         return;
     }
 
-    const pdfDoc = await document.create();
-    let page = pdfDoc.addPage([595, 842]);
-    let yPos = 800;
-    const margin = 50;
+    try {
+        const pdfDoc = await PDFDocument.create();
+        let page = pdfDoc.addPage([595, 842]);
+        let yPos = 800;
+        const margin = 50;
 
-    page.drawText("SMM7 BOQ Report", { x: margin, y: yPos, size: 18, color: rgb(0, 0, 0) });
-    yPos -= 30;
+        // Header
+        page.drawText("SMM7 BILL OF QUANTITIES", { 
+            x: margin, y: yPos, size: 16, color: rgb(0, 0, 0) 
+        });
+        yPos -= 40;
 
-    Object.entries(boqData.workSections).forEach(([section, data]) => {
-        page.drawText(`${section}: ${data.description}`, { x: margin, y: yPos, size: 14, color: rgb(0, 0, 0) });
-        yPos -= 20;
+        // Sections
+        Object.entries(boqData.workSections).forEach(([section, data]) => {
+            // Section header
+            page.drawText(`${section}: ${data.description}`, { 
+                x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) 
+            });
+            yPos -= 25;
 
-        page.drawText("Item | Description | Qty | Unit | Rate (GHS) | Total (GHS)", { x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) });
-        yPos -= 20;
-
-        Object.values(data.items).forEach((item) => {
-            const row = `${item.category} | N/A | ${item.quantity.toFixed(2)} | Unit | ${item.unitCost.toFixed(2)} | ${item.totalCost.toFixed(2)}`;
-            page.drawText(row, { x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) });
+            // Table headers
+            const headers = ["Code", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"];
+            page.drawText(headers.join(" | "), { 
+                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
+            });
             yPos -= 20;
 
-            if (yPos < 50) {
-                page = pdfDoc.addPage([595, 842]);
-                yPos = 800;
-            }
+            // Items
+            data.items.forEach(item => {
+                const row = [
+                    item.itemCode,
+                    item.description,
+                    item.quantity.toFixed(2),
+                    item.unit,
+                    `GHS ${item.rate.toFixed(2)}`,
+                    `GHS ${item.total.toFixed(2)}`
+                ].join(" | ");
+                
+                page.drawText(row, { 
+                    x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
+                });
+                yPos -= 15;
+
+                // New page if needed
+                if (yPos < 50) {
+                    page = pdfDoc.addPage([595, 842]);
+                    yPos = 800;
+                }
+            });
+
+            // Section total
+            page.drawText(`Section Total: GHS ${data.total.toFixed(2)}`, { 
+                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
+            });
+            yPos -= 30;
         });
 
-        page.drawText(`Subtotal for ${section}: GHS ${data.total.toFixed(2)}`, { x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) });
-        yPos -= 30;
-    });
+        // Grand total
+        const grandTotal = Object.values(boqData.workSections)
+            .reduce((sum, section) => sum + section.total, 0);
+        page.drawText(`GRAND TOTAL: GHS ${grandTotal.toFixed(2)}`, { 
+            x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) 
+        });
 
-    const grandTotal = Object.values(boqData.workSections).reduce((sum, section) => sum + section.total, 0);
-    page.drawText(`GRAND TOTAL: GHS ${grandTotal.toFixed(2)}`, { x: margin, y: yPos, size: 14, color: rgb(0, 0, 0) });
+        // Generate and download
+        const pdfBytes = await pdfDoc.save();
+        const blob = new Blob([pdfBytes], { type: "application/pdf" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `BOQ-${new Date().toISOString().slice(0,10)}.pdf`;
+        link.click();
 
-    const pdfBytes = await pdfDoc.save();
-    const blob = new Blob([pdfBytes], { type: "application/pdf" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.download = "SMM7-BOQ.pdf";
-    link.click();
+    } catch (error) {
+        console.error("PDF generation failed:", error);
+        alert("Failed to generate PDF. Check console for details.");
+    }
 }
 
 // Export functions for use in other modules
@@ -526,13 +563,290 @@ async function fetchLaborRates() {
     const response = await fetch('/labor-rates', {
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
     });
-    const data = await response.json();
-    console.log('Labor Rates:', data.labor_rates);
-    return data.labor_rates;
+
+    console.log("Response for fetchLaborRates:", response);
+
+    if (!response.ok) {
+        console.error('Failed to fetch labor rates:', response.statusText);
+        return [];
+    }
+
+    try {
+        const data = await response.json();
+        console.log('Labor Rates:', data.labor_rates);
+        return data.labor_rates;
+    } catch (error) {
+        console.error("Error parsing JSON in fetchLaborRates:", error);
+        return [];
+    }
 }
 
-async function fetchSMMRules() {
-    const response = await fetch('/smm-rules', {
+async function fetchPricesForComponent(componentType) {
+    const component = SMM7_2023[componentType];
+    if (!component) {
+        console.error(`Unknown component type: ${componentType}`);
+        return null;
+    }
+
+    // Fetch material prices
+    const materialPrices = {};
+    for (const material of component.materials) {
+        const materialData = await fetchMaterialRate(material);
+        if (materialData) {
+            materialPrices[material] = materialData.unit_cost;
+        }
+    }
+    console.log(`Material Prices for ${componentType}:`, materialPrices);
+
+    // Fetch labor rates
+    const laborRates = {};
+    for (const task of component.laborTasks || []) {
+        const laborData = await fetchLaborRate(task);
+        if (laborData) {
+            laborRates[task] = laborData.rate;
+        }
+    }
+    console.log(`Labor Rates for ${componentType}:`, laborRates);
+
+    return { materialPrices, laborRates };
+}
+
+// Clear invalid projects from local storage
+function clearInvalidProjects() {
+    const projects = JSON.parse(localStorage.getItem('projects')) || [];
+    const validProjects = projects.filter(project => project.totalCost && !isNaN(project.totalCost) && project.totalCost > 0);
+    localStorage.setItem('projects', JSON.stringify(validProjects));
+    console.log("Cleared invalid projects. Remaining projects:", validProjects);
+}
+clearInvalidProjects();
+
+// Function to display saved projects
+function displayProjects() {
+    const projects = JSON.parse(localStorage.getItem('projects')) || [];
+    console.log("Displaying projects:", projects); // Debugging line
+
+    const projectList = document.getElementById('project-list');
+    projectList.innerHTML = ''; // Clear existing projects
+
+    projects.forEach(project => {
+        if (!project.totalCost || isNaN(project.totalCost)) {
+            console.error("Invalid project data:", project);
+            return; // Skip invalid projects
+        }
+
+        const projectItem = document.createElement('div');
+        projectItem.classList.add('project-item');
+        projectItem.innerHTML = `
+            <h4>${project.name} (${project.component})</h4>
+            <p>Quantity: ${project.quantity} m³</p>
+            <p>Material Cost: GHS ${project.materialCost}</p>
+            <p>Labor Cost: GHS ${project.laborCost}</p>
+            <p>Plant Cost: GHS ${project.plantCost}</p>
+            <p>Total Cost: GHS ${project.totalCost}</p>
+            <p>Date: ${project.date}</p>
+        `;
+        projectList.appendChild(projectItem);
+    });
+}
+
+// Function to save a project
+function saveProject(projectName, componentType, quantity, totalMaterialCost, laborCost, plantCost, totalCost) {
+    if (!projectName || isNaN(totalCost)) {
+        console.error("Invalid project data:", { projectName, totalCost });
+        return;
+    }
+
+    const projects = JSON.parse(localStorage.getItem('projects')) || [];
+    projects.push({
+        name: projectName,
+        component: componentType,
+        quantity: quantity.toFixed(2),
+        materialCost: totalMaterialCost.toFixed(2),
+        laborCost: laborCost.toFixed(2),
+        plantCost: plantCost.toFixed(2),
+        totalCost: totalCost.toFixed(2),
+        date: new Date().toLocaleDateString()
+    });
+    localStorage.setItem('projects', JSON.stringify(projects));
+    console.log("Saved projects:", projects); // Debugging line
+}
+
+document.getElementById('save-project-btn').addEventListener('click', function () {
+    const projectName = prompt("Enter a name for this project:");
+    if (!projectName) {
+        alert("Project name is required.");
+        return;
+    }
+
+    // Collect all results
+    const results = document.querySelectorAll('.result-item');
+    let totalCost = 0;
+
+    results.forEach(result => {
+        const component = result.querySelector('h4').textContent;
+        const quantity = parseFloat(result.querySelector('p:nth-child(2)').textContent.split(': ')[1]);
+        const materialCost = parseFloat(result.querySelector('p:nth-child(3)').textContent.split(': ')[1].replace('GHS ', ''));
+        const laborCost = parseFloat(result.querySelector('p:nth-child(5)').textContent.split(': ')[1].replace('GHS ', ''));
+        const plantCost = parseFloat(result.querySelector('p:nth-child(6)').textContent.split(': ')[1].replace('GHS ', ''));
+        totalCost += materialCost + laborCost + plantCost;
+
+        saveProject(projectName, component, quantity, materialCost, laborCost, plantCost, materialCost + laborCost + plantCost);
+    });
+
+    alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
+
+    // Call displayProjects to update the DOM
+    displayProjects();
+});
+
+// Function to classify a component
+function classifyComponent(component) {
+    const workSection = Object.keys(SMM7_CATEGORIES).find((section) =>
+        SMM7_CATEGORIES[section].components.includes(component)
+    );
+
+    return {
+        workSection: workSection || "Z. Unclassified Works",
+        mainCategory: workSection
+            ? SMM7_CATEGORIES[workSection].mainCategory
+            : "Other",
+    };
+}
+
+async function calculateCompositeRate(componentType, quantity) {
+    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
+    if (!formulaKey) {
+        console.warn(`No mapping found for component: ${componentType}. Skipping.`);
+        return null;
+    }
+
+    if (!SMM7_2023[formulaKey]) {
+        console.warn(`No formula found for mapped key: ${formulaKey}. Skipping.`);
+        return null;
+    }
+
+    // Fetch material prices
+    const materialResponse = await fetch('/api/prices', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
+    });
+    const materialPrices = await materialResponse.json();
+
+    // Fetch labor rates
+    const laborResponse = await fetch('/api/labor-rates', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
+    });
+    const laborRates = await laborResponse.json();
+
+    // Calculate material cost
+    const materialCost = SMM7_2023[formulaKey].calculateMaterialCost(quantity, materialPrices);
+
+    // Calculate labor cost
+    const laborCost = SMM7_2023.calculateLaborCost(
+        quantity,
+        8, // Example labor hours per unit
+        1.0, // Efficiency factor
+        8, // Hours per day
+        laborRates[SMM7_2023[formulaKey].laborTasks[0]] || 0
+    ).laborCost;
+
+    // Calculate plant cost
+    const plantCost = await calculatePlantCost(quantity, SMM7_2023[formulaKey].equipment);
+
+    // Calculate overheads and profit
+    const overheads = (materialCost + laborCost + plantCost) * 0.15; // 15% overheads
+    const profit = (materialCost + laborCost + plantCost + overheads) * 0.10; // 10% profit
+
+    // Total composite rate
+    const totalCost = materialCost + laborCost + plantCost + overheads + profit;
+
+    return {
+        materialCost,
+        laborCost,
+        plantCost,
+        overheads,
+        profit,
+        totalCost
+    };
+}
+
+async function getAESLRate(component) {
+    const response = await fetch(`/api/aesl-rates/${component}?standard=SMM7`);
+    const rateData = await response.json();
+
+    return {
+        ...rateData,
+        workSection: SMM7_CATEGORIES[rateData.workSection]
+            ? rateData.workSection
+            : "Z. Unclassified Works"
+    };
+}
+
+
+
+async function generateSMM7BOQ() {
+    const components = await fetchCalculatedComponents(); // Fetch calculated components
+
+    for (const component of components) {
+        const { workSection, mainCategory } = classifyComponent(component.type);
+
+        // Calculate the composite rate for the component
+        const compositeRate = await calculateCompositeRate(component.type, component.quantity);
+
+        // Calculate the unit rate (rate per unit of quantity)
+        const unitRate = compositeRate.totalCost / component.quantity;
+
+        // Add to Work Section
+        if (!boqData.workSections[workSection]) {
+            boqData.workSections[workSection] = {
+                description: SMM7_CATEGORIES[workSection]?.description || "Unclassified",
+                items: [],
+                total: 0
+            };
+        }
+
+        const boqItem = {
+            item: component.itemNumber,
+            description: component.description,
+            quantity: component.quantity,
+            unit: component.unit,
+            rate: unitRate, // Insert the calculated unit rate
+            total: compositeRate.totalCost // Total cost for the component
+        };
+
+        // Add to both structures
+        boqData.workSections[workSection].items.push(boqItem);
+        boqData.mainCategories[mainCategory].items.push(boqItem);
+
+        // Update totals
+        boqData.workSections[workSection].total += compositeRate.totalCost;
+        boqData.mainCategories[mainCategory].total += compositeRate.totalCost;
+    }
+
+    // Validate BOQ structure
+    if (!validateBOQStructure()) {
+        alert("The BOQ structure is invalid. Please check your inputs.");
+        return;
+    }
+
+    // Generate summary
+    Object.entries(boqData.mainCategories).forEach(([category, data]) => {
+        boqData.summary[category] = data.total;
+    });
+
+    // Generate the BOQ PDF
+    await generateBOQPDF();
+}
+
+function validateBOQStructure() {
+    return Object.values(boqData.workSections).every(section =>
+        section.items.every(item =>
+            SMM7_CATEGORIES[section.code]?.components.includes(item.type)
+        )
+    );
+}
+
+async function fetchPlantData() {
+    const response = await fetch('/api/plants', {
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
     });
 
