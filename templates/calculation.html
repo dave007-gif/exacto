@@ -10,6 +10,19 @@
     <h1>Welcome to the Calculation Page</h1>
     <p>Here you can calculate building costs.</p>
 
+    <!-- Location Selectors -->
+    <div
+      id="location-fields"
+      data-role="professional,firm"
+      style="display: none"
+    >
+      <label for="project-location">Project Location:</label>
+      <select id="project-location"></select>
+
+      <label for="supplier-location">Supplier Location:</label>
+      <select id="supplier-location"></select>
+    </div>
+
     <h1>Takeoff and Estimation</h1>
 
     <article id="input-section">
@@ -133,6 +146,9 @@
       <section id="results">
         <h3>Calculation Results</h3>
         <div id="output"></div>
+        <div id="haulage-cost" style="display: none">
+          <p>Haulage Multiplier: <span id="haulage-multiplier">1.0</span></p>
+        </div>
         <button id="save-project-btn" style="display: none">
           Save Project
         </button>
@@ -144,10 +160,15 @@
       <div id="project-list"></div>
     </section>
 
-    <button id="generate-boq" class="boq-button">
+    <!-- Role-based PDF button -->
+    <!-- calculation.html - Update role check -->
+    {% if current_user.raw_roles.includes('professional') or
+    current_user.raw_roles.includes('firm') %}
+    <button id="generate-boq" class="boq-button" data-role="professional,firm">
       <img src="pdf-icon.svg" alt="PDF" />
       Generate BOQ Report
     </button>
+    {% endif %}
 
     <button id="logout-btn">Log Out</button>
     <script type="module" src="static/js/formulas.js"></script>

@@ -57,3 +57,51 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 });
+
+// Add to existing auth.js
+// Handle Forgot Password
+const forgotPasswordForm = document.getElementById('forgot-password-form');
+if (forgotPasswordForm) {
+    document.getElementById('reset-btn').addEventListener('click', async () => {
+        const email = document.getElementById('email').value;
+        
+        try {
+            const response = await fetch('/forgot-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+            
+            const data = await response.json();
+            alert(data.message);
+            if (response.ok) window.location.href = '/login';
+        } catch (error) {
+            console.error('Error:', error);
+            alert('An error occurred');
+        }
+    });
+}
+
+// Handle Password Reset
+const resetPasswordForm = document.getElementById('reset-password-form');
+if (resetPasswordForm) {
+    document.getElementById('submit-reset').addEventListener('click', async () => {
+        const token = document.getElementById('token').value;
+        const password = document.getElementById('password').value;
+        
+        try {
+            const response = await fetch(`/reset-password/${token}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ password })
+            });
+            
+            const data = await response.json();
+            alert(data.message);
+            if (response.ok) window.location.href = '/login';
+        } catch (error) {
+            console.error('Error:', error);
+            alert('An error occurred');
+        }
+    });
+}
