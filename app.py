@@ -11,12 +11,27 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_secret_key')  # Load from environment variable
 CORS(app, supports_credentials=True)
 
+# Add this region adjacency configuration at the top level of app.py
+REGION_NEIGHBORS = {
+    'Greater Accra': ['Eastern', 'Volta'],
+    'Ashanti': ['Eastern', 'Western', 'Central', 'Bono'],
+    'Western': ['Central', 'Ashanti'],
+    'Volta': ['Greater Accra', 'Eastern', 'Oti'],
+    'Eastern': ['Greater Accra', 'Ashanti', 'Volta', 'Bono East'],
+    'Central': ['Western', 'Ashanti', 'Greater Accra'],
+    # Add other regions as needed
+}
+
+def get_neighboring_regions(region):
+    """Return list of adjacent regions for a given region"""
+    return REGION_NEIGHBORS.get(region, [])
+
 # Initialize SQLite database
 def init_db():
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
 
-     # Users table with verification status
+    # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,9 +82,7 @@ def init_db():
         )
     ''')
 
-
-
-    # Modified Projects table with locations
+    # Projects table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS Projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,6 +153,17 @@ def init_db():
         )
     ''')
 
+    # Add password_resets table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS password_resets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL,
+            token TEXT NOT NULL UNIQUE,
+            expiration DATETIME NOT NULL
+        )
+    ''')
+
+
     conn.commit()
     conn.close()
 
@@ -148,33 +172,6 @@ init_db()
 def populate_initial_data():
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
-
-    # Add default roles
-    roles = [
-        ('student', 'Basic access tier'),
-        ('professional', 'Paid professional tier'),
-        ('firm', 'Enterprise license tier')
-    ]
-    cursor.executemany('INSERT OR IGNORE INTO roles (name, description) VALUES (?, ?)', roles)
-
-    # Add location zones
-    locations = [
-        ('Accra Metropolitan', 'Greater Accra'),
-        ('Kumasi North', 'Ashanti'),
-        ('Takoradi Central', 'Western')
-    ]
-    cursor.executemany('INSERT OR IGNORE INTO locations (zone, region) VALUES (?, ?)', locations)
-
-    # Add haulage bands
-    haulage_bands = [
-        ('<5 km', 0, 5, 1.0),
-        ('5–15 km', 5, 15, 1.2),
-        ('15+ km', 15, 9999, 1.5)
-    ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO HaulageBands (label, min_km, max_km, multiplier)
-        VALUES (?, ?, ?, ?)
-    ''', haulage_bands)
 
     # Populate Sources table
     cursor.execute('''
@@ -282,21 +279,85 @@ def role_required(*required_roles):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        token = request.cookies.get('authToken')  # Read token from cookies
+        token = request.cookies.get('authToken')
         if not token:
-            return jsonify({'message': 'Token is missing!'}), 401
+            return redirect('/login')
 
         try:
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+            request.user_id = data['user_id']
             request.user_email = data['email']
-        except jwt.ExpiredSignatureError:
-            print("Token has expired!")
-            return jsonify({'message': 'Token has expired!'}), 401
-        except jwt.InvalidTokenError:
-            print("Invalid token!")
-            return jsonify({'message': 'Invalid token!'}), 401
+            request.user_roles = data['roles']
+        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+            return redirect('/login')
+            
         return f(*args, **kwargs)
     return decorated
+
+# Password Reset Routes
+@app.route('/forgot-password', methods=['GET'])
+def forgot_password_page():
+    return render_template('forgot-password.html')
+
+@app.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    email = request.json.get('email')
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+        
+    if not user:
+        return jsonify({'message': 'If this email exists, we will send a reset link'}), 200
+
+    # Generate reset token (use secrets in production)
+    import secrets
+    token = secrets.token_urlsafe(32)
+    expiration = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO password_resets (email, token, expiration)
+            VALUES (?, ?, ?)
+        ''', (email, token, expiration))
+        conn.commit()
+
+    # In production: Send email with reset link
+    print(f"Password reset link: http://127.0.0.1:5000/reset-password/{token}")  # For development
+    return jsonify({'message': 'Reset link sent if email exists'})
+
+@app.route('/reset-password/<token>', methods=['GET'])
+def reset_password_page(token):
+    return render_template('reset-password.html', token=token)
+
+@app.route('/reset-password/<token>', methods=['POST'])
+def reset_password(token):
+    new_password = request.json.get('password')
+    
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT email FROM password_resets 
+            WHERE token = ? AND expiration > ?
+        ''', (token, datetime.now(timezone.utc)))
+        reset_request = cursor.fetchone()
+
+    if not reset_request:
+        return jsonify({'message': 'Invalid or expired token'}), 400
+
+    email = reset_request[0]
+    hashed_password = generate_password_hash(new_password, method='pbkdf2:sha256')
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE users SET password = ? WHERE email = ?
+        ''', (hashed_password, email))
+        cursor.execute('DELETE FROM password_resets WHERE token = ?', (token,))
+        conn.commit()
+
+    return jsonify({'message': 'Password updated successfully'})
 
 # Formula version endpoint
 @app.route('/api/version', methods=['GET'])
@@ -358,16 +419,10 @@ def signup():
     except sqlite3.IntegrityError:
         return jsonify({'message': 'User already exists'}), 400
 
-    # Generate token with roles
-    roles = get_user_roles(user_id)
-    token = jwt.encode({
-        'user_id': user_id,
-        'roles': roles,
-        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
-    }, app.config['SECRET_KEY'], algorithm="HS256")
-
-    response = make_response(jsonify({'message': 'Signup successful', 'roles': roles}))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
+    token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
+                       app.config['SECRET_KEY'], algorithm="HS256")
+    response = make_response(jsonify({'message': 'Signup successful!'}))
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
     return response
 
 # GET /login
@@ -383,21 +438,16 @@ def login():
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT id, password FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
 
     if not user or not check_password_hash(user[1], password):
         return jsonify({'message': 'Invalid credentials'}), 401
 
-    roles = get_user_roles(user[0])
-    token = jwt.encode({
-        'user_id': user[0],
-        'roles': roles,
-        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
-    }, app.config['SECRET_KEY'], algorithm="HS256")
-
-    response = make_response(jsonify({'message': 'Login successful', 'roles': roles}))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
+    token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
+                       app.config['SECRET_KEY'], algorithm="HS256")
+    response = make_response(jsonify({'message': 'Login successful!'}))
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
     return response
 
 # GET /protected (Example of a protected route)
@@ -414,14 +464,87 @@ def refresh_token():
                            app.config['SECRET_KEY'], algorithm="HS256")
     return jsonify({'token': new_token})
 
+# app.py - calculation_page route
 @app.route('/calculation', methods=['GET'])
 @token_required
 def calculation_page():
-    return render_template('calculation.html')
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT r.name FROM roles r
+            JOIN user_roles ur ON ur.role_id = r.id
+            WHERE ur.user_id = ?
+        ''', (request.user_id,))
+        roles = [row[0] for row in cursor.fetchall()]
+
+    return render_template('calculation.html',
+        current_user={
+            'roles': roles,
+            'email': request.user_email,
+            'raw_roles': ','.join(roles)  # Add this line
+        }
+    )
+
+# app.py - Add profile endpoint
+@app.route('/api/profile', methods=['GET'])
+@token_required
+def get_profile():
+    return jsonify({
+        'email': request.user_email,
+        'roles': request.user_roles
+    })
 
 @app.route('/')
 def home():
     return render_template('index.html')
+
+# Location and Haulage Endpoints
+@app.route('/api/locations', methods=['GET'])
+def get_locations():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT zone, region FROM locations')
+        locations = [{'zone': row[0], 'region': row[1]} for row in cursor.fetchall()]
+    return jsonify(locations)
+
+@app.route('/api/haulage-cost', methods=['POST'])
+@role_required('professional', 'firm')
+def calculate_haulage():
+    data = request.json
+    project_loc = data.get('project_location')
+    supplier_loc = data.get('supplier_location')
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        
+        # Get regions for locations
+        cursor.execute('SELECT region FROM locations WHERE zone = ?', (project_loc,))
+        project_region = cursor.fetchone()[0]
+        cursor.execute('SELECT region FROM locations WHERE zone = ?', (supplier_loc,))
+        supplier_region = cursor.fetchone()[0]
+
+    # Calculate approximate distance
+    if project_region == supplier_region:
+        distance = 3  # Same region
+    elif supplier_region in get_neighboring_regions(project_region):
+        distance = 10  # Adjacent regions
+    else:
+        distance = 20  # Non-adjacent regions
+
+    # Get haulage band
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT label, multiplier FROM HaulageBands
+            WHERE ? >= min_km AND ? < max_km
+        ''', (distance, distance))
+        band = cursor.fetchone()
+
+    return jsonify({
+        'band': band[0],
+        'multiplier': band[1],
+        'distance_km': distance
+    })
 
 # GET /projects
 @app.route('/projects', methods=['GET'])
@@ -436,7 +559,7 @@ def get_projects():
 # POST /projects
 @app.route('/projects', methods=['POST'])
 @token_required
-def create_project():
+def legacy_create_project():
     data = request.json
     project_name = data.get('project_name')
     total_cost = data.get('total_cost', 0)
@@ -449,6 +572,46 @@ def create_project():
         cursor.execute('INSERT INTO Projects (project_name, total_cost) VALUES (?, ?)', (project_name, total_cost))
         conn.commit()
     return jsonify({'message': 'Project created successfully'}), 201
+
+# Project Management Endpoints
+@app.route('/api/projects', methods=['POST'])
+@role_required('professional', 'firm')
+def api_create_project():
+    data = request.json
+    project_name = data.get('project_name')
+    project_loc = data.get('project_location')
+    supplier_loc = data.get('supplier_location')
+
+    if not project_name:
+        return jsonify({'message': 'Project name required'}), 400
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO Projects (user_id, project_name, project_location, supplier_location)
+            VALUES (?, ?, ?, ?)
+        ''', (request.user_id, project_name, project_loc, supplier_loc))
+        conn.commit()
+
+    return jsonify({'message': 'Project created'}), 201
+
+# Supplier Management Endpoints
+@app.route('/api/suppliers', methods=['POST'])
+@role_required('professional', 'firm')
+def add_supplier():
+    data = request.json
+    name = data.get('name')
+    region = data.get('region')
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO Sources (name, type, region)
+            VALUES (?, 'supplier', ?)
+        ''', (name, region))
+        conn.commit()
+
+    return jsonify({'message': 'Supplier added'}), 201
 
 @app.route('/materials', methods=['GET'])
 @token_required
@@ -568,6 +731,17 @@ def get_plants():
         {'equipment': plant[0], 'dailyRate': plant[1], 'durationPerUnit': plant[2]}
         for plant in plants
     ])
+
+@app.route('/api/verify-auth', methods=['GET'])
+@token_required
+def verify_auth():
+    return jsonify({'valid': True})
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    response = jsonify({'message': 'Logged out successfully'})
+    response.set_cookie('authToken', '', expires=0)
+    return response
 
 if __name__ == '__main__':
     app.run(debug=True)

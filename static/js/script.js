@@ -2,6 +2,8 @@ import { SMM7_2023 } from './formulas.js';
 import { SMM7_CATEGORIES } from './smm7_categories.js';
 import { COMPONENT_TO_FORMULA_MAP } from './component_to_formula_map.js';
 
+
+
 // Function to validate consistency between SMM7_CATEGORIES and SMM7_2023
 function validateSMM7Data() {
     const missingFormulas = [];
@@ -23,7 +25,10 @@ function validateSMM7Data() {
 // Call the validation function during initialization
 validateSMM7Data();
 
-// BOQ Data Structure
+// Initialize haulage multiplier
+let haulageMultiplier = 1.0;
+
+// BOQ Data Structure with haulage support
 let boqData = {
     workSections: {},
     mainCategories: {
@@ -31,27 +36,32 @@ let boqData = {
         "Superstructure": { items: [], total: 0 },
         "Other": { items: [], total: 0 }
     },
-    summary: {}
+    summary: {},
+    haulage: {
+        multiplier: 1.0,
+        band: ''
+    }
 };
 
 // Function to add an item to the BOQ
 // Modified addToBOQ to match your data structure
+// Modified addToBOQ with haulage calculation
 function addToBOQ(component, quantity, unitCost) {
     const formulaKey = COMPONENT_TO_FORMULA_MAP[component];
     if (!formulaKey || !SMM7_2023[formulaKey]) return;
 
     const { workSection, mainCategory } = classifyComponent(component);
-    const total = quantity * unitCost;
+    const total = quantity * unitCost * haulageMultiplier;
 
-    // Standardized BOQ item with correct properties
     const boqItem = {
         itemCode: `ITEM-${Date.now().toString(36)}`,
         category: component,
         description: SMM7_2023[formulaKey].reference || component,
         quantity: Number(quantity.toFixed(2)),
         unit: "m³",
-        rate: Number(unitCost.toFixed(2)),  // Changed from unitCost
-        total: Number(total.toFixed(2))     // Changed from totalCost
+        rate: Number(unitCost.toFixed(2)),
+        total: Number(total.toFixed(2)),
+        haulageMultiplier
     };
 
     // Initialize section if needed
@@ -99,6 +109,12 @@ async function generateBOQPDF() {
                 x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) 
             });
             yPos -= 25;
+
+            // Add haulage information
+            page.drawText(`Haulage Band: ${boqData.haulage.band} (Multiplier: ${boqData.haulage.multiplier}x)`, {
+                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0)
+            });
+            yPos -= 20;
 
             // Table headers
             const headers = ["Code", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"];
@@ -162,12 +178,103 @@ async function generateBOQPDF() {
 //export { addToBOQ, generateBOQPDF };
 
 document.addEventListener('DOMContentLoaded', async function () {
-    // Check for authentication token
+    /*// Check for authentication token
     const token = localStorage.getItem("authToken");
     if (!token) {
         alert("You must be logged in to access this page.");
         window.location.href = "/login"; // Redirect to login page
+    }*/
+
+
+    // Initialize user roles
+    let userRoles = [];
+    try {
+        const response = await fetch('/api/profile', { credentials: 'include' });
+        const profile = await response.json();
+        userRoles = profile.roles;
+        checkRoleVisibility();
+    } catch (error) {
+        console.error('Error fetching profile:', error);
     }
+
+    // Check authentication via cookie
+    try {
+        await fetch('/api/verify-auth', { credentials: 'include' });
+    } catch (error) {
+        window.location.href = '/login';
+    }
+
+    // Load locations
+    const loadLocations = async () => {
+        try {
+            const response = await fetch('/api/locations');
+            const locations = await response.json();
+            
+            const createSelect = (parentId) => {
+                const select = document.createElement('select');
+                locations.forEach(loc => {
+                    const option = document.createElement('option');
+                    option.value = loc.zone;
+                    option.textContent = `${loc.zone} (${loc.region})`;
+                    select.appendChild(option);
+                });
+                document.getElementById(parentId).appendChild(select);
+            };
+
+            createSelect('project-location');
+            createSelect('supplier-location');
+            
+            // Add haulage calculation listeners
+            document.getElementById('project-location').addEventListener('change', updateHaulage);
+            document.getElementById('supplier-location').addEventListener('change', updateHaulage);
+        } catch (error) {
+            console.error('Error loading locations:', error);
+        }
+    };
+
+    // Load initial data
+    await loadLocations();
+
+    // Role-based UI adjustments
+    // script.js - Modify checkRoleVisibility
+    const checkRoleVisibility = () => {
+        const roleElements = document.querySelectorAll('[data-role]');
+        roleElements.forEach(element => {
+            const requiredRoles = element.dataset.role.split(',');
+            element.style.display = requiredRoles.some(role => 
+                userRoles.includes(role.trim())
+            ) ? 'block' : 'none';
+        });
+    };
+
+     checkRoleVisibility();
+
+    // Haulage calculation handler
+    const updateHaulage = async () => {
+        const projectLoc = document.getElementById('project-location').value;
+        const supplierLoc = document.getElementById('supplier-location').value;
+
+        try {
+            const response = await fetch('/api/haulage-cost', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ project_location: projectLoc, supplier_location: supplierLoc }),
+                credentials: 'include'
+            });
+
+            const data = await response.json();
+            haulageMultiplier = data.multiplier;
+            boqData.haulage = {
+                multiplier: data.multiplier,
+                band: data.band
+            };
+            
+            document.getElementById('haulage-multiplier').textContent = data.multiplier;
+            document.getElementById('haulage-cost').style.display = 'block';
+        } catch (error) {
+            console.error('Haulage calculation failed:', error);
+        }
+    };
 
     // Check formula version
     const response = await fetch('/api/version');
@@ -199,7 +306,7 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
     });
 
-    // Handle Logout
+    /*// Handle Logout
     const logoutButton = document.getElementById("logout-btn");
     if (logoutButton) {
         logoutButton.addEventListener("click", async () => {
@@ -212,7 +319,19 @@ document.addEventListener('DOMContentLoaded', async function () {
                 alert("An error occurred during logout. Please try again.");
             }
         });
-    }
+    }*/
+
+    // Modified logout handler
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+        try {
+            await fetch('/logout', { credentials: 'include' });
+            window.location.href = '/login';
+        } catch (error) {
+            console.error('Logout failed:', error);
+        }
+    });
+
+
 
     // DOM Elements
     const componentSelect = document.getElementById("elements");
@@ -365,6 +484,8 @@ console.log("Input value is valid:", numericValue); // Debugging line here
             }
             console.log("Collected input values:", inputValues);
 
+            
+
             // Fetch material and labor prices for the selected component type
             const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
             if (!formulaKey) {
@@ -439,6 +560,11 @@ console.log("Input value is valid:", numericValue); // Debugging line here
             );
             const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
 
+            // Apply haulage multiplier
+            totalMaterialCost *= haulageMultiplier;
+            labor.laborCost *= haulageMultiplier;
+            plantCost *= haulageMultiplier;
+
             console.log("Plant Data:", relevantPlants);
             console.log("Calculated Plant Cost:", plantCost);
 
@@ -492,8 +618,10 @@ console.log("Input value is valid:", numericValue); // Debugging line here
 // Fetch material rate for a specific material
 async function fetchMaterialRate(material) {
     const response = await fetch(`/api/prices/${material}?region=greater-accra`, {
+        credentials: 'include'
+    });/*{
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
+    });*/
 
     console.log("Response for fetchMaterialRate:", response);
 
@@ -515,8 +643,10 @@ async function fetchMaterialRate(material) {
 // Fetch labor rate for a specific trade
 async function fetchLaborRate(trade) {
     const response = await fetch(`/api/labor/${trade}`, {
+        credentials: 'include'
+    });/*{
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
+    });*/
 
     console.log("Response for fetchLaborRate:", response);
 
@@ -535,7 +665,7 @@ async function fetchLaborRate(trade) {
     }
 }
 
-// Fetch all materials
+/*// Fetch all materials
 async function fetchMaterials() {
     const response = await fetch('/materials', {
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
@@ -556,16 +686,16 @@ async function fetchMaterials() {
         console.error("Error parsing JSON in fetchMaterials:", error);
         return [];
     }
-}
+}*/
 
-// Fetch all labor rates
+/*// Fetch all labor rates
 async function fetchLaborRates() {
     const response = await fetch('/labor-rates', {
         headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
     });
 
     console.log("Response for fetchLaborRates:", response);
-
+y
     if (!response.ok) {
         console.error('Failed to fetch labor rates:', response.statusText);
         return [];
@@ -579,7 +709,7 @@ async function fetchLaborRates() {
         console.error("Error parsing JSON in fetchLaborRates:", error);
         return [];
     }
-}
+}*/
 
 async function fetchPricesForComponent(componentType) {
     const component = SMM7_2023[componentType];
@@ -649,7 +779,7 @@ function displayProjects() {
     });
 }
 
-// Function to save a project
+/*// Function to save a project
 function saveProject(projectName, componentType, quantity, totalMaterialCost, laborCost, plantCost, totalCost) {
     if (!projectName || isNaN(totalCost)) {
         console.error("Invalid project data:", { projectName, totalCost });
@@ -669,6 +799,31 @@ function saveProject(projectName, componentType, quantity, totalMaterialCost, la
     });
     localStorage.setItem('projects', JSON.stringify(projects));
     console.log("Saved projects:", projects); // Debugging line
+}*/
+
+// Modified project saving with locations
+async function saveProject(projectData) {
+    const projectLoc = document.getElementById('project-location').value;
+    const supplierLoc = document.getElementById('supplier-location').value;
+
+    try {
+        const response = await fetch('/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...projectData,
+                project_location: projectLoc,
+                supplier_location: supplierLoc
+            }),
+            credentials: 'include'
+        });
+
+        if (!response.ok) throw new Error('Project save failed');
+        return await response.json();
+    } catch (error) {
+        console.error('Error saving project:', error);
+        throw error;
+    }
 }
 
 document.getElementById('save-project-btn').addEventListener('click', function () {
@@ -828,6 +983,7 @@ async function getAESLRate(component) {
 
 
 async function generateSMM7BOQ() {
+    
     // Reset BOQ data on each generation
     boqData = {
         workSections: {},
