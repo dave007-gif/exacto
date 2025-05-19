@@ -233,6 +233,33 @@ def populate_initial_data():
         VALUES (?, ?, ?)
     ''', plants)
 
+    # Populate Locations table
+    locations = [
+        ('Accra Central', 'Greater Accra'),
+        ('Tema', 'Greater Accra'),
+        ('Kumasi', 'Ashanti'),
+        ('Takoradi', 'Western'),
+        ('Ho', 'Volta'),
+        ('Koforidua', 'Eastern'),
+        ('Cape Coast', 'Central'),
+        # Add more as needed
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO locations (zone, region)
+        VALUES (?, ?)
+    ''', locations)
+
+    # --- Add this block to ensure roles exist ---
+    roles = [
+        ('professional', 'Professional user'),
+        ('firm', 'Firm user'),
+        ('student', 'Student user')
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO roles (name, description)
+        VALUES (?, ?)
+    ''', roles)
+
     conn.commit()
     conn.close()
 
@@ -395,7 +422,8 @@ def signup():
     data = request.json
     email = data.get('email')
     password = data.get('password')
-    role = data.get('role', 'student')
+    # Accept both 'role' and 'user_type' for compatibility
+    role = data.get('role') or data.get('user_type') or 'student'
 
     if not email or not password:
         return jsonify({'message': 'Missing required fields'}), 400
@@ -408,21 +436,37 @@ def signup():
             cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)',
                            (email, hashed_password))
             user_id = cursor.lastrowid
-            
+
             # Assign role
             cursor.execute('SELECT id FROM roles WHERE name = ?', (role,))
-            role_id = cursor.fetchone()[0]
-            cursor.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)',
-                           (user_id, role_id))
-            
+            role_row = cursor.fetchone()
+            if not role_row:
+                return jsonify({'message': f'Role "{role}" does not exist'}), 400
+            role_id = role_row[0]
+            cursor.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', (user_id, role_id))
+
             conn.commit()
     except sqlite3.IntegrityError:
         return jsonify({'message': 'User already exists'}), 400
 
-    token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
-                       app.config['SECRET_KEY'], algorithm="HS256")
+    # Fetch roles
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT r.name FROM roles r
+            JOIN user_roles ur ON ur.role_id = r.id
+            WHERE ur.user_id = ?
+        ''', (user_id,))
+        roles = [row[0] for row in cursor.fetchall()]
+
+    token = jwt.encode({
+        'email': email,
+        'user_id': user_id,
+        'roles': roles,
+        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
     response = make_response(jsonify({'message': 'Signup successful!'}))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
     return response
 
 # GET /login
@@ -438,16 +482,32 @@ def login():
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT id, password FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
 
     if not user or not check_password_hash(user[1], password):
         return jsonify({'message': 'Invalid credentials'}), 401
 
-    token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
-                       app.config['SECRET_KEY'], algorithm="HS256")
+    user_id = user[0]
+
+    # Fetch roles
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT r.name FROM roles r
+            JOIN user_roles ur ON ur.role_id = r.id
+            WHERE ur.user_id = ?
+        ''', (user_id,))
+        roles = [row[0] for row in cursor.fetchall()]
+
+    token = jwt.encode({
+        'email': email,
+        'user_id': user_id,
+        'roles': roles,
+        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
     response = make_response(jsonify({'message': 'Login successful!'}))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
     return response
 
 # GET /protected (Example of a protected route)

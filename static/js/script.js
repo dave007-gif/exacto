@@ -2,14 +2,15 @@ import { SMM7_2023 } from './formulas.js';
 import { SMM7_CATEGORIES } from './smm7_categories.js';
 import { COMPONENT_TO_FORMULA_MAP } from './component_to_formula_map.js';
 
-
+// --- Debug: Script loaded ---
+console.log("script.js loaded");
 
 // Function to validate consistency between SMM7_CATEGORIES and SMM7_2023
 function validateSMM7Data() {
     const missingFormulas = [];
     Object.keys(SMM7_CATEGORIES).forEach((category) => {
         SMM7_CATEGORIES[category].components.forEach((component) => {
-            const formulaKey = COMPONENT_TO_FORMULA_MAP[component]; // Use the mapping layer
+            const formulaKey = COMPONENT_TO_FORMULA_MAP[component];
             if (!formulaKey || !SMM7_2023[formulaKey]) {
                 missingFormulas.push(component);
             }
@@ -21,14 +22,10 @@ function validateSMM7Data() {
         throw new Error(`The following components are missing formulas: ${missingFormulas.join(", ")}`);
     }
 }
-
-// Call the validation function during initialization
 validateSMM7Data();
 
-// Initialize haulage multiplier
 let haulageMultiplier = 1.0;
 
-// BOQ Data Structure with haulage support
 let boqData = {
     workSections: {},
     mainCategories: {
@@ -178,151 +175,342 @@ async function generateBOQPDF() {
 //export { addToBOQ, generateBOQPDF };
 
 document.addEventListener('DOMContentLoaded', async function () {
-    /*// Check for authentication token
-    const token = localStorage.getItem("authToken");
-    if (!token) {
-        alert("You must be logged in to access this page.");
-        window.location.href = "/login"; // Redirect to login page
-    }*/
-
-
-    // Initialize user roles
-    let userRoles = [];
+    console.log("DOMContentLoaded event fired");
     try {
-        const response = await fetch('/api/profile', { credentials: 'include' });
-        const profile = await response.json();
-        userRoles = profile.roles;
-        checkRoleVisibility();
+        await checkAuthentication();
+        const userRoles = await fetchUserRoles();
+        console.log("User roles:", userRoles);
+        console.log("User roles array:", userRoles, typeof userRoles[0]); // <-- Add here
+        checkRoleVisibility(userRoles);
+
+        await loadLocations();
+        await checkFormulaVersion();
+        await fetchInitialRates();
+
+        setupInputValidation();
+        setupComponentDropdown();
+        setupCalculateButtons();
+        setupSaveProjectButton();
+        setupGenerateBOQButton();
+        setupLogoutButton();
+
+        displayProjects();
+    } catch (error) {
+        console.error("Initialization failed:", error);
+        alert("A critical error occurred during initialization. Please reload the page.");
+    }
+});
+
+// --- Modularized Functions ---
+
+async function checkAuthentication() {
+    try {
+        const res = await fetch('/api/verify-auth', { credentials: 'include' });
+        if (!res.ok) throw new Error("Not authenticated");
+        console.log("Authentication verified");
+    } catch (err) {
+        console.error("Authentication check failed:", err);
+        window.location.href = '/login';
+        throw new Error("Redirecting to login");
+    }
+}
+
+async function fetchUserRoles() {
+    try {
+        const res = await fetch('/api/profile', { credentials: 'include' });
+        if (!res.ok) throw new Error("Profile fetch failed");
+        const profile = await res.json();
+        console.log("Fetched profile:", profile);
+        return profile.roles || [];
     } catch (error) {
         console.error('Error fetching profile:', error);
+        return [];
     }
+}
 
-    // Check authentication via cookie
+function checkRoleVisibility(userRoles) {
+    console.log("Checking role-based visibility for:", userRoles);
+    const roleElements = document.querySelectorAll('[data-role]');
+    roleElements.forEach(element => {
+        const requiredRoles = element.dataset.role.split(',');
+        const shouldShow = requiredRoles.some(role => userRoles.includes(role.trim()));
+        element.style.display = shouldShow ? 'block' : 'none';
+        console.log(`Element with data-role="${element.dataset.role}" set to display: ${shouldShow ? 'block' : 'none'}`);
+    });
+}
+
+async function loadLocations() {
     try {
-        await fetch('/api/verify-auth', { credentials: 'include' });
-    } catch (error) {
-        window.location.href = '/login';
-    }
+        const res = await fetch('/api/locations');
+        if (!res.ok) throw new Error("Locations fetch failed");
+        const locations = await res.json();
+        console.log("Loaded locations:", locations);
 
-    // Load locations
-    const loadLocations = async () => {
-        try {
-            const response = await fetch('/api/locations');
-            const locations = await response.json();
-            
-            const createSelect = (parentId) => {
-                const select = document.createElement('select');
+        // Populate the existing select elements
+        ['project-location', 'supplier-location'].forEach(selectId => {
+            const select = document.getElementById(selectId);
+            if (select) {
+                select.innerHTML = '';
                 locations.forEach(loc => {
                     const option = document.createElement('option');
                     option.value = loc.zone;
                     option.textContent = `${loc.zone} (${loc.region})`;
                     select.appendChild(option);
                 });
-                document.getElementById(parentId).appendChild(select);
-            };
-
-            createSelect('project-location');
-            createSelect('supplier-location');
-            
-            // Add haulage calculation listeners
-            document.getElementById('project-location').addEventListener('change', updateHaulage);
-            document.getElementById('supplier-location').addEventListener('change', updateHaulage);
-        } catch (error) {
-            console.error('Error loading locations:', error);
-        }
-    };
-
-    // Load initial data
-    await loadLocations();
-
-    // Role-based UI adjustments
-    // script.js - Modify checkRoleVisibility
-    const checkRoleVisibility = () => {
-        const roleElements = document.querySelectorAll('[data-role]');
-        roleElements.forEach(element => {
-            const requiredRoles = element.dataset.role.split(',');
-            element.style.display = requiredRoles.some(role => 
-                userRoles.includes(role.trim())
-            ) ? 'block' : 'none';
-        });
-    };
-
-     checkRoleVisibility();
-
-    // Haulage calculation handler
-    const updateHaulage = async () => {
-        const projectLoc = document.getElementById('project-location').value;
-        const supplierLoc = document.getElementById('supplier-location').value;
-
-        try {
-            const response = await fetch('/api/haulage-cost', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ project_location: projectLoc, supplier_location: supplierLoc }),
-                credentials: 'include'
-            });
-
-            const data = await response.json();
-            haulageMultiplier = data.multiplier;
-            boqData.haulage = {
-                multiplier: data.multiplier,
-                band: data.band
-            };
-            
-            document.getElementById('haulage-multiplier').textContent = data.multiplier;
-            document.getElementById('haulage-cost').style.display = 'block';
-        } catch (error) {
-            console.error('Haulage calculation failed:', error);
-        }
-    };
-
-    // Check formula version
-    const response = await fetch('/api/version');
-    const { version } = await response.json();
-    const storedVersion = localStorage.getItem('formulaVersion');
-
-    if (version !== storedVersion) {
-        alert('New calculation methods are available. Please refresh the page.');
-        localStorage.setItem('formulaVersion', version);
-    }
-
-    // Fetch dynamic adjustments
-    const region = 'greater-accra'; // Example region
-    const adjustmentsResponse = await fetch(`/api/adjustments?region=${region}`);
-    const adjustments = await adjustmentsResponse.json();
-    console.log("Adjustments:", adjustments);
-
-    // Example: Fetch the rate for cement
-    fetchMaterialRate('cement').then(data => {
-        if (data) {
-            console.log(`Cement rate: ${data.unit_cost} GHS`);
-        }
-    });
-
-    // Example: Fetch the labor rate for bricklaying
-    fetchLaborRate('bricklaying').then(data => {
-        if (data) {
-            console.log(`Bricklaying rate: ${data.rate} GHS`);
-        }
-    });
-
-    /*// Handle Logout
-    const logoutButton = document.getElementById("logout-btn");
-    if (logoutButton) {
-        logoutButton.addEventListener("click", async () => {
-            try {
-                document.cookie = "authToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-                alert("You have been logged out.");
-                window.location.href = "/login"; // Redirect to login page
-            } catch (err) {
-                console.error("Error during logout:", err);
-                alert("An error occurred during logout. Please try again.");
+                select.addEventListener('change', updateHaulage);
+                console.log(`Populated location select for ${selectId}`);
+            } else {
+                console.warn(`Select element not found for ${selectId}`);
             }
         });
-    }*/
+    } catch (error) {
+        console.error('Error loading locations:', error);
+    }
+}
 
-    // Modified logout handler
-    document.getElementById('logout-btn').addEventListener('click', async () => {
+async function checkFormulaVersion() {
+    try {
+        const res = await fetch('/api/version');
+        if (!res.ok) throw new Error("Version fetch failed");
+        const { version } = await res.json();
+        const storedVersion = localStorage.getItem('formulaVersion');
+        if (version !== storedVersion) {
+            alert('New calculation methods are available. Please refresh the page.');
+            localStorage.setItem('formulaVersion', version);
+        }
+        console.log("Formula version checked:", version);
+    } catch (error) {
+        console.error('Error checking formula version:', error);
+    }
+}
+
+async function fetchInitialRates() {
+    try {
+        const cement = await fetchMaterialRate('cement');
+        if (cement) console.log(`Cement rate: ${cement.unit_cost} GHS`);
+        const labor = await fetchLaborRate('bricklaying');
+        if (labor) console.log(`Bricklaying rate: ${labor.rate} GHS`);
+    } catch (error) {
+        console.error('Error fetching initial rates:', error);
+    }
+}
+
+function setupInputValidation() {
+    console.log("Setting up input validation");
+    const inputs = document.getElementsByTagName('input');
+    for (let i = 0; i < inputs.length; i++) {
+        inputs[i].addEventListener('input', function () { validateInput(this); });
+        inputs[i].addEventListener('blur', function () { validateInput(this); });
+    }
+}
+
+function setupComponentDropdown() {
+    console.log("Setting up component dropdown");
+    const componentSelect = document.getElementById("elements");
+    const trenchFieldset = document.getElementById("trenchField");
+    const blockworkFieldset = document.getElementById("blockworkField");
+    if (!componentSelect || !trenchFieldset || !blockworkFieldset) {
+        console.warn("Component dropdown or fieldsets not found");
+        return;
+    }
+
+    componentSelect.addEventListener("change", function () {
+        const selectedOptions = componentSelect.selectedOptions;
+        let isTrenchSelected = false, isBlockworkSelected = false;
+        for (let i = 0; i < selectedOptions.length; i++) {
+            const optionValue = selectedOptions[i].value;
+            if (optionValue === "concrete in trench") isTrenchSelected = true;
+            if (optionValue === "blockwork in foundation") isBlockworkSelected = true;
+        }
+        trenchFieldset.style.display = isTrenchSelected ? "block" : "none";
+        trenchFieldset.querySelectorAll("input").forEach(input => input.required = isTrenchSelected);
+        blockworkFieldset.style.display = isBlockworkSelected ? "block" : "none";
+        blockworkFieldset.querySelectorAll("input").forEach(input => input.required = isBlockworkSelected);
+        console.log("Dropdown changed. Trench:", isTrenchSelected, "Blockwork:", isBlockworkSelected);
+    });
+}
+
+function setupCalculateButtons() {
+    console.log("Setting up calculate buttons");
+    const buttons = document.querySelectorAll('.calculate-btn');
+    if (!buttons.length) {
+        console.warn("No calculate buttons found");
+        return;
+    }
+    let calculatedComponents = new Set();
+    const componentSelect = document.getElementById("elements");
+    const adjustments = window.adjustments || {};
+
+    for (let i = 0; i < buttons.length; i++) {
+        buttons[i].addEventListener('click', async function () {
+            console.log("Calculate button clicked:", this.dataset.component);
+            const componentType = this.dataset.component;
+            const fieldset = this.closest('fieldset');
+            const inputs = fieldset.querySelectorAll('input');
+            let isValid = true;
+
+            for (let j = 0; j < inputs.length; j++) {
+                if (!validateInput(inputs[j])) isValid = false;
+            }
+            if (!isValid) {
+                console.warn("Input validation failed");
+                return;
+            }
+
+            const inputValues = {};
+            for (let j = 0; j < inputs.length; j++) {
+                const inputName = inputs[j].name;
+                const inputValue = parseFloat(inputs[j].value);
+                if (isNaN(inputValue)) {
+                    alert(`Please enter a valid number for ${inputName}`);
+                    return;
+                }
+                inputValues[inputName] = inputValue;
+            }
+            console.log("Input values for calculation:", inputValues);
+
+            const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
+            if (!formulaKey || !SMM7_2023[formulaKey]) {
+                alert(`No formula found for component: ${componentType}. Please check your inputs.`);
+                return;
+            }
+
+            const prices = await fetchPricesForComponent(formulaKey);
+            if (!prices) {
+                alert(`Failed to fetch prices for ${componentType}. Please try again.`);
+                return;
+            }
+
+            const { materialPrices, laborRates } = prices;
+            const formula = SMM7_2023[formulaKey].formula;
+            const quantity = formula(inputValues, adjustments.concrete_waste_factor || 1);
+            if (isNaN(quantity)) {
+                alert("Failed to calculate quantity. Please check your inputs.");
+                return;
+            }
+
+            let totalMaterialCost = 0;
+            for (const material of SMM7_2023[formulaKey].materials) {
+                totalMaterialCost += (materialPrices[material] || 0) * quantity;
+            }
+
+            const labor = SMM7_2023.calculateLaborCost(
+                quantity,
+                8,
+                adjustments.labor_efficiency || 1,
+                8,
+                laborRates[SMM7_2023[formulaKey].laborTasks[0]] || 0,
+                SMM7_2023[formulaKey].laborTasks[0]
+            );
+            if (isNaN(labor.laborCost)) {
+                alert("Failed to calculate labor cost. Please check your inputs.");
+                return;
+            }
+
+            const plantData = await fetchPlantData();
+            const relevantPlants = plantData.filter(plant =>
+                SMM7_2023[formulaKey].equipment.includes(plant.equipment)
+            );
+            const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
+
+            totalMaterialCost *= haulageMultiplier;
+            labor.laborCost *= haulageMultiplier;
+            const finalPlantCost = plantCost * haulageMultiplier;
+
+            const output = document.getElementById('output');
+            const resultHTML = `
+                <div class="result-item">
+                    <h4>${componentType}</h4>
+                    <p>Quantity: ${quantity.toFixed(2)} m³</p>
+                    <p>Total Material Cost: GHS ${totalMaterialCost.toFixed(2)}</p>
+                    <p>Total Days: ${labor.totalDays.toFixed(2)} days</p>
+                    <p>Labor Cost: GHS ${labor.laborCost.toFixed(2)}</p>
+                    <p>Plant Cost: GHS ${finalPlantCost.toFixed(2)}</p>
+                    <p>Total Cost: GHS ${(totalMaterialCost + labor.laborCost + finalPlantCost).toFixed(2)}</p>
+                </div>
+            `;
+            output.insertAdjacentHTML('beforeend', resultHTML);
+
+            calculatedComponents.add(componentType);
+
+            const selectedComponents = Array.from(componentSelect.selectedOptions).map(option => option.value);
+            if (selectedComponents.every(component => calculatedComponents.has(component))) {
+                const saveBtn = document.getElementById('save-project-btn');
+                if (saveBtn) saveBtn.style.display = 'block';
+            }
+            const saveBtn = document.getElementById('save-project-btn');
+            if (saveBtn) saveBtn.style.display = 'block';
+        });
+    }
+}
+
+function setupSaveProjectButton() {
+    console.log("Setting up save project button");
+    const saveBtn = document.getElementById('save-project-btn');
+    if (!saveBtn) {
+        console.warn("Save project button not found");
+        return;
+    }
+    saveBtn.addEventListener('click', function () {
+        console.log("Save project button clicked");
+        const projectName = prompt("Enter a name for this project:");
+        if (!projectName) {
+            alert("Project name is required.");
+            return;
+        }
+
+        const results = document.querySelectorAll('.result-item');
+        let totalCost = 0;
+
+        results.forEach(result => {
+            const component = result.querySelector('h4').textContent;
+            const quantity = parseFloat(result.querySelector('p:nth-child(2)').textContent.split(': ')[1]);
+            const materialCost = parseFloat(result.querySelector('p:nth-child(3)').textContent.split(': ')[1].replace('GHS ', ''));
+            const laborCost = parseFloat(result.querySelector('p:nth-child(5)').textContent.split(': ')[1].replace('GHS ', ''));
+            const plantCost = parseFloat(result.querySelector('p:nth-child(6)').textContent.split(': ')[1].replace('GHS ', ''));
+            totalCost += materialCost + laborCost + plantCost;
+
+            saveProject(projectName, component, quantity, materialCost, laborCost, plantCost, materialCost + laborCost + plantCost);
+        });
+
+        alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
+        displayProjects();
+    });
+}
+
+function setupGenerateBOQButton() {
+    console.log("Setting up generate BOQ button");
+    const boqBtn = document.getElementById('generate-boq');
+    if (!boqBtn) {
+        console.warn("Generate BOQ button not found");
+        return;
+    }
+    boqBtn.addEventListener('click', async function () {
+        console.log("Generate BOQ button clicked");
+        const button = this;
+        button.disabled = true;
+        button.textContent = "Generating...";
+        try {
+            await generateSMM7BOQ();
+            alert("BOQ Report has been successfully generated!");
+        } catch (error) {
+            console.error("Error generating BOQ:", error);
+            alert("An error occurred while generating the BOQ. Please try again.");
+        } finally {
+            button.disabled = false;
+            button.textContent = "Generate BOQ Report";
+        }
+    });
+}
+
+function setupLogoutButton() {
+    console.log("Setting up logout button");
+    const logoutBtn = document.getElementById('logout-btn');
+    if (!logoutBtn) {
+        console.warn("Logout button not found");
+        return;
+    }
+    logoutBtn.addEventListener('click', async () => {
         try {
             await fetch('/logout', { credentials: 'include' });
             window.location.href = '/login';
@@ -330,142 +518,260 @@ document.addEventListener('DOMContentLoaded', async function () {
             console.error('Logout failed:', error);
         }
     });
+}
 
+// Validation functions
+function validateInput(input) {
+    const errorSpan = input.parentElement.querySelector('.error-message');
+    const value = input.value.trim();
 
+    input.classList.remove('invalid');
+    errorSpan.style.display = 'none';
 
-    // DOM Elements
-    const componentSelect = document.getElementById("elements");
-    const trenchFieldset = document.getElementById("trenchField");
-    const blockworkFieldset = document.getElementById("blockworkField");
-
-    // Hide fields by default
-    trenchFieldset.style.display = "none";
-    blockworkFieldset.style.display = "none";
-
-    // Simulated database
-    /*const SMM7_FORMULAS = {
-        'concrete in trench': {
-            quantity: (inputs) => inputs.trench_length * inputs.trench_width * inputs.trench_height,
-            materials: ['cement', 'sand', 'aggregate']
-        },
-        'blockwork in foundation': {
-            quantity: (inputs) => inputs.blockwork_length * inputs.blockwork_height * 0.2,
-            materials: ['blocks', 'mortar']
-        }
-    };
-
-    const MATERIAL_PRICES = {
-        cement: 85.00,
-        sand: 30.00,
-        aggregate: 60.00,
-        blocks: 5.50,
-        mortar: 40.00
-    };
-
-    const LABOR_RATES = {
-        'bricklaying': 25.00, // GHS per m²
-        'concreting': 30.00  // GHS per m³
-    };
-
-    // Labor calculation function
-    function calculateLaborCost(volume, laborHoursPerUnit, workers, hoursPerDay, dailyRate) {
-        const totalDays = (volume * laborHoursPerUnit) / (workers * hoursPerDay);
-        const laborCost = totalDays * dailyRate * workers;
-        return { totalDays, laborCost };
-    }*/
-
-    // Validation functions
-    function validateInput(input) {
-        const errorSpan = input.parentElement.querySelector('.error-message');
-        const value = input.value.trim();
-
-        input.classList.remove('invalid');
-        errorSpan.style.display = 'none';
-
-        if (value === '') {
-            showError(input, errorSpan, 'This field is required');
-            return false;
-        }
+    if (value === '') {
+        showError(input, errorSpan, 'This field is required');
+        return false;
+    }
 
 // Convert value to number here, so it can be used later
-        const numericValue = parseFloat(value);
+    const numericValue = parseFloat(value);
 
 // Check for valid number using html 5 validation
-        if (!input.checkValidity() || isNaN(numericValue)) {
-            showError(input, errorSpan, 'Please enter a valid number');
-            return false;
-        }
+    if (!input.checkValidity() || isNaN(numericValue)) {
+        showError(input, errorSpan, 'Please enter a valid number');
+        return false;
+    }
 
-        if (numericValue < 0) {
-            showError(input, errorSpan, 'Value cannot be negative');
-            return false;
-        }
+    if (numericValue < 0) {
+        showError(input, errorSpan, 'Value cannot be negative');
+        return false;
+    }
 console.log("Input value is valid:", numericValue); // Debugging line here
 
-        return true;
-    }
+    return true;
+}
 
-    function showError(input, errorSpan, message) {
-        input.classList.add('invalid');
-        errorSpan.textContent = message;
-        errorSpan.style.display = 'block';
-    }
+function showError(input, errorSpan, message) {
+    input.classList.add('invalid');
+    errorSpan.textContent = message;
+    errorSpan.style.display = 'block';
+}
 
-    // Setup input validation
-    const inputs = document.getElementsByTagName('input');
-    for (let i = 0; i < inputs.length; i++) {
-        inputs[i].addEventListener('input', function () {
-            validateInput(this);
+// Haulage calculation handler
+const updateHaulage = async () => {
+    const projectLoc = document.getElementById('project-location').value;
+    const supplierLoc = document.getElementById('supplier-location').value;
+
+    try {
+        const response = await fetch('/api/haulage-cost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ project_location: projectLoc, supplier_location: supplierLoc }),
+            credentials: 'include'
         });
-        inputs[i].addEventListener('blur', function () {
-            validateInput(this);
-        });
+
+        const data = await response.json();
+        haulageMultiplier = data.multiplier;
+        boqData.haulage = {
+            multiplier: data.multiplier,
+            band: data.band
+        };
+        
+        document.getElementById('haulage-multiplier').textContent = data.multiplier;
+        document.getElementById('haulage-cost').style.display = 'block';
+    } catch (error) {
+        console.error('Haulage calculation failed:', error);
     }
+};
 
-    // Dropdown change handler
-    componentSelect.addEventListener("change", function () {
-        const selectedOptions = componentSelect.selectedOptions;
-        let isTrenchSelected = false;
-        let isBlockworkSelected = false;
+// Check formula version
+const response = await fetch('/api/version');
+const { version } = await response.json();
+const storedVersion = localStorage.getItem('formulaVersion');
 
-        for (let i = 0; i < selectedOptions.length; i++) {
-            const optionValue = selectedOptions[i].value;
-            if (optionValue === "concrete in trench") isTrenchSelected = true;
-            if (optionValue === "blockwork in foundation") isBlockworkSelected = true;
+if (version !== storedVersion) {
+    alert('New calculation methods are available. Please refresh the page.');
+    localStorage.setItem('formulaVersion', version);
+}
+
+// Fetch dynamic adjustments
+const region = 'greater-accra'; // Example region
+const adjustmentsResponse = await fetch(`/api/adjustments?region=${region}`);
+const adjustments = await adjustmentsResponse.json();
+console.log("Adjustments:", adjustments);
+
+// Example: Fetch the rate for cement
+fetchMaterialRate('cement').then(data => {
+    if (data) {
+        console.log(`Cement rate: ${data.unit_cost} GHS`);
+    }
+});
+
+// Example: Fetch the labor rate for bricklaying
+fetchLaborRate('bricklaying').then(data => {
+    if (data) {
+        console.log(`Bricklaying rate: ${data.rate} GHS`);
+    }
+});
+
+/*// Handle Logout
+const logoutButton = document.getElementById("logout-btn");
+if (logoutButton) {
+    logoutButton.addEventListener("click", async () => {
+        try {
+            document.cookie = "authToken=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+            alert("You have been logged out.");
+            window.location.href = "/login"; // Redirect to login page
+        } catch (err) {
+            console.error("Error during logout:", err);
+            alert("An error occurred during logout. Please try again.");
         }
-
-// Toggle trench fieldset
-        trenchFieldset.style.display = isTrenchSelected ? "block" : "none";
-        trenchFieldset.querySelectorAll("input").forEach(input => {
-            input.required = isTrenchSelected;
-        });
-
-// Toggle blockwork fieldset
-        blockworkFieldset.style.display = isBlockworkSelected ? "block" : "none";
-        blockworkFieldset.querySelectorAll("input").forEach(input => {
-            input.required = isBlockworkSelected;
-        });
     });
+}*/
 
-    // Track calculated components
-    let calculatedComponents = new Set();
+// Modified logout handler
+document.getElementById('logout-btn').addEventListener('click', async () => {
+    try {
+        await fetch('/logout', { credentials: 'include' });
+        window.location.href = '/login';
+    } catch (error) {
+        console.error('Logout failed:', error);
+    }
+});
 
-    // Calculate button handlers
+
+
+// DOM Elements
+const componentSelect = document.getElementById("elements");
+const trenchFieldset = document.getElementById("trenchField");
+const blockworkFieldset = document.getElementById("blockworkField");
+
+// Hide fields by default
+trenchFieldset.style.display = "none";
+blockworkFieldset.style.display = "none";
+
+// Simulated database
+/*const SMM7_FORMULAS = {
+    'concrete in trench': {
+        quantity: (inputs) => inputs.trench_length * inputs.trench_width * inputs.trench_height,
+        materials: ['cement', 'sand', 'aggregate']
+    },
+    'blockwork in foundation': {
+        quantity: (inputs) => inputs.blockwork_length * inputs.blockwork_height * 0.2,
+        materials: ['blocks', 'mortar']
+    }
+};
+
+const MATERIAL_PRICES = {
+    cement: 85.00,
+    sand: 30.00,
+    aggregate: 60.00,
+    blocks: 5.50,
+    mortar: 40.00
+};
+
+const LABOR_RATES = {
+    'bricklaying': 25.00, // GHS per m²
+    'concreting': 30.00  // GHS per m³
+};
+
+// Labor calculation function
+function calculateLaborCost(volume, laborHoursPerUnit, workers, hoursPerDay, dailyRate) {
+    const totalDays = (volume * laborHoursPerUnit) / (workers * hoursPerDay);
+    const laborCost = totalDays * dailyRate * workers;
+    return { totalDays, laborCost };
+}*/
+
+// Validation functions
+/*function validateInput(input) {
+    const errorSpan = input.parentElement.querySelector('.error-message');
+    const value = input.value.trim();
+
+    input.classList.remove('invalid');
+    errorSpan.style.display = 'none';
+
+    if (value === '') {
+        showError(input, errorSpan, 'This field is required');
+        return false;
+    }
+
+// Convert value to number here, so it can be used later
+    const numericValue = parseFloat(value);
+
+// Check for valid number using html 5 validation
+    if (!input.checkValidity() || isNaN(numericValue)) {
+        showError(input, errorSpan, 'Please enter a valid number');
+        return false;
+    }
+
+    if (numericValue < 0) {
+        showError(input, errorSpan, 'Value cannot be negative');
+        return false;
+    }
+console.log("Input value is valid:", numericValue); // Debugging line here
+
+    return true;
+}*/
+
+/*function showError(input, errorSpan, message) {
+    input.classList.add('invalid');
+    errorSpan.textContent = message;
+    errorSpan.style.display = 'block';
+}*/
+
+// Setup input validation
+const inputs = document.getElementsByTagName('input');
+for (let i = 0; i < inputs.length; i++) {
+    inputs[i].addEventListener('input', function () {
+        validateInput(this);
+    });
+    inputs[i].addEventListener('blur', function () {
+        validateInput(this);
+    });
+}
+
+// Dropdown change handler
+componentSelect.addEventListener("change", function () {
+    const selectedOptions = componentSelect.selectedOptions;
+    let isTrenchSelected = false;
+    let isBlockworkSelected = false;
+
+    for (let i = 0; i < selectedOptions.length; i++) {
+        const optionValue = selectedOptions[i].value;
+        if (optionValue === "concrete in trench") isTrenchSelected = true;
+        if (optionValue === "blockwork in foundation") isBlockworkSelected = true;
+    }
+
+    trenchFieldset.style.display = isTrenchSelected ? "block" : "none";
+    trenchFieldset.querySelectorAll("input").forEach(input => input.required = isTrenchSelected);
+    blockworkFieldset.style.display = isBlockworkSelected ? "block" : "none";
+    blockworkFieldset.querySelectorAll("input").forEach(input => input.required = isBlockworkSelected);
+
+    console.log("Dropdown changed. Trench:", isTrenchSelected, "Blockwork:", isBlockworkSelected);
+});
+
+/*function setupCalculateButtons() {
+    console.log("Setting up calculate buttons");
     const buttons = document.querySelectorAll('.calculate-btn');
+    if (!buttons.length) {
+        console.warn("No calculate buttons found");
+        return;
+    }
+    let calculatedComponents = new Set();
+    const componentSelect = document.getElementById("elements");
+    const adjustments = window.adjustments || {};
+
     for (let i = 0; i < buttons.length; i++) {
         buttons[i].addEventListener('click', async function () {
-            const componentType = this.dataset.component; // Get the component type from the button's data attribute
-            console.log("Button clicked for component:", componentType); // Debugging line
-
+            console.log("Calculate button clicked:", this.dataset.component);
+            const componentType = this.dataset.component;
             const fieldset = this.closest('fieldset');
             const inputs = fieldset.querySelectorAll('input');
             let isValid = true;
 
-            // Validate all inputs
             for (let j = 0; j < inputs.length; j++) {
                 if (!validateInput(inputs[j])) isValid = false;
             }
-
             console.log("Input is valid:", isValid); // Debugging line here
 
             if (!isValid) return;
@@ -610,10 +916,10 @@ console.log("Input value is valid:", numericValue); // Debugging line here
             //}
         });
     }
+}*/
 
-    // Call displayProjects on page load
-    displayProjects();
-});
+// Call displayProjects on page load
+displayProjects();
 
 // Fetch material rate for a specific material
 async function fetchMaterialRate(material) {
@@ -992,7 +1298,8 @@ async function generateSMM7BOQ() {
             "Superstructure": { items: [], total: 0 },
             "Other": { items: [], total: 0 }
         },
-        summary: {}
+        summary: {},
+        haulage: boqData.haulage || { multiplier: 1.0, band: '' } // <-- Add this line
     };
 
     try {

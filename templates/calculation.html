@@ -161,11 +161,9 @@
     </section>
 
     <!-- Role-based PDF button -->
-    <!-- calculation.html - Update role check -->
-    {% if current_user.raw_roles.includes('professional') or
-    current_user.raw_roles.includes('firm') %}
+    {% if 'professional' in current_user.roles or 'firm' in current_user.roles %}
     <button id="generate-boq" class="boq-button" data-role="professional,firm">
-      <img src="pdf-icon.svg" alt="PDF" />
+      <!-- <img src="pdf-icon.svg" alt="PDF" /> -->
       Generate BOQ Report
     </button>
     {% endif %}
