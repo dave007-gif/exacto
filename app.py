@@ -16,22 +16,69 @@ def init_db():
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
 
-    # Users table
+     # Users table with verification status
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
-            user_type TEXT NOT NULL
+            verified BOOLEAN DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     ''')
 
-    # Projects table
+    # Roles table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS roles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            description TEXT
+        )
+    ''')
+
+    # User-Roles junction table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_roles (
+            user_id INTEGER NOT NULL,
+            role_id INTEGER NOT NULL,
+            PRIMARY KEY (user_id, role_id),
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (role_id) REFERENCES roles(id)
+        )
+    ''')
+
+    # Locations table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS locations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            zone TEXT UNIQUE NOT NULL,
+            region TEXT NOT NULL
+        )
+    ''')
+
+    # HaulageBands table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS HaulageBands (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            label TEXT NOT NULL,
+            min_km REAL NOT NULL,
+            max_km REAL NOT NULL,
+            multiplier REAL NOT NULL
+        )
+    ''')
+
+
+
+    # Modified Projects table with locations
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS Projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
             project_name TEXT NOT NULL,
-            total_cost REAL DEFAULT 0
+            project_location TEXT,
+            supplier_location TEXT,
+            total_cost REAL DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
 
@@ -102,6 +149,33 @@ def populate_initial_data():
     conn = sqlite3.connect('users.db')
     cursor = conn.cursor()
 
+    # Add default roles
+    roles = [
+        ('student', 'Basic access tier'),
+        ('professional', 'Paid professional tier'),
+        ('firm', 'Enterprise license tier')
+    ]
+    cursor.executemany('INSERT OR IGNORE INTO roles (name, description) VALUES (?, ?)', roles)
+
+    # Add location zones
+    locations = [
+        ('Accra Metropolitan', 'Greater Accra'),
+        ('Kumasi North', 'Ashanti'),
+        ('Takoradi Central', 'Western')
+    ]
+    cursor.executemany('INSERT OR IGNORE INTO locations (zone, region) VALUES (?, ?)', locations)
+
+    # Add haulage bands
+    haulage_bands = [
+        ('<5 km', 0, 5, 1.0),
+        ('5–15 km', 5, 15, 1.2),
+        ('15+ km', 15, 9999, 1.5)
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO HaulageBands (label, min_km, max_km, multiplier)
+        VALUES (?, ?, ?, ?)
+    ''', haulage_bands)
+
     # Populate Sources table
     cursor.execute('''
         INSERT OR IGNORE INTO Sources (name, type, region, contact)
@@ -168,6 +242,42 @@ def populate_initial_data():
 # Call the function to populate the database
 populate_initial_data()
 
+# JWT Helpers
+def get_user_roles(user_id):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT r.name FROM roles r
+            JOIN user_roles ur ON ur.role_id = r.id
+            WHERE ur.user_id = ?
+        ''', (user_id,))
+        return [row[0] for row in cursor.fetchall()]
+
+def role_required(*required_roles):
+    def decorator(f):
+        @wraps(f)
+        def wrapped(*args, **kwargs):
+            token = request.cookies.get('authToken')
+            if not token:
+                return jsonify({'message': 'Missing token'}), 401
+
+            try:
+                data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
+                user_roles = data.get('roles', [])
+                
+                if not any(role in user_roles for role in required_roles):
+                    return jsonify({'message': 'Insufficient permissions'}), 403
+                
+                request.user_id = data['user_id']
+            except jwt.ExpiredSignatureError:
+                return jsonify({'message': 'Token expired'}), 401
+            except jwt.InvalidTokenError:
+                return jsonify({'message': 'Invalid token'}), 401
+
+            return f(*args, **kwargs)
+        return wrapped
+    return decorator
+
 # Helper function to validate tokens
 def token_required(f):
     @wraps(f)
@@ -218,34 +328,46 @@ def get_adjustments():
 def signup_page():
     return render_template('signup.html')
 
-# POST /signup
+# Updated Auth Endpoints
 @app.route('/signup', methods=['POST'])
 def signup():
     data = request.json
     email = data.get('email')
     password = data.get('password')
-    user_type = data.get('user_type')
+    role = data.get('role', 'student')
 
-    if not email or not password or not user_type:
+    if not email or not password:
         return jsonify({'message': 'Missing required fields'}), 400
 
-# Use 'pbkdf2:sha256' as the hashing method
-# Use 'pbkdf2:sha256' as the hashing method
     hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
 
     try:
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
-            cursor.execute('INSERT INTO users (email, password, user_type) VALUES (?, ?, ?)',
-                           (email, hashed_password, user_type))
+            cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)',
+                           (email, hashed_password))
+            user_id = cursor.lastrowid
+            
+            # Assign role
+            cursor.execute('SELECT id FROM roles WHERE name = ?', (role,))
+            role_id = cursor.fetchone()[0]
+            cursor.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)',
+                           (user_id, role_id))
+            
             conn.commit()
     except sqlite3.IntegrityError:
         return jsonify({'message': 'User already exists'}), 400
 
-    token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
-                       app.config['SECRET_KEY'], algorithm="HS256")
-    response = make_response(jsonify({'message': 'Signup successful!'}))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
+    # Generate token with roles
+    roles = get_user_roles(user_id)
+    token = jwt.encode({
+        'user_id': user_id,
+        'roles': roles,
+        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
+
+    response = make_response(jsonify({'message': 'Signup successful', 'roles': roles}))
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
     return response
 
 # GET /login
@@ -253,7 +375,6 @@ def signup():
 def login_page():
     return render_template('login.html')
 
-# POST /login
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
@@ -262,16 +383,21 @@ def login():
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT password FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT id, password FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
 
-    if not user or not check_password_hash(user[0], password):
+    if not user or not check_password_hash(user[1], password):
         return jsonify({'message': 'Invalid credentials'}), 401
 
-    token = jwt.encode({'email': email, 'exp': datetime.now(timezone.utc) + timedelta(hours=1)},
-                       app.config['SECRET_KEY'], algorithm="HS256")
-    response = make_response(jsonify({'message': 'Login successful!'}))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)  # Set HTTP-only cookie
+    roles = get_user_roles(user[0])
+    token = jwt.encode({
+        'user_id': user[0],
+        'roles': roles,
+        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+    }, app.config['SECRET_KEY'], algorithm="HS256")
+
+    response = make_response(jsonify({'message': 'Login successful', 'roles': roles}))
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
     return response
 
 # GET /protected (Example of a protected route)
@@ -385,6 +511,63 @@ def get_smm_rules():
         cursor.execute('SELECT * FROM SMMRules')
         smm_rules = cursor.fetchall()
     return jsonify({'smm_rules': smm_rules})
+
+# GET /api/prices/:material
+@app.route('/api/prices/<material>', methods=['GET'])
+@token_required
+def get_material_price(material):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT unit_cost, valid_from, valid_to FROM MaterialPrices WHERE material = ?', (material,))
+        result = cursor.fetchone()
+
+    if not result:
+        return jsonify({'message': f'Price for material "{material}" not found'}), 404
+
+    unit_cost, valid_from, valid_to = result
+    return jsonify({
+        'material': material,
+        'unit_cost': unit_cost,
+        'valid_from': valid_from,
+        'valid_to': valid_to
+    })
+
+# GET /api/labor/:trade
+@app.route('/api/labor/<trade>', methods=['GET'])
+@token_required
+def get_labor_rate(trade):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        # Use the correct column name 'task' instead of 'trade'
+        cursor.execute('SELECT rate, valid_from, valid_to FROM LaborRates WHERE task = ?', (trade,))
+        result = cursor.fetchone()
+
+    if not result:
+        return jsonify({'message': f'Labor rate for task "{trade}" not found'}), 404
+
+    rate, valid_from, valid_to = result
+    return jsonify({
+        'trade': trade,
+        'rate': rate,
+        'valid_from': valid_from,
+        'valid_to': valid_to
+    })
+
+@app.route('/api/plants', methods=['GET'])
+@token_required
+def get_plants():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT equipment, daily_rate, duration_per_unit FROM Plants')
+        plants = cursor.fetchall()
+
+    if not plants:
+        return jsonify({'message': 'No plant data found'}), 404
+
+    return jsonify([
+        {'equipment': plant[0], 'dailyRate': plant[1], 'durationPerUnit': plant[2]}
+        for plant in plants
+    ])
 
 if __name__ == '__main__':
     app.run(debug=True)

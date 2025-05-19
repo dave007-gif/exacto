@@ -714,59 +714,103 @@ function classifyComponent(component) {
 }
 
 async function calculateCompositeRate(componentType, quantity) {
+    if (!componentType || !quantity || quantity <= 0) {
+        console.error('Invalid input:', { componentType, quantity });
+        return null;
+    }
+
     const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
     if (!formulaKey) {
-        console.warn(`No mapping found for component: ${componentType}. Skipping.`);
+        console.warn(`No mapping for component: ${componentType}`);
         return null;
     }
 
-    if (!SMM7_2023[formulaKey]) {
-        console.warn(`No formula found for mapped key: ${formulaKey}. Skipping.`);
+    const formulaConfig = SMM7_2023[formulaKey];
+    if (!formulaConfig) {
+        console.warn(`No formula config for key: ${formulaKey}`);
         return null;
     }
 
-    // Fetch material prices
-    const materialResponse = await fetch('/api/prices', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
-    const materialPrices = await materialResponse.json();
+    try {
+        // Single fetch for pricing bundle
+        const pricingResponse = await fetch(`/api/pricing-bundle?region=greater-accra`, {
+            headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
+        });
+        
+        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
+        const { materials, labor } = await pricingResponse.json();
 
-    // Fetch labor rates
-    const laborResponse = await fetch('/api/labor-rates', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
-    const laborRates = await laborResponse.json();
+        // Material cost with null checks
+        const materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
 
-    // Calculate material cost
-    const materialCost = SMM7_2023[formulaKey].calculateMaterialCost(quantity, materialPrices);
+        // Labor cost with fallbacks
+        const laborTask = formulaConfig.laborTasks?.[0];
+        const dailyRate = laborTask ? labor[laborTask] || 0 : 0;
+        const laborCalc = SMM7_2023.calculateLaborCost(
+            quantity,
+            8, // laborHoursPerUnit
+            1.0, // efficiency
+            8, // hoursPerDay
+            dailyRate,
+            laborTask // Added taskType parameter
+        );
+        const laborCost = laborCalc?.laborCost || 0;
 
-    // Calculate labor cost
-    const laborCost = SMM7_2023.calculateLaborCost(
-        quantity,
-        8, // Example labor hours per unit
-        1.0, // Efficiency factor
-        8, // Hours per day
-        laborRates[SMM7_2023[formulaKey].laborTasks[0]] || 0
-    ).laborCost;
+        // Plant cost using SMM7_2023 method with equipment validation
+        let plantCost = 0;
+        const equipmentList = formulaConfig.equipment || [];
 
-    // Calculate plant cost
-    const plantCost = await calculatePlantCost(quantity, SMM7_2023[formulaKey].equipment);
+        if (equipmentList.length > 0) {
+            try {
+                const plantData = await fetchPlantData();
+                const availablePlants = plantData.filter(p => 
+                    p.equipment && equipmentList.includes(p.equipment)
+                );
 
-    // Calculate overheads and profit
-    const overheads = (materialCost + laborCost + plantCost) * 0.15; // 15% overheads
-    const profit = (materialCost + laborCost + plantCost + overheads) * 0.10; // 10% profit
+                // Validate equipment availability
+                const missingEquipment = equipmentList.filter(e => 
+                    !plantData.some(p => p.equipment === e)
+                );
 
-    // Total composite rate
-    const totalCost = materialCost + laborCost + plantCost + overheads + profit;
+                if (missingEquipment.length > 0) {
+                    console.warn(`Missing equipment for ${componentType}:`, missingEquipment);
+                    // Optional: Add placeholder cost for missing equipment
+                    // missingEquipment.forEach(e => {
+                    //     console.warn(`Using default rate for missing equipment: ${e}`);
+                    //     availablePlants.push({ equipment: e, dailyRate: 0, durationPerUnit: 0 });
+                    // });
+                }
 
-    return {
-        materialCost,
-        laborCost,
-        plantCost,
-        overheads,
-        profit,
-        totalCost
-    };
+                if (availablePlants.length > 0) {
+                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
+                } else {
+                    console.warn(`No available plants found for ${componentType}`);
+                }
+            } catch (plantError) {
+                console.error(`Plant data error for ${componentType}:`, plantError);
+                // Consider whether to continue with plantCost=0 or abort
+            }
+        } else {
+            console.log(`No equipment required for ${componentType}`);
+        }
+
+        // Financial calculations with safeguards
+        const baseCost = materialCost + laborCost + plantCost;
+        const overheads = (baseCost * 0.15) || 0;
+        const profit = ((baseCost + overheads) * 0.10) || 0;
+        
+        return {
+            materialCost: Number(materialCost.toFixed(2)),
+            laborCost: Number(laborCost.toFixed(2)),
+            plantCost: Number(plantCost.toFixed(2)),
+            overheads: Number(overheads.toFixed(2)),
+            profit: Number(profit.toFixed(2)),
+            totalCost: Number((baseCost + overheads + profit).toFixed(2))
+        };
+    } catch (error) {
+        console.error(`Composite rate error for ${componentType}:`, error);
+        return null;
+    }
 }
 
 async function getAESLRate(component) {
@@ -784,65 +828,105 @@ async function getAESLRate(component) {
 
 
 async function generateSMM7BOQ() {
-    const components = await fetchCalculatedComponents(); // Fetch calculated components
+    // Reset BOQ data on each generation
+    boqData = {
+        workSections: {},
+        mainCategories: {
+            "Substructure": { items: [], total: 0 },
+            "Superstructure": { items: [], total: 0 },
+            "Other": { items: [], total: 0 }
+        },
+        summary: {}
+    };
 
-    for (const component of components) {
-        const { workSection, mainCategory } = classifyComponent(component.type);
-
-        // Calculate the composite rate for the component
-        const compositeRate = await calculateCompositeRate(component.type, component.quantity);
-
-        // Calculate the unit rate (rate per unit of quantity)
-        const unitRate = compositeRate.totalCost / component.quantity;
-
-        // Add to Work Section
-        if (!boqData.workSections[workSection]) {
-            boqData.workSections[workSection] = {
-                description: SMM7_CATEGORIES[workSection]?.description || "Unclassified",
-                items: [],
-                total: 0
-            };
+    try {
+        const components = await fetchCalculatedComponents();
+        if (!components?.length) {
+            alert("No components found to generate BOQ");
+            return;
         }
 
-        const boqItem = {
-            item: component.itemNumber,
-            description: component.description,
-            quantity: component.quantity,
-            unit: component.unit,
-            rate: unitRate, // Insert the calculated unit rate
-            total: compositeRate.totalCost // Total cost for the component
-        };
+        let validComponents = 0;
+        
+        for (const component of components) {
+            try {
+                const compositeRate = await calculateCompositeRate(component.type, component.quantity);
+                if (!compositeRate?.totalCost) {
+                    console.warn(`Skipping ${component.type} - invalid composite rate`);
+                    continue;
+                }
 
-        // Add to both structures
-        boqData.workSections[workSection].items.push(boqItem);
-        boqData.mainCategories[mainCategory].items.push(boqItem);
+                // Use addToBOQ instead of manual insertion
+                addToBOQ(
+                    component.type,
+                    component.quantity,
+                    compositeRate.totalCost / component.quantity // unitCost
+                );
+                
+                validComponents++;
+            } catch (componentError) {
+                console.error(`Error processing ${component.type}:`, componentError);
+                continue;
+            }
+        }
 
-        // Update totals
-        boqData.workSections[workSection].total += compositeRate.totalCost;
-        boqData.mainCategories[mainCategory].total += compositeRate.totalCost;
+        if (validComponents === 0) {
+            alert("No valid components to generate BOQ");
+            return;
+        }
+
+        if (!validateBOQStructure()) {
+            alert("Cannot generate PDF - invalid BOQ structure");
+            return;
+        }
+
+        await generateBOQPDF();
+        alert("BOQ Report has been successfully generated!");
+
+    } catch (globalError) {
+        console.error("BOQ generation failed:", globalError);
+        alert("Failed to generate BOQ. See console for details.");
     }
-
-    // Validate BOQ structure
-    if (!validateBOQStructure()) {
-        alert("The BOQ structure is invalid. Please check your inputs.");
-        return;
-    }
-
-    // Generate summary
-    Object.entries(boqData.mainCategories).forEach(([category, data]) => {
-        boqData.summary[category] = data.total;
-    });
-
-    // Generate the BOQ PDF
-    await generateBOQPDF();
 }
 
 function validateBOQStructure() {
-    return Object.values(boqData.workSections).every(section =>
-        section.items.every(item =>
-            SMM7_CATEGORIES[section.code]?.components.includes(item.type)
-        )
-    );
+    const errors = [];
+    
+    // Validate work sections
+    Object.entries(boqData.workSections).forEach(([sectionKey, section]) => {
+        if (!SMM7_CATEGORIES[sectionKey]) {
+            errors.push(`Invalid work section: ${sectionKey}`);
+        }
+        
+        // Validate items
+        section.items.forEach(item => {
+            if (!COMPONENT_TO_FORMULA_MAP[item.category]) {
+                errors.push(`Unmapped component: ${item.category}`);
+            }
+            if (isNaN(item.quantity)) {
+                errors.push(`Invalid quantity for ${item.category}`);
+            }
+            if (isNaN(item.rate)) {
+                errors.push(`Invalid rate for ${item.category}`);
+            }
+            if (isNaN(item.total)) {
+                errors.push(`Invalid total cost for ${item.category}`);
+            }
+        });
+    });
+
+    // Validate main categories
+    Object.keys(boqData.mainCategories).forEach(category => {
+        if (!['Substructure', 'Superstructure', 'Other'].includes(category)) {
+            errors.push(`Invalid main category: ${category}`);
+        }
+    });
+
+    if (errors.length > 0) {
+        console.error("BOQ Validation Errors:\n- " + errors.join("\n- "));
+        return false;
+    }
+    return true;
 }
 
 async function fetchPlantData() {
