@@ -1,0 +1,110 @@
+<!-- templates/dashboard.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <nav>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/calculation">Calculator</a>
+        <button id="logout-btn">Logout</button>
+    </nav>
+
+    <div class="dashboard-container">
+        <!-- Profile Summary -->
+        <div class="profile-summary">
+            <h2>Welcome, {{ current_user.email }}</h2>
+            <p>Role(s): {{ current_user.roles | join(', ') }}</p>
+            <p>Verified: {% if current_user.verified %}✅{% else %}❌{% endif %}</p>
+            <p>Active Projects: {{ project_count }}</p>
+        </div>
+
+        <!-- Role-Specific Sections -->
+        <div class="dashboard-section">
+            {% if 'student' in current_user.roles %}
+                <div class="student-dashboard">
+                    <h3>Student Features</h3>
+                    <div class="upgrade-prompt">
+                        <p>Upgrade to Professional for full features!</p>
+                        <button onclick="location.href='/pricing'">View Plans</button>
+                    </div>
+                </div>
+            {% endif %}
+
+            {% if 'professional' in current_user.roles %}
+                <div class="professional-dashboard">
+                    <h3>Professional Tools</h3>
+                    <div class="tool-grid">
+                        <div class="tool-card" onclick="location.href='/suppliers'">
+                            <h4>Supplier Management</h4>
+                            <p>Manage your preferred suppliers</p>
+                        </div>
+                        <div class="tool-card" onclick="location.href='/projects'">
+                            <h4>Project History</h4>
+                            <p>View and manage past projects</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="action-card">
+                    <h3>Professional Tools</h3>
+                    <button onclick="location.href='/suppliers'">Manage Suppliers</button>
+                    <button onclick="location.href='/projects/new'">Create Project</button>
+                </div>
+            {% endif %}
+
+            {% if 'firm' in current_user.roles %}
+                <div class="firm-dashboard">
+                    <h3>Firm Administration</h3>
+                    <div class="tool-grid">
+                        <div class="tool-card" onclick="location.href='/licenses'">
+                            <h4>License Management</h4>
+                            <p>Manage offline licenses</p>
+                        </div>
+                        <div class="tool-card" onclick="location.href='/team'">
+                            <h4>Team Management</h4>
+                            <p>Manage team members</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="action-card">
+                    <h3>Firm Administration</h3>
+                    <button onclick="location.href='/licenses'">Manage Licenses</button>
+                    <button onclick="location.href='/team'">View Team</button>
+                </div>
+            {% endif %}
+
+            <!-- Subscription Status -->
+            <div class="subscription-status">
+                <h3>Subscription</h3>
+                {% if subscription %}
+                    <p>Plan: {{ subscription[0] }}</p>
+                    <p>Expires: {{ subscription[1] }}</p>
+                    <button onclick="showRenewalModal()">Renew Plan</button>
+                {% else %}
+                    <p>No active subscription</p>
+                    <button onclick="location.href='/pricing'">Upgrade Now</button>
+                {% endif %}
+            </div>
+
+            <!-- Activity Feed -->
+            <div class="activity-feed">
+                <h3>Recent Activity</h3>
+                <div id="activity-list">
+                    {% for activity in activities %}
+                        <div class="activity-item">
+                            <span class="activity-time">{{ activity[2] }}</span>
+                            <span class="activity-type">{{ activity[0] }}</span>
+                            <p>{{ activity[1] }}</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/dashboard.js"></script>
+</body>
+</html>

@@ -163,6 +163,29 @@ def init_db():
         )
     ''')
 
+    # Add to init_db()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            activity_type TEXT NOT NULL,
+            description TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+
+    # Subscriptions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            plan_name TEXT NOT NULL,
+            start_date DATETIME NOT NULL,
+            end_date DATETIME NOT NULL,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
 
     conn.commit()
     conn.close()
@@ -260,6 +283,23 @@ def populate_initial_data():
         VALUES (?, ?)
     ''', roles)
 
+     # Populate HaulageBands table
+    haulage_bands = [
+        ('Band 1', 0, 5, 1.0),
+        ('Band 2', 5, 15, 1.2),
+        ('Band 3', 15, 1000, 1.5)
+    ]
+    cursor.executemany('''
+        INSERT OR IGNORE INTO HaulageBands (label, min_km, max_km, multiplier)
+        VALUES (?, ?, ?, ?)
+    ''', haulage_bands)
+
+    # Example: Add a test subscription for user_id 1
+    cursor.execute('''
+        INSERT OR IGNORE INTO subscriptions (user_id, plan_name, start_date, end_date)
+        VALUES (1, 'Pro', '2024-01-01', '2025-01-01')
+    ''')
+
     conn.commit()
     conn.close()
 
@@ -320,6 +360,21 @@ def token_required(f):
             
         return f(*args, **kwargs)
     return decorated
+
+# Activity logging decorator
+def log_activity(description):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            result = f(*args, **kwargs)
+            with sqlite3.connect('users.db') as conn:
+                conn.execute('''
+                    INSERT INTO user_activity (user_id, activity_type, description)
+                    VALUES (?, ?, ?)
+                ''', (request.user_id, f.__name__, description))
+            return result
+        return wrapper
+    return decorator
 
 # Password Reset Routes
 @app.route('/forgot-password', methods=['GET'])
@@ -506,7 +561,7 @@ def login():
         'roles': roles,
         'exp': datetime.now(timezone.utc) + timedelta(hours=1)
     }, app.config['SECRET_KEY'], algorithm="HS256")
-    response = make_response(jsonify({'message': 'Login successful!'}))
+    response = make_response(jsonify({'message': 'Login successful!', 'redirect': '/dashboard'}))
     response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
     return response
 
@@ -616,9 +671,10 @@ def get_projects():
         projects = cursor.fetchall()
     return jsonify({'projects': projects})
 
-# POST /projects
+# POST /projects (legacy, logs activity)
 @app.route('/projects', methods=['POST'])
 @token_required
+@log_activity("Created new project (legacy endpoint)")
 def legacy_create_project():
     data = request.json
     project_name = data.get('project_name')
@@ -633,9 +689,10 @@ def legacy_create_project():
         conn.commit()
     return jsonify({'message': 'Project created successfully'}), 201
 
-# Project Management Endpoints
+# Project Management Endpoints (logs activity)
 @app.route('/api/projects', methods=['POST'])
 @role_required('professional', 'firm')
+@log_activity("Created new project")
 def api_create_project():
     data = request.json
     project_name = data.get('project_name')
@@ -797,11 +854,68 @@ def get_plants():
 def verify_auth():
     return jsonify({'valid': True})
 
+#@app.route('/logout', methods=['POST'])
+#def logout():
+ #   response = make_response(jsonify({'message': 'Logged out successfully'}))
+  #  response.set_cookie('authToken', '', expires=0)
+   # return response
+
+# app.py updates
+@app.route('/dashboard')
+@token_required
+def dashboard():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        # Get user profile
+        cursor.execute('SELECT verified FROM users WHERE id = ?', (request.user_id,))
+        user = cursor.fetchone()
+        # Get projects count
+        cursor.execute('SELECT COUNT(*) FROM Projects WHERE user_id = ?', (request.user_id,))
+        project_count = cursor.fetchone()[0]
+        # Get subscription info
+        subscription = None
+        if 'professional' in request.user_roles or 'firm' in request.user_roles:
+            cursor.execute('''
+                SELECT plan_name, end_date FROM subscriptions 
+                WHERE user_id = ? AND end_date > CURRENT_TIMESTAMP
+                ORDER BY end_date DESC LIMIT 1
+            ''', (request.user_id,))
+            subscription = cursor.fetchone()
+        # Get recent activity
+        cursor.execute('''
+            SELECT activity_type, description, timestamp 
+            FROM user_activity WHERE user_id = ? ORDER BY timestamp DESC LIMIT 5
+        ''', (request.user_id,))
+        activities = cursor.fetchall()
+    return render_template('dashboard.html',
+        current_user={
+            'email': request.user_email,
+            'roles': request.user_roles,
+            'verified': user[0]
+        },
+        project_count=project_count,
+        subscription=subscription,
+        activities=activities
+    )
+
+@app.route('/api/activity', methods=['GET'])
+@token_required
+def get_activity():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT activity_type, description, timestamp 
+            FROM user_activity WHERE user_id = ? ORDER BY timestamp DESC LIMIT 5
+        ''', (request.user_id,))
+        activities = [dict(zip(('type', 'description', 'timestamp'), row)) for row in cursor.fetchall()]
+    return jsonify(activities)
+
 @app.route('/logout', methods=['POST'])
 def logout():
-    response = jsonify({'message': 'Logged out successfully'})
+    response = make_response(jsonify({'message': 'Logged out successfully'}))
     response.set_cookie('authToken', '', expires=0)
     return response
+
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -171,8 +171,6 @@ async function generateBOQPDF() {
     }
 }
 
-// Export functions for use in other modules
-//export { addToBOQ, generateBOQPDF };
 
 document.addEventListener('DOMContentLoaded', async function () {
     console.log("DOMContentLoaded event fired");
@@ -408,8 +406,9 @@ function setupCalculateButtons() {
             }
 
             const plantData = await fetchPlantData();
+            const equipmentList = SMM7_2023[formulaKey].equipment || [];
             const relevantPlants = plantData.filter(plant =>
-                SMM7_2023[formulaKey].equipment.includes(plant.equipment)
+                equipmentList.includes(plant.equipment)
             );
             const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
 
@@ -451,30 +450,35 @@ function setupSaveProjectButton() {
         console.warn("Save project button not found");
         return;
     }
-    saveBtn.addEventListener('click', function () {
-        console.log("Save project button clicked");
+    saveBtn.addEventListener('click', async function () {
         const projectName = prompt("Enter a name for this project:");
         if (!projectName) {
             alert("Project name is required.");
             return;
         }
 
+        // Collect all results
         const results = document.querySelectorAll('.result-item');
         let totalCost = 0;
 
         results.forEach(result => {
-            const component = result.querySelector('h4').textContent;
-            const quantity = parseFloat(result.querySelector('p:nth-child(2)').textContent.split(': ')[1]);
             const materialCost = parseFloat(result.querySelector('p:nth-child(3)').textContent.split(': ')[1].replace('GHS ', ''));
             const laborCost = parseFloat(result.querySelector('p:nth-child(5)').textContent.split(': ')[1].replace('GHS ', ''));
             const plantCost = parseFloat(result.querySelector('p:nth-child(6)').textContent.split(': ')[1].replace('GHS ', ''));
             totalCost += materialCost + laborCost + plantCost;
-
-            saveProject(projectName, component, quantity, materialCost, laborCost, plantCost, materialCost + laborCost + plantCost);
         });
 
-        alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
-        displayProjects();
+        // Save the project ONCE
+        try {
+            await saveProject({
+                project_name: projectName,
+                total_cost: totalCost
+            });
+            alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
+            displayProjects();
+        } catch (e) {
+            alert("Failed to save project.");
+        }
     });
 }
 
@@ -504,19 +508,14 @@ function setupGenerateBOQButton() {
 }
 
 function setupLogoutButton() {
-    console.log("Setting up logout button");
-    const logoutBtn = document.getElementById('logout-btn');
-    if (!logoutBtn) {
-        console.warn("Logout button not found");
+    console.log("Setting up dashboard button");
+    const dashboardBtn = document.getElementById('dashboard-btn');
+    if (!dashboardBtn) {
+        console.warn("Dashboard button not found");
         return;
     }
-    logoutBtn.addEventListener('click', async () => {
-        try {
-            await fetch('/logout', { credentials: 'include' });
-            window.location.href = '/login';
-        } catch (error) {
-            console.error('Logout failed:', error);
-        }
+    dashboardBtn.addEventListener('click', () => {
+        window.location.href = '/dashboard';
     });
 }
 
@@ -629,15 +628,13 @@ if (logoutButton) {
     });
 }*/
 
-// Modified logout handler
-document.getElementById('logout-btn').addEventListener('click', async () => {
-    try {
-        await fetch('/logout', { credentials: 'include' });
-        window.location.href = '/login';
-    } catch (error) {
-        console.error('Logout failed:', error);
-    }
-});
+// Remove any logout logic for this button
+const dashboardBtn = document.getElementById('dashboard-btn');
+if (dashboardBtn) {
+    dashboardBtn.addEventListener('click', () => {
+        window.location.href = '/dashboard';
+    });
+}
 
 
 
@@ -1120,6 +1117,7 @@ async function saveProject(projectData) {
                 ...projectData,
                 project_location: projectLoc,
                 supplier_location: supplierLoc
+                // Add user_id here if your backend requires it
             }),
             credentials: 'include'
         });
@@ -1132,7 +1130,7 @@ async function saveProject(projectData) {
     }
 }
 
-document.getElementById('save-project-btn').addEventListener('click', function () {
+document.getElementById('save-project-btn').addEventListener('click', async function () {
     const projectName = prompt("Enter a name for this project:");
     if (!projectName) {
         alert("Project name is required.");
@@ -1144,20 +1142,23 @@ document.getElementById('save-project-btn').addEventListener('click', function (
     let totalCost = 0;
 
     results.forEach(result => {
-        const component = result.querySelector('h4').textContent;
-        const quantity = parseFloat(result.querySelector('p:nth-child(2)').textContent.split(': ')[1]);
         const materialCost = parseFloat(result.querySelector('p:nth-child(3)').textContent.split(': ')[1].replace('GHS ', ''));
         const laborCost = parseFloat(result.querySelector('p:nth-child(5)').textContent.split(': ')[1].replace('GHS ', ''));
         const plantCost = parseFloat(result.querySelector('p:nth-child(6)').textContent.split(': ')[1].replace('GHS ', ''));
         totalCost += materialCost + laborCost + plantCost;
-
-        saveProject(projectName, component, quantity, materialCost, laborCost, plantCost, materialCost + laborCost + plantCost);
     });
 
-    alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
-
-    // Call displayProjects to update the DOM
-    displayProjects();
+    // Save the project ONCE
+    try {
+        await saveProject({
+            project_name: projectName,
+            total_cost: totalCost
+        });
+        alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
+        displayProjects();
+    } catch (e) {
+        alert("Failed to save project.");
+    }
 });
 
 // Function to classify a component
@@ -1225,7 +1226,7 @@ async function calculateCompositeRate(componentType, quantity) {
             try {
                 const plantData = await fetchPlantData();
                 const availablePlants = plantData.filter(p => 
-                    p.equipment && equipmentList.includes(p.equipment)
+                    SMM7_2023[formulaKey].equipment.includes(p.equipment)
                 );
 
                 // Validate equipment availability
@@ -1456,3 +1457,37 @@ async function fetchCalculatedComponents() {
 
     return selectedComponents;
 }
+
+/*// script.js
+async function loadRecentActivity() {
+  const response = await fetch('/api/activity', { credentials: 'include' });
+  const activities = await response.json();
+  
+  const feed = document.getElementById('activity-feed');
+  activities.forEach(activity => {
+    feed.innerHTML += `
+      <div class="activity-item">
+        <small>${new Date(activity.timestamp).toLocaleString()}</small>
+        <p>${activity.description}</p>
+      </div>
+    `;
+  });
+}*/
+
+// static/js/dashboard.js
+async function loadRecentActivity() {
+  const response = await fetch('/api/activity', { credentials: 'include' });
+  const activities = await response.json();
+  const feed = document.getElementById('activity-list');
+  feed.innerHTML = '';
+  activities.forEach(activity => {
+    feed.innerHTML += `
+      <div class="activity-item">
+        <small>${new Date(activity.timestamp).toLocaleString()}</small>
+        <p>${activity.description}</p>
+      </div>
+    `;
+  });
+}
+document.addEventListener('DOMContentLoaded', loadRecentActivity);
+

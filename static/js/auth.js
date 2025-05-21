@@ -45,7 +45,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (response.ok) {
           alert("Login successful!");
-          window.location.href = "/calculation"; // Redirect
+          window.location.href = "/dashboard"; // Redirect
         } else {
           const error = await response.json();
           alert("Login failed: " + error.message);
