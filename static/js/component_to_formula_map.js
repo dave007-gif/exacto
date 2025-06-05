@@ -1,4 +1,12 @@
 export const COMPONENT_TO_FORMULA_MAP = {
+    // Components in "D. Groundworks"
+    "Tree Cutting": "tree cutting",
+    "Site Clearance": "site clearance",
+    "Topsoil Excavation": "topsoil excavation",
+    "Retain Topsoil": "retain topsoil",
+    "Trench Excavation": "trench excavation",
+    "Fill Material": "retain topsoil", // Add this if/when you have a formula for fill material
+
     // Components in "E. In-situ Concrete"
     "Foundations": "concrete in trench",
     "Ground Beams": "concrete in trench",

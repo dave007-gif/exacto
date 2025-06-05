@@ -10,6 +10,32 @@
     <h1>Welcome to the Calculation Page</h1>
     <p>Here you can calculate building costs.</p>
 
+    <!-- Currency Selector: Only for professionals/firms -->
+    {% if 'professional' in current_user.roles or 'firm' in current_user.roles
+    %}
+    <div id="currency-controls">
+      <label for="currency-select">Display Currency:</label>
+      <select id="currency-select">
+        <option value="GHS">GHS (Base)</option>
+        <option value="USD">USD</option>
+        <option value="EUR">EUR</option>
+      </select>
+      <button id="refresh-rates-btn">Refresh Rates</button>
+      <span id="rate-timestamp"></span>
+    </div>
+    {% else %}
+    <!-- For students, keep controls hidden and always show GHS -->
+    <div id="currency-controls" style="display: none">
+      <select id="currency-select">
+        <option value="GHS">GHS (Base)</option>
+      </select>
+      <button id="refresh-rates-btn" style="display: none">
+        Refresh Rates
+      </button>
+      <span id="rate-timestamp"></span>
+    </div>
+    {% endif %}
+
     <!-- Location Selectors -->
     <div
       id="location-fields"
@@ -30,10 +56,287 @@
       <p>Select the building element type</p>
 
       <form action="/Calculate" method="post">
-        <fieldset id="trenchField">
+        <!-- Tree Cutting/Removal -->
+        <fieldset
+          id="treeCuttingField"
+          data-component="tree cutting"
+          class="hidden"
+        >
+          <legend>Tree/Tree Stump Removal</legend>
+          <p>
+            <label for="num_trees">Number of Trees/Stumps</label>
+            <input
+              type="number"
+              name="num_trees"
+              id="num_trees"
+              min="1"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="tree_girth">Average Girth</label>
+            <select name="tree_girth" id="tree_girth" required>
+              <option value="600-1500">600mm - 1.5m</option>
+              <option value="1500-3000">1.5m - 3.0m</option>
+              <option value=">3000">&gt; 3.0m</option>
+            </select>
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Tree Cutting"
+          >
+            Calculate Tree Removal
+          </button>
+        </fieldset>
+
+        <!-- Site Clearance -->
+        <fieldset
+          id="siteClearanceField"
+          data-component="site clearance"
+          class="hidden"
+        >
+          <legend>Site Clearance</legend>
+          <p>
+            <label for="site_length">Site Length (mm)</label>
+            <input
+              type="number"
+              name="site_length"
+              id="site_length"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="site_width">Site Width (mm)</label>
+            <input
+              type="number"
+              name="site_width"
+              id="site_width"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Site Clearance"
+          >
+            Calculate Site Clearance
+          </button>
+        </fieldset>
+
+        <!-- Topsoil Excavation -->
+        <fieldset
+          id="topsoilExcavationField"
+          data-component="topsoil excavation"
+          class="hidden"
+        >
+          <legend>Topsoil Excavation</legend>
+          <p>
+            <label for="gf_length">External Length of GF Plan (mm)</label>
+            <input
+              type="number"
+              name="gf_length"
+              id="gf_length"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="gf_width">External Width of GF Plan (mm)</label>
+            <input
+              type="number"
+              name="gf_width"
+              id="gf_width"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="spread">Spread from Section (mm)</label>
+            <input
+              type="number"
+              name="spread"
+              id="spread"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Topsoil Excavation"
+          >
+            Calculate Topsoil Excavation
+          </button>
+        </fieldset>
+
+        <!-- Retaining Topsoil -->
+        <fieldset
+          id="retainTopsoilField"
+          data-component="retain topsoil"
+          class="hidden"
+        >
+          <legend>Retaining Topsoil</legend>
+          <p>
+            <label for="gf_length_r">External Length of GF Plan (mm)</label>
+            <input
+              type="number"
+              name="gf_length_r"
+              id="gf_length_r"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="gf_width_r">External Width of GF Plan (mm)</label>
+            <input
+              type="number"
+              name="gf_width_r"
+              id="gf_width_r"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="spread_r">Spread from Section (mm)</label>
+            <input
+              type="number"
+              name="spread_r"
+              id="spread_r"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="topsoil_depth">Depth of Topsoil Excavation (mm)</label>
+            <input
+              type="number"
+              name="topsoil_depth"
+              id="topsoil_depth"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Retain Topsoil"
+          >
+            Calculate Retaining Topsoil
+          </button>
+        </fieldset>
+
+        <!-- Trench Excavation -->
+        <fieldset
+          id="trenchExcavationField"
+          data-component="trench excavation"
+          class="hidden"
+        >
+          <legend>Trench Excavation</legend>
+          <p>
+            <label for="ext_len">External Length of GF Plan (mm)</label>
+            <input
+              type="number"
+              name="ext_len"
+              id="ext_len"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="ext_width">External Width of GF Plan (mm)</label>
+            <input
+              type="number"
+              name="ext_width"
+              id="ext_width"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="spread_trench">Spread from Section (mm)</label>
+            <input
+              type="number"
+              name="spread_trench"
+              id="spread_trench"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <div>
+            <label>Internal Horizontal Trench Lengths (mm)</label>
+            <div id="int_hor_trenches"></div>
+            <button
+              type="button"
+              onclick="addInternalTrenchInput('int_hor_trenches')"
+            >
+              Add Horizontal
+            </button>
+          </div>
+          <div>
+            <label>Internal Vertical Trench Lengths (mm)</label>
+            <div id="int_ver_trenches"></div>
+            <button
+              type="button"
+              onclick="addInternalTrenchInput('int_ver_trenches')"
+            >
+              Add Vertical
+            </button>
+          </div>
+          <p>
+            <label for="trench_width">Width of Trench (mm)</label>
+            <input
+              type="number"
+              name="trench_width"
+              id="trench_width"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <p>
+            <label for="trench_depth">Depth of Trench (mm)</label>
+            <input
+              type="number"
+              name="trench_depth"
+              id="trench_depth"
+              step="0.01"
+              required
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Trench Excavation"
+          >
+            Calculate Trench Excavation
+          </button>
+        </fieldset>
+        <fieldset
+          id="trenchField"
+          data-component="concrete in trench"
+          class="hidden"
+        >
           <legend>Concrete in Trench dimensions</legend>
           <p>
-            <label for="trench_length">Length</label>
+            <label for="trench_length">Length (mm)</label>
 
             <!-- Inputs with unique IDs -->
             <input
@@ -48,7 +351,7 @@
             <span class="error-message"></span>
           </p>
           <p>
-            <label for="trench_width">Width</label>
+            <label for="trench_width">Width (mm)</label>
             <input
               type="text"
               name="trench_width"
@@ -61,7 +364,7 @@
             <span class="error-message"></span>
           </p>
           <p>
-            <label for="trench_height">Height</label>
+            <label for="trench_height">Height (mm)</label>
             <input
               type="text"
               name="trench_height"
@@ -83,10 +386,14 @@
           </button>
         </fieldset>
 
-        <fieldset id="blockworkField">
+        <fieldset
+          id="blockworkField"
+          data-component="blockwork in foundation"
+          class="hidden"
+        >
           <legend>Blockwork in Foundation dimensions</legend>
           <p>
-            <label for="blockwork_length">Length</label>
+            <label for="blockwork_length">Length (mm)</label>
             <input
               type="text"
               name="blockwork_length"
@@ -99,7 +406,7 @@
             <span class="error-message"></span>
           </p>
           <p>
-            <label for="blockwork_height">Height</label>
+            <label for="blockwork_height">Height (mm)</label>
             <input
               type="text"
               name="blockwork_height"
@@ -126,6 +433,13 @@
           <p>
             <label for="elements"> Component Type:</label>
             <select name="elements" id="elements" multiple size="5">
+              <optgroup label="D. Groundworks">
+                <option value="tree cutting">Tree/Tree Stump Removal</option>
+                <option value="site clearance">Site Clearance</option>
+                <option value="topsoil excavation">Topsoil Excavation</option>
+                <option value="retain topsoil">Retaining Topsoil</option>
+                <option value="trench excavation">Trench Excavation</option>
+              </optgroup>
               <optgroup label="E. Insitu Concrete">
                 <option value="concrete in trench">
                   Concrete in Trench Excavation
@@ -161,7 +475,8 @@
     </section>
 
     <!-- Role-based PDF button -->
-    {% if 'professional' in current_user.roles or 'firm' in current_user.roles %}
+    {% if 'professional' in current_user.roles or 'firm' in current_user.roles
+    %}
     <button id="generate-boq" class="boq-button" data-role="professional,firm">
       <!-- <img src="pdf-icon.svg" alt="PDF" /> -->
       Generate BOQ Report

@@ -1,9 +1,9 @@
 // Define SMM7 categories and work sections
 export const SMM7_CATEGORIES = {
-    /*"D. Groundworks": {
+    "D. Groundworks": {
         mainCategory: "Substructure",
-        components: ["Site Clearance", "Excavation", "Fill Material"]
-    },*/
+        components: ["Tree Cutting", "Site Clearance", "Topsoil Excavation", "Retain Topsoil", "Trench Excavation", "Fill Material"]
+    },
     "E. In-situ Concrete": {
         mainCategory: "Substructure",
         components: ["Foundations", "Ground Beams", "Blinding"]

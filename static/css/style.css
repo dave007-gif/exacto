@@ -1,12 +1,6 @@
-
-/* Hide trench fields by default */
-#trenchField {
-    display: none;
-  }
-  
-/* Hide blockwork fields by default */
-#blockworkField {
-  display: none;
+/* General styles */
+.hidden {
+  display: none !important;
 }
 
   /* Basic styling for multi-select */

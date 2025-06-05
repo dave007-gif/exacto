@@ -6,6 +6,11 @@ import sqlite3
 import os
 from datetime import datetime, timedelta, timezone
 from flask_cors import CORS
+import requests
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_secret_key')  # Load from environment variable
@@ -227,8 +232,13 @@ def populate_initial_data():
 
     # Populate LaborRates table
     labor_rates = [
+        (local_supplier_id, 'tree cutting 600-1500', 20.00, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'tree cutting 1500-3000', 35.00, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'tree cutting over 3000', 60.00, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'site clearance', 2.50, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'excavation', 15.00, '2023-01-01', '2023-12-31'),
         (local_supplier_id, 'bricklaying', 25.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'concreting', 30.00, '2023-01-01', '2023-12-31')
+        (local_supplier_id, 'concreting', 30.00, '2023-01-01', '2023-12-31'),
     ]
     cursor.executemany('''
         INSERT OR IGNORE INTO LaborRates (source_id, task, rate, valid_from, valid_to)
@@ -248,8 +258,10 @@ def populate_initial_data():
 
     # Populate Plants table
     plants = [
-        ('Mixer', 400.00, 0.2),  # Mixer: GHS 400/day, 0.2 days per m³
-        ('Crane', 1000.00, 0.1)  # Crane: GHS 1000/day, 0.1 days per m³
+        ('Mixer', 400.00, 0.2),      # Mixer: GHS 400/day, 0.2 days per m³
+        ('Crane', 1000.00, 0.1),     # Crane: GHS 1000/day, 0.1 days per m³
+        ('Excavator', 1200.00, 0.15),# Excavator: GHS 1200/day, 0.15 days per m³
+        ('Tipper Truck', 800.00, 0.1) # Tipper Truck: GHS 800/day, 0.1 days per m³
     ]
     cursor.executemany('''
         INSERT OR IGNORE INTO Plants (equipment, daily_rate, duration_per_unit)
@@ -916,6 +928,22 @@ def logout():
     response.set_cookie('authToken', '', expires=0)
     return response
 
+@app.route('/api/fx-rates', methods=['GET'])
+def get_fx_rates():
+    API_KEY = os.getenv('EXCHANGERATE_API_KEY')
+    if not API_KEY:
+        return jsonify({'error': 'FX API key not set'}), 500
+    BASE_CURRENCY = request.args.get('base', 'GHS')
+    url = f'https://v6.exchangerate-api.com/v6/{API_KEY}/latest/{BASE_CURRENCY}'
+
+    try:
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            return jsonify({'error': 'Failed to fetch FX rates'}), 502
+        data = response.json()
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
