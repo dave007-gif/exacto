@@ -452,7 +452,8 @@ document.addEventListener('DOMContentLoaded', async function () {
         setupComponentDropdown();
         setupCalculateButtons();
         setupSaveProjectButton();
-        setupGenerateBOQButton();
+        // REMOVE or COMMENT OUT this line:
+        // setupGenerateBOQButton();
         setupLogoutButton();
 
         displayProjects();
@@ -869,6 +870,8 @@ function setupSaveProjectButton() {
     });
 }
 
+// REMOVE or COMMENT OUT this function and its call!
+/*
 function setupGenerateBOQButton() {
     console.log("Setting up generate BOQ button");
     const boqBtn = document.getElementById('generate-boq');
@@ -893,6 +896,7 @@ function setupGenerateBOQButton() {
         }
     });
 }
+*/
 
 function setupLogoutButton() {
     console.log("Setting up dashboard button");
@@ -1598,7 +1602,7 @@ async function fetchPlantData() {
     }
 }
 
-// Handle the "Generate BOQ" button click
+/*// Handle the "Generate BOQ" button click
 document.getElementById('generate-boq').addEventListener('click', async function () {
     const button = this;
     button.disabled = true; // Disable the button
@@ -1619,7 +1623,7 @@ document.getElementById('generate-boq').addEventListener('click', async function
         button.disabled = false; // Re-enable the button
         button.textContent = "Generate BOQ Report"; // Reset button text
     }
-});
+});*/
 
 async function fetchCalculatedComponents() {
     const selectedComponents = Array.from(document.querySelectorAll('.result-item')).map(result => {
@@ -1685,4 +1689,104 @@ async function loadRecentActivity() {
   });
 }
 document.addEventListener('DOMContentLoaded', loadRecentActivity);
+
+// --- Modal logic for BOQ export ---
+// Place this block after DOMContentLoaded or at the end of your main JS
+
+console.log('[BOQ Modal] Initializing modal export logic');
+
+const boqBtn = document.getElementById('generate-boq');
+const boqModal = document.getElementById('boq-format-modal');
+const closeModalBtn = document.getElementById('close-boq-modal');
+const pdfBtn = document.getElementById('download-pdf');
+const xlsxBtn = document.getElementById('download-xlsx');
+const csvBtn = document.getElementById('download-csv');
+
+if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
+    // Open modal on BOQ button click
+    boqBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        console.log('[BOQ Modal] Generate BOQ clicked, opening modal');
+        boqModal.style.display = 'flex';
+    });
+
+    // Close modal handler
+    closeModalBtn.addEventListener('click', function () {
+        boqModal.style.display = 'none';
+        console.log('[BOQ Modal] Modal closed');
+    });
+
+    // PDF export handler (reuse your existing PDF logic)
+    pdfBtn.addEventListener('click', async function () {
+        boqModal.style.display = 'none';
+        console.log('[BOQ Modal] PDF export selected');
+        await generateSMM7BOQ(); // This should trigger your PDF logic as before
+    });
+
+    // Excel export handler (requires SheetJS library)
+    xlsxBtn.addEventListener('click', function () {
+        boqModal.style.display = 'none';
+        console.log('[BOQ Modal] Excel export selected');
+        generateBOQSpreadsheet('xlsx');
+    });
+
+    // CSV export handler
+    csvBtn.addEventListener('click', function () {
+        boqModal.style.display = 'none';
+        console.log('[BOQ Modal] CSV export selected');
+        generateBOQSpreadsheet('csv');
+    });
+} else {
+    console.warn('[BOQ Modal] One or more modal elements not found in DOM');
+}
+
+// --- Spreadsheet export function (SheetJS for Excel, native for CSV) ---
+function generateBOQSpreadsheet(format) {
+    console.log(`[BOQ Export] Generating spreadsheet in format: ${format}`);
+    // Build rows: headers first
+    const rows = [
+        ["Section", "Code", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"]
+    ];
+    Object.entries(boqData.workSections).forEach(([section, data]) => {
+        data.items.forEach(item => {
+            rows.push([
+                section,
+                item.itemCode,
+                item.description,
+                item.quantity,
+                item.unit,
+                item.rate,
+                item.total
+            ]);
+        });
+        rows.push([section + " Section Total", "", "", "", "", "", data.total]);
+    });
+    rows.push(["GRAND TOTAL", "", "", "", "", "", Object.values(boqData.workSections).reduce((sum, s) => sum + s.total, 0)]);
+
+    if (format === 'xlsx') {
+        if (typeof XLSX === 'undefined') {
+            alert('Excel export requires SheetJS (XLSX) library. Please include it in your HTML.');
+            console.error('[BOQ Export] XLSX library not found');
+            return;
+        }
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "BOQ");
+        XLSX.writeFile(wb, `BOQ-${new Date().toISOString().slice(0,10)}.xlsx`);
+        console.log('[BOQ Export] Excel file generated and download triggered');
+    } else if (format === 'csv') {
+        // Simple CSV export
+        const csv = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+        const blob = new Blob([csv], { type: "text/csv" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = `BOQ-${new Date().toISOString().slice(0,10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        console.log('[BOQ Export] CSV file generated and download triggered');
+    } else {
+        console.warn(`[BOQ Export] Unknown format requested: ${format}`);
+    }
+}
 

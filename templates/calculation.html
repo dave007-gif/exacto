@@ -478,14 +478,28 @@
     {% if 'professional' in current_user.roles or 'firm' in current_user.roles
     %}
     <button id="generate-boq" class="boq-button" data-role="professional,firm">
-      <!-- <img src="pdf-icon.svg" alt="PDF" /> -->
-      Generate BOQ Report
+      Generate BOQ
     </button>
+    <!-- Modal for format selection -->
+    <div id="boq-format-modal" class="boq-modal">
+      <div class="boq-modal-content">
+        <h3>Select BOQ Format</h3>
+        <button id="download-pdf" class="boq-modal-btn">PDF</button>
+        <button id="download-xlsx" class="boq-modal-btn">Excel</button>
+        <button id="download-csv" class="boq-modal-btn">CSV</button>
+        <br />
+        <button id="close-boq-modal" class="boq-modal-btn cancel">
+          Cancel
+        </button>
+      </div>
+    </div>
     {% endif %}
 
     <button id="dashboard-btn">Go to Dashboard</button>
     <script type="module" src="static/js/formulas.js"></script>
     <script type="module" src="static/js/script.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>
+    <!-- SheetJS for Excel export -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
   </body>
 </html>
