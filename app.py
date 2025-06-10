@@ -223,7 +223,8 @@ def populate_initial_data():
         (local_supplier_id, 'sand', 30.00, '2023-01-01', '2023-12-31'),
         (local_supplier_id, 'aggregate', 60.00, '2023-01-01', '2023-12-31'),
         (block_factory_id, 'blocks', 5.50, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'mortar', 40.00, '2023-01-01', '2023-12-31')
+        (local_supplier_id, 'mortar', 40.00, '2023-01-01', '2023-12-31'),
+        (local_supplier_id, 'water', 10.00, '2023-01-01', '2023-12-31')  # <-- Add this line
     ]
     cursor.executemany('''
         INSERT OR IGNORE INTO MaterialPrices (source_id, material, unit_cost, valid_from, valid_to)

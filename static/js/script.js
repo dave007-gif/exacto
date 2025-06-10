@@ -12,6 +12,7 @@ console.log("script.js loaded");
 let currencyRates = { GHS: 1 };
 let lastRateTimestamp = null;
 let lastUsedCurrency = 'GHS'
+let lastMeanGirth = 0;
 
 /*// --- Role-based currency UI gating ---
 function setupCurrencyUI(userRoles) {
@@ -311,6 +312,7 @@ function addToBOQ(component, quantity, unitCost, inputs) {
         : (formulaObj.reference || component);
 
     const { workSection, mainCategory } = classifyComponent(component);
+    console.log(`[addToBOQ] Adding "${component}" to section "${workSection}"`);
     const total = quantity * unitCost * haulageMultiplier;
 
     const boqItem = {
@@ -583,10 +585,41 @@ function setupInputValidation() {
     }
 }
 
+function addInternalTrenchInput(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Determine type for placeholder
+    let type = '';
+    if (containerId === 'int_hor_trenches') type = 'Horizontal trench (mm)';
+    else if (containerId === 'int_ver_trenches') type = 'Vertical trench (mm)';
+    else type = 'Internal trench (mm)';
+
+    // Create a new input element
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'internal-trench-input';
+    input.placeholder = type;
+    input.pattern = '[0-9]+([\\.,][0-9]+)?';
+    input.autocomplete = 'off';
+
+    // Optional: add validation/error span
+    const errorSpan = document.createElement('span');
+    errorSpan.className = 'error-message';
+
+    // Wrap input and error in a <p>
+    const p = document.createElement('p');
+    p.appendChild(input);
+    p.appendChild(errorSpan);
+
+    container.appendChild(p);
+}
+// Make it available globally for inline onclick handlers
+window.addInternalTrenchInput = addInternalTrenchInput;
+
 function setupComponentDropdown() {
     console.log("Setting up component dropdown");
     const componentSelect = document.getElementById("elements");
-    // Collect all fieldsets with a data-component attribute for scalability
     const allFieldsets = document.querySelectorAll('fieldset[data-component]');
     if (!componentSelect || allFieldsets.length === 0) {
         console.warn("Component dropdown or component fieldsets not found");
@@ -594,7 +627,6 @@ function setupComponentDropdown() {
     }
 
     componentSelect.addEventListener("change", function () {
-        // Get selected component values
         const selectedValues = Array.from(componentSelect.selectedOptions).map(opt => opt.value);
 
         allFieldsets.forEach(fieldset => {
@@ -603,10 +635,67 @@ function setupComponentDropdown() {
             fieldset.classList.toggle('hidden', !shouldShow);
             // Set required only for visible fieldset inputs
             fieldset.querySelectorAll("input").forEach(input => input.required = shouldShow);
+
+            // Attach mix ratio handler if this is the trench fieldset and it's being shown
+            if (component === "concrete in trench" && shouldShow) {
+                const mixRatioSelect = fieldset.querySelector('#mix_ratio');
+                const customMixRow = fieldset.querySelector('#custom-mix-ratio-row');
+                const customMixInput = fieldset.querySelector('#custom_mix_ratio');
+                if (mixRatioSelect && customMixRow && customMixInput && !mixRatioSelect._handlerAttached) {
+                    mixRatioSelect.addEventListener('change', function() {
+                        if (this.value === 'custom') {
+                            customMixRow.style.display = '';
+                            customMixInput.required = true;
+                        } else {
+                            customMixRow.style.display = 'none';
+                            customMixInput.required = false;
+                            customMixInput.value = '';
+                        }
+                    });
+                    // Also trigger the handler once to set initial state
+                    if (mixRatioSelect.value === 'custom') {
+                        customMixRow.style.display = '';
+                        customMixInput.required = true;
+                    } else {
+                        customMixRow.style.display = 'none';
+                        customMixInput.required = false;
+                        customMixInput.value = '';
+                    }
+                    mixRatioSelect._handlerAttached = true;
+                }
+            }
         });
 
         console.log("Dropdown changed. Showing:", selectedValues);
     });
+
+    // --- Add this block ---
+    componentSelect.addEventListener("change", function () {
+        const selectedOptions = componentSelect.selectedOptions;
+        let isTrenchSelected = false;
+        let isBlockworkSelected = false;
+
+        for (let i = 0; i < selectedOptions.length; i++) {
+            const optionValue = selectedOptions[i].value;
+            if (optionValue === "concrete in trench") isTrenchSelected = true;
+            if (optionValue === "blockwork in foundation") isBlockworkSelected = true;
+        }
+
+        trenchFieldset.style.display = isTrenchSelected ? "block" : "none";
+        trenchFieldset.querySelectorAll("input").forEach(input => input.required = isTrenchSelected);
+        blockworkFieldset.style.display = isBlockworkSelected ? "block" : "none";
+        blockworkFieldset.querySelectorAll("input").forEach(input => input.required = isBlockworkSelected);
+
+        // --- Add this block ---
+        if (isTrenchSelected) {
+            const meanGirthInput = document.getElementById('mean_girth');
+            if (meanGirthInput) meanGirthInput.value = (lastMeanGirth * 1000).toFixed(2); // show in mm
+        }
+        // --- end block ---
+
+        console.log("Dropdown changed. Trench:", isTrenchSelected, "Blockwork:", isBlockworkSelected);
+    });
+    // --- end block ---
 }
 
 // Special labor fetch handlers for scalable special-case logic
@@ -683,25 +772,62 @@ function setupCalculateButtons() {
             const inputs = fieldset.querySelectorAll('input, select');
             let isValid = true;
 
-            // Validate all inputs in the fieldset
+            // --- 1. VALIDATION LOOP (do NOT set inputValues here) ---
             for (let j = 0; j < inputs.length; j++) {
-                if (!validateInput(inputs[j])) isValid = false;
+                const input = inputs[j];
+                // Only validate if input is visible and required
+                if (
+                    input.offsetParent !== null && // visible
+                    input.required !== false // required
+                ) {
+                    // Special case for custom mix ratio
+                    if (input.id === "custom_mix_ratio") {
+                        const mixRatioSelect = fieldset.querySelector('#mix_ratio');
+                        if (mixRatioSelect && mixRatioSelect.value === 'custom') {
+                            // Validate as a ratio string
+                            const pattern = /^\d+(\.\d+)?:\d+(\.\d+)?:\d+(\.\d+)?$/;
+                            if (!input.value.trim() || !pattern.test(input.value.trim())) {
+                                showError(input, input.parentElement.querySelector('.error-message'), 'Enter a valid custom mix ratio (e.g. 1:2:3)');
+                                isValid = false;
+                            }
+                        }
+                        continue; // Skip numeric validation for this field
+                    } else if (input.type === "text" && input.id === "mix_ratio") {
+                        // Skip numeric validation for the mix_ratio select
+                        continue;
+                    } else {
+                        if (!validateInput(input)) isValid = false;
+                    }
+                }
             }
+
             if (!isValid) {
                 console.warn("Input validation failed");
                 return;
             }
 
-            // Gather input values (handle arrays for dynamic fields)
+            // --- 2. GATHER VALUES LOOP ---
             const inputValues = {};
             for (let j = 0; j < inputs.length; j++) {
                 const input = inputs[j];
                 const inputName = input.name;
-                if (input.classList.contains('internal-trench-input')) {
-                    if (!inputValues[inputName]) inputValues[inputName] = [];
-                    const val = parseFloat(input.value);
-                    if (!isNaN(val)) inputValues[inputName].push(val);
-                } else if (input.type === "number" || input.type === "text") {
+
+                // Special handling for custom_mix_ratio
+                if (input.id === "custom_mix_ratio") {
+                    const mixRatioSelect = fieldset.querySelector('#mix_ratio');
+                    if (mixRatioSelect && mixRatioSelect.value === 'custom') {
+                        inputValues[inputName] = input.value.trim(); // Always as string
+                    }
+                    continue; // Skip numeric validation for this field
+                }
+
+                // For mix_ratio select, store as string
+                if (input.id === "mix_ratio") {
+                    inputValues[inputName] = input.value;
+                    continue;
+                }
+
+                if (input.type === "number" || input.type === "text") {
                     const val = parseFloat(input.value);
                     if (isNaN(val)) {
                         alert(`Please enter a valid number for ${inputName}`);
@@ -717,6 +843,20 @@ function setupCalculateButtons() {
                 inputValues.int_hor_trenches = Array.from(fieldset.querySelectorAll('#int_hor_trenches input')).map(inp => parseFloat(inp.value) || 0);
                 inputValues.int_ver_trenches = Array.from(fieldset.querySelectorAll('#int_ver_trenches input')).map(inp => parseFloat(inp.value) || 0);
             }
+
+            // --- 3. SET mix_ratio CORRECTLY ---
+            if (componentType === "concrete in trench") {
+                const mixRatioSelect = fieldset.querySelector('#mix_ratio');
+                let mix_ratio = mixRatioSelect ? mixRatioSelect.value : "1:2:4";
+                if (mix_ratio === 'custom') {
+                    const customMixInput = fieldset.querySelector('#custom_mix_ratio');
+                    if (customMixInput && customMixInput.value.trim()) {
+                        mix_ratio = customMixInput.value.trim();
+                    }
+                }
+                inputValues.mix_ratio = mix_ratio;
+            }
+            // --- END BLOCK ---
 
             // Convert units from mm to meters if applicable
             Object.keys(inputValues).forEach(field => {
@@ -736,6 +876,19 @@ function setupCalculateButtons() {
                 alert(`No formula found for component: ${componentType}. Please check your inputs.`);
                 return;
             }
+
+            // --- Add this block for trench excavation ---
+            if (formulaKey === "trench excavation") {
+                // Replicate the mean girth logic from your formulas.js
+                const extGirth = 2 * ((inputValues.ext_len || 0) + (inputValues.ext_width || 0)) - 4 * (inputValues.spread_trench || 0);
+                const intHor = (inputValues.int_hor_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
+                const intVer = (inputValues.int_ver_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
+                lastMeanGirth = extGirth + intHor + intVer;
+                // Optionally, update the mean girth field if visible
+                const meanGirthInput = document.getElementById('mean_girth');
+                if (meanGirthInput) meanGirthInput.value = (lastMeanGirth * 1000).toFixed(2); // show in mm
+            }
+            // --- end block ---
 
             const prices = await fetchPricesForComponent(formulaKey);
             if (!prices) {
@@ -923,6 +1076,17 @@ function validateInput(input) {
         return false;
     }
 
+    // Skip numeric validation for select fields
+    if (input.tagName === "SELECT") {
+        return true;
+    }
+
+    // --- SKIP numeric validation for custom_mix_ratio ---
+    if (input.id === "custom_mix_ratio") {
+        // Validation is handled separately in setupCalculateButtons
+        return true;
+    }
+
     // Convert value to number here, so it can be used later
     const numericValue = parseFloat(value);
 
@@ -1039,6 +1203,13 @@ componentSelect.addEventListener("change", function () {
     trenchFieldset.querySelectorAll("input").forEach(input => input.required = isTrenchSelected);
     blockworkFieldset.style.display = isBlockworkSelected ? "block" : "none";
     blockworkFieldset.querySelectorAll("input").forEach(input => input.required = isBlockworkSelected);
+
+    // --- Add this block ---
+    if (isTrenchSelected) {
+        const meanGirthInput = document.getElementById('mean_girth');
+        if (meanGirthInput) meanGirthInput.value = (lastMeanGirth * 1000).toFixed(2); // show in mm
+    }
+    // --- end block ---
 
     console.log("Dropdown changed. Trench:", isTrenchSelected, "Blockwork:", isBlockworkSelected);
 });
@@ -1265,7 +1436,8 @@ function classifyComponent(component) {
     const workSection = Object.keys(SMM7_CATEGORIES).find((section) =>
         SMM7_CATEGORIES[section].components.includes(component)
     );
-
+    // Debug log:
+    console.log(`[classifyComponent] "${component}" mapped to section "${workSection}"`);
     return {
         workSection: workSection || "Z. Unclassified Works",
         mainCategory: workSection
@@ -1309,11 +1481,11 @@ function classifyComponent(component) {
         const dailyRate = laborTask ? labor[laborTask] || 0 : 0;
         const laborCalc = SMM7_2023.calculateLaborCost(
             quantity,
-            8, // laborHoursPerUnit
-            adjustments.labor_efficiency || 1, // efficiency
-            8, // hoursPerDay
+            8,
+            adjustments.labor_efficiency || 1,
+            8,
             dailyRate,
-            laborTask // Added taskType parameter
+            laborTask
         );
         const laborCost = laborCalc?.laborCost || 0;
 
@@ -1711,6 +1883,8 @@ if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
     });
 
     // Close modal handler
+
+
     closeModalBtn.addEventListener('click', function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] Modal closed');
@@ -1736,8 +1910,6 @@ if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
         console.log('[BOQ Modal] CSV export selected');
         generateBOQSpreadsheet('csv');
     });
-} else {
-    console.warn('[BOQ Modal] One or more modal elements not found in DOM');
 }
 
 // --- Spreadsheet export function (SheetJS for Excel, native for CSV) ---
@@ -1745,6 +1917,7 @@ function generateBOQSpreadsheet(format) {
     console.log(`[BOQ Export] Generating spreadsheet in format: ${format}`);
     // Build rows: headers first
     const rows = [
+
         ["Section", "Code", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"]
     ];
     Object.entries(boqData.workSections).forEach(([section, data]) => {
@@ -1789,4 +1962,23 @@ function generateBOQSpreadsheet(format) {
         console.warn(`[BOQ Export] Unknown format requested: ${format}`);
     }
 }
+
+/*// Custom mix ratio logic
+document.addEventListener('DOMContentLoaded', function() {
+    const mixRatioSelect = document.getElementById('mix_ratio');
+    const customMixRow = document.getElementById('custom-mix-ratio-row');
+    const customMixInput = document.getElementById('custom_mix_ratio');
+    if (mixRatioSelect && customMixRow && customMixInput) {
+        mixRatioSelect.addEventListener('change', function() {
+            if (this.value === 'custom') {
+                customMixRow.style.display = '';
+                customMixInput.required = true;
+            } else {
+                customMixRow.style.display = 'none';
+                customMixInput.required = false;
+                customMixInput.value = ''; // clear value to avoid accidental validation
+            }
+        });
+    }
+});*/
 

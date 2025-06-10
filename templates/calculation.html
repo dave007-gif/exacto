@@ -334,19 +334,16 @@
           data-component="concrete in trench"
           class="hidden"
         >
-          <legend>Concrete in Trench dimensions</legend>
+          <legend>Concrete in Trench (Substructure)</legend>
           <p>
-            <label for="trench_length">Length (mm)</label>
-
-            <!-- Inputs with unique IDs -->
+            <label for="mean_girth">Mean Girth (mm)</label>
             <input
               type="text"
-              name="trench_length"
-              id="trench_length"
-              placeholder="1000"
-              autocomplete="off"
-              pattern="[0-9]+([\.,][0-9]+)?"
-              required
+              name="mean_girth"
+              id="mean_girth"
+              readonly
+              style="background: #f0f0f0"
+              placeholder="Auto-calculated (mm)"
             />
             <span class="error-message"></span>
           </p>
@@ -356,33 +353,53 @@
               type="text"
               name="trench_width"
               id="trench_width"
-              placeholder="1000"
+              placeholder="600"
               autocomplete="off"
-              pattern="[0-9]+([\.,][0-9]+)?"
+              pattern="[0-9]+([\\.,][0-9]+)?"
               required
             />
             <span class="error-message"></span>
           </p>
           <p>
-            <label for="trench_height">Height (mm)</label>
+            <label for="concrete_thickness">Thickness (mm)</label>
             <input
               type="text"
-              name="trench_height"
-              id="trench_height"
-              placeholder="1000"
+              name="concrete_thickness"
+              id="concrete_thickness"
+              placeholder="150"
               autocomplete="off"
-              pattern="[0-9]+([\.,][0-9]+)?"
+              pattern="[0-9]+([\\.,][0-9]+)?"
               required
             />
             <span class="error-message"></span>
           </p>
-          <!-- Component-specific button -->
+          <p>
+            <label for="mix_ratio">Mix Ratio</label>
+            <select name="mix_ratio" id="mix_ratio" required>
+              <option value="1:2:4" selected>1:2:4 (Standard - 20MPa)</option>
+              <option value="1:1.5:3">1:1.5:3 (25MPa)</option>
+              <option value="1:3:6">1:3:6 (10MPa)</option>
+              <option value="custom">Other (specify below)</option>
+            </select>
+            <span class="error-message"></span>
+          </p>
+          <p id="custom-mix-ratio-row" style="display: none">
+            <label for="custom_mix_ratio">Custom Mix Ratio (e.g. 1:2:3)</label>
+            <input
+              type="text"
+              name="custom_mix_ratio"
+              id="custom_mix_ratio"
+              placeholder="e.g. 1:2:3"
+              pattern="^\\d+(\\.\\d+)?:\\d+(\\.\\d+)?:\\d+(\\.\\d+)?$"
+            />
+            <span class="error-message"></span>
+          </p>
           <button
             type="button"
             class="calculate-btn"
             data-component="Foundations"
           >
-            Calculate Trench
+            Calculate Concrete in Trench
           </button>
         </fieldset>
 

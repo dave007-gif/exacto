@@ -98,18 +98,71 @@ export const SMM7_2023 = {
   },
   // 6. Concrete in Trench;
     'concrete in trench': {
-        formula: (inputs, concrete_waste_factor) =>
-            inputs.trench_length * inputs.trench_width * inputs.trench_height * concrete_waste_factor,
-        materials: ['cement', 'sand', 'aggregate'],
+        formula: (inputs, concrete_waste_factor = 1) =>
+            (inputs.mean_girth || 0) * (inputs.trench_width || 0) * (inputs.concrete_thickness || 0) * concrete_waste_factor,
+        unit: 'm³',
+        description: (inputs) =>
+            `Insitu concrete of cement:sand:aggregate ${inputs.mix_ratio || '1:2:4'} - 20mm agg in trench foundation (${inputs.mean_girth || 0}m × ${inputs.trench_width || 0}m × ${inputs.concrete_thickness || 0}m)`,
+        reference: 'SMM7 E20',
+        materials: ['cement', 'sand', 'aggregate', 'water'],
         laborTasks: ['concreting'],
-        equipment: ['Mixer'], // Specify the equipment required
-        reference: 'SMM7 Clause E20',
-        calculateMaterialCost: (quantity, materialPrices) => {
-            let totalCost = 0;
-            for (const material of ['cement', 'sand', 'aggregate']) {
-                totalCost += (materialPrices[material] || 0) * quantity;
-            }
+        equipment: ['Mixer'],
+        calculateMaterialCost: (quantity, materialPrices, inputs = {}) => {
+            // 1. Mix ratio parsing
+            let mix = (inputs.mix_ratio || "1:2:4").split(":").map(Number);
+            if (mix.length !== 3 || mix.some(isNaN)) mix = [1, 2, 4];
+            const [cementRatio, sandRatio, aggRatio] = mix;
+            const totalRatio = cementRatio + sandRatio + aggRatio;
+
+            // 2. Dry volume (54% increase)
+            const dryVolume = quantity * 1.54;
+
+            // 3. Cement
+            const cementVolume = (cementRatio / totalRatio) * dryVolume;
+            const cementDensity = 1440; // kg/m³
+            const cementBagWeight = 50; // kg
+            const cementMass = cementVolume * cementDensity;
+            const cementBags = cementMass / cementBagWeight;
+            const cementBagPrice = materialPrices['cement'] || 0;
+            const cementCost = cementBags * cementBagPrice;
+
+            // 4. Sand
+            const sandVolume = (sandRatio / totalRatio) * dryVolume;
+            const sandTripVolume = 18; // m³/trip
+            const sandTrips = sandVolume / sandTripVolume;
+            const sandTripPrice = materialPrices['sand'] || 0;
+            const sandCost = sandTrips * sandTripPrice;
+
+            // 5. Aggregate
+            const aggVolume = (aggRatio / totalRatio) * dryVolume;
+            const aggTripVolume = 18; // m³/trip
+            const aggTrips = aggVolume / aggTripVolume;
+            const aggTripPrice = materialPrices['aggregate'] || 0;
+            const aggCost = aggTrips * aggTripPrice;
+
+            // 6. Water (optional, if price available)
+            // Typical water-cement ratio: 0.5 (by weight), or about 150-180 liters per m³
+            // We'll use 180L per m³ wet volume as a standard
+            const waterLitres = 180 * quantity;
+            const waterDrumLitres = 200; // 1 drum = 200L
+            const waterDrums = waterLitres / waterDrumLitres;
+            const waterDrumPrice = materialPrices['water'] || 0;
+            const waterCost = waterDrums * waterDrumPrice;
+
+            // 7. Total
+            const totalCost = cementCost + sandCost + aggCost + waterCost;
+
             return totalCost;
+        },
+        calculateLaborCost: (inputs, laborRates) => {
+            const quantity = (inputs.mean_girth || 0) * (inputs.trench_width || 0) * (inputs.concrete_thickness || 0);
+            const dailyRate = laborRates['concreting'] || 0;
+            const totalHours = quantity * 8; // adjust as needed
+            const totalDays = totalHours / 8;
+            return {
+                totalDays,
+                laborCost: totalDays * dailyRate
+            };
         }
     },
     'blockwork in foundation': {

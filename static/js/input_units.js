@@ -23,6 +23,8 @@ export const INPUT_UNITS = {
     blockwork_height: 'mm',
     // Arrays (for internal trenches)
     int_hor_trenches: 'mm',
-    int_ver_trenches: 'mm'
+    int_ver_trenches: 'mm',
+    concrete_thickness: 'mm',
+    mean_girth: 'mm',
     // Add more as needed
 };
