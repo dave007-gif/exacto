@@ -15,31 +15,12 @@ const appearOnScroll = new IntersectionObserver((entries, observer) => {
 }, appearOptions);
 
 faders.forEach(fader => appearOnScroll.observe(fader));
+ 
+const burger = document.getElementById("burger");
+const menu = document.getElementById("menu");
 
-// Typewriter Text Effect
-const text = "Exact Estimates for Builders and Planners...";
-let i = 0;
-const speed = 60;
-
-function typeWriter() {
-  if (i < text.length) {
-    document.getElementById("typewriter").innerHTML += text.charAt(i);
-    i++;
-    setTimeout(typeWriter, speed);
-  }
-}
-
-window.addEventListener('load', typeWriter);
-
-document.addEventListener("DOMContentLoaded", function () {
-    let username = localStorage.getItem("username") || "Guest";
-    document.getElementById("usernameGreeting").textContent = `Hi, ${username}`;
-  
-    const logoutBtn = document.getElementById("logoutBtn");
-    logoutBtn.addEventListener("click", () => {
-      localStorage.removeItem("username");
-      window.location.href = "index.html"; // or redirect to login page
-    });
-  });
-  
+burger.addEventListener("click", () => {
+  menu.classList.toggle("nav-active");
+  burger.classList.toggle("toggle");
+});
   

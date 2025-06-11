@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Construction Estimator</title>
+  <link rel="stylesheet" href="estimate.css" />
+</head>
+<body>
+  <header>
+    <h1>Construction Estimator</h1>
+  </header>
+
+  
+
+  <script src="estscript.js"></script>
+  <script>
+    // Basic category selection function
+    function selectCategory(category) {
+      // Hide all forms first
+      const forms = document.querySelectorAll('.category-form');
+      forms.forEach(form => {
+        form.style.display = 'none';
+      });
+      
+      // Show the selected form
+      const selectedForm = document.getElementById(`${category}Form`);
+      if (selectedForm) {
+        selectedForm.style.display = 'block';
+      }
+      
+      // Show result area (empty for now)
+      document.getElementById('resultArea').style.display = 'block';
+    }
+    
+    // Placeholder calculation functions
+    function calculatePreliminaries() {
+      // Actual calculations would go here
+      alert('Preliminaries calculation would run here');
+    }
+    // Add similar placeholder functions for other categories...
+  </script>
+</body>
+</html>

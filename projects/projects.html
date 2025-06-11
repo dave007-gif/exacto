@@ -26,15 +26,14 @@
       <h1>Explore Our Projects</h1>
       <p>See what we've helped others build with clarity and cost accuracy.</p>
     </div>
-    
 
     <!-- Filters -->
     <div class="project-filters">
-      <button class="filter-btn active">All</button>
-      <button class="filter-btn">Residential</button>
-      <button class="filter-btn">Commercial</button>
-      <button class="filter-btn">Ongoing</button>
-      <button class="filter-btn">Completed</button>
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="residential">Residential</button>
+      <button class="filter-btn" data-filter="commercial">Commercial</button>
+      <button class="filter-btn" data-filter="ongoing">Ongoing</button>
+      <button class="filter-btn" data-filter="completed">Completed</button>
     </div>
 
     <!-- Stats -->
@@ -52,48 +51,12 @@
         <p>Client Satisfaction</p>
       </div>
     </div>
-    
-    <!-- Featured Projects -->
-    <div class="project-grid">
-      <div class="project-card" data-tags="residential completed">
-        <img src="../uploads/house1.jpg" alt="Project 1">
-        <div class="project-info">
-          <h3>3-Bedroom Bungalow</h3>
-          <p>Accra, Ghana</p>
-          <div class="progress-bar"><div style="width: 100%"></div></div>
-          <span>Completed</span>
-        </div>
-      </div>
 
-      <div class="project-card" data-tags="residential completed">
-        <img src="../uploads/house2.jpg" alt="Project 2">
-        <div class="project-info">
-          <h3>Storey Apartment</h3>
-          <p>Kumasi, Ghana</p>
-          <div class="progress-bar"><div style="width: 60%"></div></div>
-          <span>Ongoing</span>
-        </div>
-      </div>
-
-      <div class="project-add">
-        <h3>Start a New Project</h3>
-        <form id="new-project-form" onsubmit="addNewProject(event)">
-          <input type="text" id="projectName" placeholder="Project Name" required>
-          <input type="text" id="location" placeholder="Location (e.g., Tema, Ghana)" required>
-          <select id="type" required>
-            <option value="">Select Type</option>
-            <option value="residential">Residential</option>
-            <option value="commercial">Commercial</option>
-          </select>
-          <input type="text" id="clientName" placeholder="Client Name" required>
-          <button type="submit">Create Project</button>
-        </form>
-      </div>
-    </div>
+    <!-- Project Cards will be injected here -->
+    <div id="projectGrid" class="project-grid"></div>
   </section>
 
   <div class="testimonial-container">
-    <!-- Static Testimonials -->
     <div class="testimonial-card">
       <p>“Exacto made budgeting super easy and accurate. Highly recommend!”</p>
       <h4>– Kwame B., Accra</h4>
@@ -102,11 +65,8 @@
       <p>“I loved how I could see estimates before committing. Top-notch!”</p>
       <h4>– Ama K., Kumasi</h4>
     </div>
-  
-    <!-- Dynamic Testimonials go here -->
     <div id="dynamic-testimonials"></div>
   </div>
-  
 
   <section class="cta">
     <div class="cta-content">
@@ -115,8 +75,7 @@
       <a href="../estimate/estimate.html">Get an Estimate</a>
     </div>
   </section>
-  
-  <!-- Footer -->
+
   <footer class="site-footer">
     <div class="footer-content">
       <h3>EXACTO</h3>
