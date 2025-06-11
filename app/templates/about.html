@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>About | Exacto</title>
+
+  <!-- Local CSS via Flask -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='about/about.css') }}" />
+  <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon">
+
+  <!-- External FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.4/css/all.min.css">
+</head>
+<body>
+  <!-- Navbar -->
+  <nav id="nav" class="navbar-bg navbar-transparent">
+    <div class="logo">EXACTO</div>
+
+    <!-- Burger icon -->
+    <div class="burger" id="burger">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+
+    <div class="menu" id="menu">
+      <ul class="menu-links" id="menu-links">
+          <li><a href="{{ url_for('main.index') }}">Home</a></li>
+          <li><a href="{{ url_for('main.about') }}">About</a></li>
+          <li><a href="{{ url_for('main.contact') }}">Contact</a></li>
+          <li><a href="{{ url_for('main.estimate') }}">Estimate</a></li>
+          <li><a href="{{ url_for('main.projects') }}">Projects</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <!-- Hero Section -->
+  <section class="about-hero fade-in">
+    <h1>About Us</h1>
+    <h2>Smart construction takeoffs made simple.</h2>
+  </section>
+
+  <!-- About Section -->
+  <section class="about-section fade-in">
+    <div class="about-text">
+      <h2>Why We Built This</h2>
+      <p>Exacto helps you generate fast and accurate construction estimates — whether you’re a student, contractor, or self-builder.</p>
+      <p>We take you through every stage of your project, including:</p>
+      <ul>
+        <li>Trench excavation</li>
+        <li>Blockwork foundations</li>
+        <li>Concrete casting</li>
+        <li>Plastering and finishes</li>
+        <li>Roofing methods</li>
+      </ul>
+      <p>No more guesswork — just clear, visual, and structured cost breakdowns.</p>
+      <a href="{{ url_for('main.estimate') }}" class="cta-btn">Start Estimating</a>
+    </div>
+
+    <div class="about-image">
+      <!-- Add background via CSS -->
+    </div>
+  </section>
+
+  <!-- Why Choose Us -->
+  <section class="why-container fade-in">
+    <div class="why-card">
+      <h3>Fast & Reliable</h3>
+      <p>Get accurate estimates in seconds using predefined logic and assumptions.</p>
+    </div>
+    <div class="why-card">
+      <h3>Simple to Use</h3>
+      <p>Our intuitive UI makes it easy for anyone to calculate takeoffs — no training needed.</p>
+    </div>
+    <div class="why-card">
+      <h3>Constantly Evolving</h3>
+      <p>We listen to users and constantly update the app with smarter features and cleaner layouts.</p>
+    </div>
+  </section>
+
+  <!-- Testimonials -->
+  <section class="testimonials-container fade-in">
+    <h2>What People Are Saying</h2>
+
+    <div class="testimonial">
+      <p>"This app saved me hours of manual work. I can focus on site work, not spreadsheets."</p>
+      <h4>— Nana, Builder</h4>
+    </div>
+
+    <div class="testimonial">
+      <p>"I used Exacto for my final-year project and it was a game-changer. Clean interface, accurate output."</p>
+      <h4>— Efua, Student</h4>
+    </div>
+  </section>
+
+  <!-- Local JS via Flask -->
+  <script src="{{ url_for('static', filename='about/about.js') }}"></script>
+</body>
+
+<footer class="footer">
+  <div class="footer-container">
+    <p>&copy; 2025 Exacto. All rights reserved.</p>
+    <div class="footer-links">
+      <a href="#">Privacy Policy</a>
+      <a href="#">Terms of Service</a>
+      <a href="#">Support</a>
+    </div>
+  </div>
+</footer>
+</html>

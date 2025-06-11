@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en"> 
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home | Exacto</title>
+    <link rel="stylesheet" href="./main.css">
+    <link rel="icon" href="./uploads/favicon.ico" type="image/x-icon">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}">
+</head> 
+<body>
+    <section id="landing">
+        <!-- Navbar -->
+        <nav id="nav" class="navbar-bg navbar-transparent">
+            <div class="logo">EXACTO</div>
+
+            <!-- Burger Icon -->
+            <div class="burger" id="burger">
+                <span></span>
+                <span></span>
+                <span></span>
+            </div>
+
+            <!-- Menu -->
+            <div class="menu" id="menu">
+                <ul class="menu-links" id="menu-links">
+                <ul class="menu-links" id="menu-links">
+                    <li><a href="{{ url_for('main.index') }}">HOME</a></li>
+                    <li><a href="{{ url_for('main.about') }}">ABOUT</a></li>
+                    <li><a href="{{ url_for('main.estimate') }}">SERVICES</a></li>
+                    <li><a href="{{ url_for('main.projects') }}">PROJECTS</a></li>
+                    <li><a href="{{ url_for('main.contact') }}">CONTACT</a></li>
+                </ul>
+
+                <li><a onclick="openModal('login-modal')">LOGIN</a></li>
+                <li><a onclick="openModal('signup-modal')">SIGN UP</a></li>
+                </ul>
+            </div>
+        </nav>
+
+         <!-- Login Modal -->
+        <div id="login-modal" class="modal">
+            <div class="modal-content">
+            <span class="close" onclick="closeModal('login-modal')">&times;</span>
+            <h2>Login</h2>
+            <form>
+                <input type="text" placeholder="Email or Username" required />
+                <input type="password" placeholder="Password" required />
+                <label><input type="checkbox"> Keep me signed in</label><br><br>
+                <button type="submit">Login</button>
+                <div class="switch-link">
+                Don’t have an account? <a onclick="switchModal('login-modal', 'signup-modal')">Sign Up</a>
+                </div>
+            </form>
+            </div>
+        </div>
+
+        <!-- Sign Up Modal -->
+        <div id="signup-modal" class="modal">
+            <div class="modal-content">
+            <span class="close" onclick="closeModal('signup-modal')">&times;</span>
+            <h2>Sign Up</h2>
+            <form>
+                <input type="text" placeholder="Full Name" required />
+                <input type="text" placeholder="Username" required />
+                <input type="email" placeholder="Email" required />
+                <input type="password" placeholder="Password" required />
+                <input type="password" placeholder="Confirm Password" required />
+                <label><input type="checkbox"> Keep me signed in</label><br><br>
+                <button type="submit">Register</button>
+                <div class="switch-link">
+                Already have an account? <a onclick="switchModal('signup-modal', 'login-modal')">Login</a>
+                </div>
+            </form>
+            </div>
+        </div>
+    
+        <!-- Main Content -->
+        <div class="info-container">
+            <h3 class="sect-text-1 fade-in">NO GUESSWORK.</h3>
+            <h1 class="title fade-in">Accurate Estimates for Every Build</h1>
+            <p class="sct-text-2 fade-in">
+              Upload your plan or select materials — get the quantities and costs instantly. Made for planners, builders, and contractors.
+            </p>
+            
+        </div>
+        
+    
+        <div class="btn_container fade-in">
+            <a href="{{ url_for('main.estimate') }}" class="btn btn_color">Estimate Now</a>
+        </div>
+          
+    </section>  
+    <section id="about">
+        <div class="about-container">
+            <div class="about-details-container">
+                <img 
+                    src="./uploads/plan.png"
+                    alt="Building Plan"
+                    class="about-icon"
+                />
+                <h3>Building Plan</h3>
+                <p>
+                    Upload your building plan and let Exacto break down the materials needed with precision.
+                </p>
+                  
+            </div>
+            <div class="about-details-container">
+                <img 
+                    src="./uploads/cost.png"
+                    alt="Estimate Cost"
+                    class="about-icon"
+                />
+                <h3>Estimate Cost</h3>
+                <p>
+                    Get accurate material costs and quantity breakdowns — perfect for budgeting and purchase planning.
+                </p>
+                  
+            </div>
+        </div>
+        <hr>
+        <div class="estimate-container ">
+            <img src="./uploads/estimate.jpg" alt="Estimate Cost" class="estimate-image fade-in">
+            <div class="estimate-content fade-in">
+                <h2 class="estimate-title fade-in">Planning a build? Know your costs first!</h2>
+                <p class="estimate-description fade-in">
+                    Quickly estimate your project's total cost with our easy-to-use tool. Click below to get started and receive accurate estimates instantly.
+                </p>
+                <a href="{{ url_for('main.estimate') }}" target="_blank" class="estimate-link fade-in">Get an Estimate</a>
+            </div>
+        </div>
+    </section>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+
+</body>
+
+<footer class="site-footer">
+  <div class="footer-container">
+    <div class="footer-section brand">
+      <h3>EXACTO</h3>
+      <p>&copy; 2025 EXACTO. All rights reserved.</p>
+    </div>
+
+    <div class="footer-section links">
+      <h4>Quick Links</h4>
+      <ul>
+        <li><a href="{{ url_for('main.index') }}">HOME</a></li>
+        <li><a href="{{ url_for('main.about') }}">ABOUT</a></li>
+        <li><a href="{{ url_for('main.estimate') }}">SERVICES</a></li>
+        <li><a href="{{ url_for('main.projects') }}">PROJECTS</a></li>
+        <li><a href="{{ url_for('main.contact') }}">CONTACT</a></li>
+      </ul>
+    </div>
+
+    <div class="footer-section social">
+      <h4>Follow Us</h4>
+      <div class="social-icons">
+        <a href="#"><i class="fab fa-facebook-f"></i></a>
+        <a href="#"><i class="fab fa-instagram"></i></a>
+        <a href="#"><i class="fab fa-linkedin-in"></i></a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+
+  
+</html>
