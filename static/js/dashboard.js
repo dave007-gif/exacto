@@ -42,35 +42,59 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     }
 });
 
+// Fetch and display user's projects
 async function loadProjects() {
+    const projectList = document.getElementById('project-list');
+    if (!projectList) return;
+
+    // Clear any existing content
+    projectList.innerHTML = '<p>Loading projects...</p>';
+
     try {
         const res = await fetch('/api/projects', { credentials: 'include' });
-        if (!res.ok) throw new Error('Failed to fetch projects');
-        const projects = await res.json();
-        const projectList = document.getElementById('project-list');
+        if (!res.ok) {
+            projectList.innerHTML = '<p>Could not load projects.</p>';
+            return;
+        }
+        const data = await res.json();
+        const projects = data.projects || [];
+
+        if (projects.length === 0) {
+            projectList.innerHTML = '<p>No projects found.</p>';
+            return;
+        }
+
+        // Build the list
         projectList.innerHTML = '';
         projects.forEach(project => {
-            const div = document.createElement('div');
-            div.className = 'project-item';
-            div.innerHTML = `
-                <h4>${project.project_name}</h4>
-                <p>Total Cost: GHS ${project.total_cost}</p>
-                <p>Date: ${project.created_at || ''}</p>
-            `;
-            projectList.appendChild(div);
+            const link = document.createElement('a');
+            link.href = `/calculation?project_id=${project.id}`;
+            link.textContent = `${project.project_name} (Last modified: ${new Date(project.last_modified).toLocaleString()})`;
+            link.className = 'project-link';
+            link.style.display = 'block';
+            projectList.appendChild(link);
         });
-        // Update active projects count
-        const activeCount = document.getElementById('active-projects-count');
-        if (activeCount) activeCount.textContent = projects.length;
     } catch (err) {
-        console.error('Error loading projects:', err);
+        projectList.innerHTML = '<p>Error loading projects.</p>';
     }
 }
 
 // In dashboard.js
-const createProjectBtn = document.getElementById('create-project-btn');
-if (createProjectBtn) {
-    createProjectBtn.addEventListener('click', () => {
-        window.location.href = '/calculation'; // or whatever your calculation page route is
+document.getElementById('create-project-btn').addEventListener('click', async () => {
+    const name = prompt("Enter a name for your new project:");
+    if (!name) return;
+    // Create project in backend
+    const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'include',
+        body: JSON.stringify({ name })
     });
-}
+    if (!res.ok) {
+        alert('Failed to create project');
+        return;
+    }
+    const { id } = await res.json();
+    // Redirect to calculation page with project_id
+    window.location.href = `/calculation?project_id=${id}`;
+});

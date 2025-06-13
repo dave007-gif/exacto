@@ -96,6 +96,10 @@ def init_db():
             project_location TEXT,
             supplier_location TEXT,
             total_cost REAL DEFAULT 0,
+            formula_version TEXT DEFAULT '2023.1',
+            rates_timestamp TEXT,
+            calculation_data TEXT, -- JSON blob of all components/inputs/results
+            last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
@@ -711,6 +715,9 @@ def api_create_project():
     project_name = data.get('project_name')
     project_loc = data.get('project_location')
     supplier_loc = data.get('supplier_location')
+    formula_version = data.get('formula_version', '2023.1')
+    rates_timestamp = data.get('rates_timestamp')
+    calculation_data = data.get('calculation_data', '{}')  # JSON string
 
     if not project_name:
         return jsonify({'message': 'Project name required'}), 400
@@ -718,12 +725,58 @@ def api_create_project():
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            INSERT INTO Projects (user_id, project_name, project_location, supplier_location)
-            VALUES (?, ?, ?, ?)
-        ''', (request.user_id, project_name, project_loc, supplier_loc))
+            INSERT INTO Projects (
+                user_id, project_name, project_location, supplier_location,
+                formula_version, rates_timestamp, calculation_data
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            request.user_id, project_name, project_loc, supplier_loc,
+            formula_version, rates_timestamp, calculation_data
+        ))
+        project_id = cursor.lastrowid
         conn.commit()
 
-    return jsonify({'message': 'Project created'}), 201
+    return jsonify({'message': 'Project created', 'project_id': project_id}), 201
+
+@app.route('/api/projects/<int:project_id>', methods=['GET'])
+@token_required
+def api_get_project(project_id):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, project_name, project_location, supplier_location,
+                   total_cost, formula_version, rates_timestamp, calculation_data, last_modified
+            FROM Projects
+            WHERE id = ? AND user_id = ?
+        ''', (project_id, request.user_id))
+        row = cursor.fetchone()
+    if not row:
+        return jsonify({'message': 'Project not found'}), 404
+    keys = ['id', 'project_name', 'project_location', 'supplier_location',
+            'total_cost', 'formula_version', 'rates_timestamp', 'calculation_data', 'last_modified']
+    return jsonify(dict(zip(keys, row)))
+
+@app.route('/api/projects/<int:project_id>', methods=['PUT'])
+@role_required('professional', 'firm')
+@log_activity("Updated project")
+def api_update_project(project_id):
+    data = request.json
+    calculation_data = data.get('calculation_data')
+    total_cost = data.get('total_cost')
+    # Optionally allow updating formula_version/rates_timestamp if you want to "recalculate"
+    # But by default, freeze them
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE Projects
+            SET calculation_data = ?, total_cost = ?, last_modified = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        ''', (calculation_data, total_cost, project_id, request.user_id))
+        conn.commit()
+
+    return jsonify({'message': 'Project updated'})
 
 # Supplier Management Endpoints
 @app.route('/api/suppliers', methods=['POST'])
@@ -945,6 +998,23 @@ def get_fx_rates():
         return jsonify(data)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/projects', methods=['GET'])
+@token_required
+def api_list_projects():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, project_name, total_cost, last_modified, formula_version
+            FROM Projects
+            WHERE user_id = ?
+            ORDER BY last_modified DESC
+        ''', (request.user_id,))
+        projects = [
+            dict(zip(['id', 'project_name', 'total_cost', 'last_modified', 'formula_version'], row))
+            for row in cursor.fetchall()
+        ]
+    return jsonify({'projects': projects})
 
 if __name__ == '__main__':
     app.run(debug=True)

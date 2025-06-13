@@ -9,6 +9,9 @@ import { fetchCurrencyRates, convertAmount, getLastRateTimestamp } from './curre
 // --- Debug: Script loaded ---
 console.log("script.js loaded");
 
+// Clear all saved projects from localStorage on calculation page load
+localStorage.removeItem('projects');
+
 let currencyRates = { GHS: 1 };
 let lastRateTimestamp = null;
 let lastUsedCurrency = 'GHS'
@@ -27,6 +30,125 @@ function setupCurrencyUI(userRoles) {
         refreshBtn.style.display = 'inline-block';
     }
 }*/
+
+// ...existing imports...
+
+// --- Auto-save, Restore, and Version Warning Logic ---
+
+let currentProjectId = null;
+let currentFormulaVersion = null;
+let projectFormulaVersion = null;
+let autoSaveTimer = null;
+let lastSavedData = null;
+
+// Fetch the current formula version from backend
+async function fetchCurrentFormulaVersion() {
+    const res = await fetch('/api/version');
+    const data = await res.json();
+    return data.version;
+}
+
+// Gather calculation data from UI (all input/select/textarea)
+function gatherCalculationData() {
+    const data = {};
+    document.querySelectorAll('input, select, textarea').forEach(input => {
+        if (input.name) data[input.name] = input.value;
+    });
+    // Optionally, gather more UI state here
+    return data;
+}
+
+// Restore calculation UI from saved data
+function restoreCalculationUI(data) {
+    if (!data) return;
+    for (const [key, value] of Object.entries(data)) {
+        const input = document.querySelector(`[name="${key}"]`);
+        if (input) input.value = value;
+    }
+    // Optionally, trigger calculations or UI updates here
+}
+
+// Show version warning if needed
+function showVersionWarning(projectVersion, currentVersion) {
+    let warning = document.getElementById('version-warning');
+    if (!warning) {
+        warning = document.createElement('div');
+        warning.id = 'version-warning';
+        warning.style.background = '#ffe0b2';
+        warning.style.color = '#b26a00';
+        warning.style.padding = '10px';
+        warning.style.marginBottom = '10px';
+        warning.style.fontWeight = 'bold';
+        document.body.prepend(warning);
+    }
+    warning.textContent = `Warning: This project uses formula version ${projectVersion}, but the current version is ${currentVersion}. Results are frozen.`;
+    warning.style.display = 'block';
+}
+
+// Auto-save logic
+function scheduleAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(saveProjectAuto, 2000); // Save 2s after last change
+}
+
+async function saveProjectAuto() {
+    if (!currentProjectId) return;
+    const calculationData = gatherCalculationData();
+    if (JSON.stringify(calculationData) === JSON.stringify(lastSavedData)) return;
+    lastSavedData = calculationData;
+
+    await fetch(`/api/projects/${currentProjectId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+            calculation_data: JSON.stringify(calculationData)
+        })
+    });
+}
+
+// Prompt on page unload if unsaved changes
+window.addEventListener('beforeunload', (e) => {
+    const calculationData = gatherCalculationData();
+    if (JSON.stringify(calculationData) !== JSON.stringify(lastSavedData)) {
+        e.preventDefault();
+        e.returnValue = '';
+    }
+});
+
+// Listen for changes to trigger auto-save
+document.addEventListener('input', scheduleAutoSave);
+document.addEventListener('change', scheduleAutoSave);
+
+// On page load, restore project if project_id is present
+async function loadProjectIfNeeded() {
+    const params = new URLSearchParams(window.location.search);
+    currentProjectId = params.get('project_id');
+    if (!currentProjectId) return;
+
+    // Fetch project
+    const res = await fetch(`/api/projects/${currentProjectId}`, { credentials: 'include' });
+    if (!res.ok) {
+        alert('Could not load project.');
+        return;
+    }
+    const project = await res.json();
+    projectFormulaVersion = project.formula_version;
+    lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
+
+    // Restore UI from lastSavedData
+    restoreCalculationUI(lastSavedData);
+
+    // Version warning
+    currentFormulaVersion = await fetchCurrentFormulaVersion();
+    if (projectFormulaVersion !== currentFormulaVersion) {
+        showVersionWarning(projectFormulaVersion, currentFormulaVersion);
+    }
+}
+document.addEventListener('DOMContentLoaded', loadProjectIfNeeded);
+
+// ...rest of your script.js code...
+
 function updateSectionAndGrandTotals() {
     const output = document.getElementById('output');
     // Remove old totals if present
@@ -1023,34 +1145,6 @@ function setupSaveProjectButton() {
     });
 }
 
-// REMOVE or COMMENT OUT this function and its call!
-/*
-function setupGenerateBOQButton() {
-    console.log("Setting up generate BOQ button");
-    const boqBtn = document.getElementById('generate-boq');
-    if (!boqBtn) {
-        console.warn("Generate BOQ button not found");
-        return;
-    }
-    boqBtn.addEventListener('click', async function () {
-        console.log("Generate BOQ button clicked");
-        const button = this;
-        button.disabled = true;
-        button.textContent = "Generating...";
-        try {
-            await generateSMM7BOQ();
-            alert("BOQ Report has been successfully generated!");
-        } catch (error) {
-            console.error("Error generating BOQ:", error);
-            alert("An error occurred while generating the BOQ. Please try again.");
-        } finally {
-            button.disabled = false;
-            button.textContent = "Generate BOQ Report";
-        }
-    });
-}
-*/
-
 function setupLogoutButton() {
     console.log("Setting up dashboard button");
     const dashboardBtn = document.getElementById('dashboard-btn');
@@ -1267,53 +1361,6 @@ async function fetchLaborRate(trade) {
     }
 }
 
-/*// Fetch all materials
-async function fetchMaterials() {
-    const response = await fetch('/materials', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
-
-    console.log("Response for fetchMaterials:", response);
-
-    if (!response.ok) {
-        console.error('Failed to fetch materials:', response.statusText);
-        return [];
-    }
-
-    try {
-        const data = await response.json();
-        console.log('Materials:', data.materials);
-        return data.materials;
-    } catch (error) {
-        console.error("Error parsing JSON in fetchMaterials:", error);
-        return [];
-    }
-}*/
-
-/*// Fetch all labor rates
-async function fetchLaborRates() {
-    const response = await fetch('/labor-rates', {
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });
-
-    console.log("Response for fetchLaborRates:", response);
-y
-    if (!response.ok) {
-        console.error('Failed to fetch labor rates:', response.statusText);
-        return [];
-    }
-
-    try {
-        const data = await response.json();
-        console.log('Labor Rates:', data.labor_rates);
-        return data.labor_rates;
-    } catch (error) {
-        console.error("Error parsing JSON in fetchLaborRates:", error);
-        return [];
-    }
-}*/
-
-
 // Clear invalid projects from local storage
 function clearInvalidProjects() {
     const projects = JSON.parse(localStorage.getItem('projects')) || [];
@@ -1352,28 +1399,6 @@ function displayProjects() {
     });
 }
 
-/*// Function to save a project
-function saveProject(projectName, componentType, quantity, totalMaterialCost, laborCost, plantCost, totalCost) {
-    if (!projectName || isNaN(totalCost)) {
-        console.error("Invalid project data:", { projectName, totalCost });
-        return;
-    }
-
-    const projects = JSON.parse(localStorage.getItem('projects')) || [];
-    projects.push({
-        name: projectName,
-        component: componentType,
-        quantity: quantity.toFixed(2),
-        materialCost: totalMaterialCost.toFixed(2),
-        laborCost: laborCost.toFixed(2),
-        plantCost: plantCost.toFixed(2),
-        totalCost: totalCost.toFixed(2),
-        date: new Date().toLocaleDateString()
-    });
-    localStorage.setItem('projects', JSON.stringify(projects));
-    console.log("Saved projects:", projects); // Debugging line
-}*/
-
 // Modified project saving with locations
 async function saveProject(projectData) {
     const projectLoc = document.getElementById('project-location').value;
@@ -1400,7 +1425,23 @@ async function saveProject(projectData) {
     }
 }
 
-document.getElementById('save-project-btn').addEventListener('click', async function () {
+async function saveProjectState() {
+    const projectId = getProjectIdFromUrl();
+    if (!projectId) return;
+    const components = Array.from(document.querySelectorAll('.result-item')).map(item => ({
+        type: item.querySelector('h4').textContent,
+        inputs: JSON.parse(item.getAttribute('data-inputs'))
+        // Add more fields as needed
+    }));
+    await fetch(`/api/projects/${projectId}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        credentials: 'include',
+        body: JSON.stringify({ components })
+    });
+}
+
+/*document.getElementById('save-project-btn').addEventListener('click', async function () {
     const projectName = prompt("Enter a name for this project:");
     if (!projectName) {
         alert("Project name is required.");
@@ -1429,7 +1470,7 @@ document.getElementById('save-project-btn').addEventListener('click', async func
     } catch (e) {
         alert("Failed to save project.");
     }
-});
+});*/
 
 // Function to classify a component
 function classifyComponent(component) {
@@ -1445,110 +1486,6 @@ function classifyComponent(component) {
             : "Other",
     };
 }
-
-/*async function calculateCompositeRate(componentType, quantity) {
-    if (!componentType || !quantity || quantity <= 0) {
-        console.error('Invalid input:', { componentType, quantity });
-        return null;
-    }
-
-    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
-    if (!formulaKey) {
-        console.warn(`No mapping for component: ${componentType}`);
-        return null;
-    }
-
-    const formulaConfig = SMM7_2023[formulaKey];
-    if (!formulaConfig) {
-        console.warn(`No formula config for key: ${formulaKey}`);
-        return null;
-    }
-
-    try {
-        // Single fetch for pricing bundle
-        const pricingResponse = await fetch(`/api/pricing-bundle?region=greater-accra`, {
-            headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-        });
-        
-        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
-        const { materials, labor } = await pricingResponse.json();
-        console.log('Pricing bundle materials:', materials);
-        console.log('Pricing bundle labor:', labor);
-
-        // Material cost with null checks
-        const materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
-
-        // Labor cost with fallbacks
-        const laborTask = formulaConfig.laborTasks?.[0];
-        const dailyRate = laborTask ? labor[laborTask] || 0 : 0;
-        const laborCalc = SMM7_2023.calculateLaborCost(
-            quantity,
-            8,
-            adjustments.labor_efficiency || 1,
-            8,
-            dailyRate,
-            laborTask
-        );
-        const laborCost = laborCalc?.laborCost || 0;
-
-        // Plant cost using SMM7_2023 method with equipment validation
-        let plantCost = 0;
-        const equipmentList = formulaConfig.equipment || [];
-
-        if (equipmentList.length > 0) {
-            try {
-                const plantData = await fetchPlantData();
-                const availablePlants = plantData.filter(p => 
-                    SMM7_2023[formulaKey].equipment.includes(p.equipment)
-                );
-
-                // Validate equipment availability
-                const missingEquipment = equipmentList.filter(e => 
-                    !plantData.some(p => p.equipment === e)
-                );
-
-                if (missingEquipment.length > 0) {
-                    console.warn(`Missing equipment for ${componentType}:`, missingEquipment);
-                    // Optional: Add placeholder cost for missing equipment
-                    // missingEquipment.forEach(e => {
-                    //     console.warn(`Using default rate for missing equipment: ${e}`);
-                    //     availablePlants.push({ equipment: e, dailyRate: 0, durationPerUnit: 0 });
-                    // });
-                }
-
-                if (availablePlants.length > 0) {
-                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
-                } else {
-                    console.warn(`No available plants found for ${componentType}`);
-                }
-            } catch (plantError) {
-                console.error(`Plant data error for ${componentType}:`, plantError);
-                // Consider whether to continue with plantCost=0 or abort
-            }
-        } else {
-            console.log(`No equipment required for ${componentType}`);
-        }
-
-        // Financial calculations with safeguards
-        const baseCost = materialCost + laborCost + plantCost;
-        const overheads = (baseCost * 0.15) || 0;
-        const profit = ((baseCost + overheads) * 0.10) || 0;
-
-        const result = {
-            materialCost: Number(materialCost.toFixed(2)),
-            laborCost: Number(laborCost.toFixed(2)),
-            plantCost: Number(plantCost.toFixed(2)),
-            overheads: Number(overheads.toFixed(2)),
-            profit: Number(profit.toFixed(2)),
-            totalCost: Number((baseCost + overheads + profit).toFixed(2))
-        };
-        console.log('Composite rate result:', result);
-        return result;
-    } catch (error) {
-        console.error(`Composite rate error for ${componentType}:`, error);
-        return null;
-    }
-}*/
 
 // Update calculateCompositeRate to use inputs for special-case logic
 async function calculateCompositeRate(componentType, quantity, inputs = {}) {
@@ -1778,29 +1715,6 @@ async function fetchPlantData() {
     }
 }
 
-/*// Handle the "Generate BOQ" button click
-document.getElementById('generate-boq').addEventListener('click', async function () {
-    const button = this;
-    button.disabled = true; // Disable the button
-    button.textContent = "Generating..."; // Update button text
-
-    try {
-        console.log("Generate BOQ button clicked"); // Debugging line
-
-        // Call the function to generate the BOQ
-        await generateSMM7BOQ();
-
-        // Notify the user that the BOQ has been generated
-        alert("BOQ Report has been successfully generated!");
-    } catch (error) {
-        console.error("Error generating BOQ:", error);
-        alert("An error occurred while generating the BOQ. Please try again.");
-    } finally {
-        button.disabled = false; // Re-enable the button
-        button.textContent = "Generate BOQ Report"; // Reset button text
-    }
-});*/
-
 async function fetchCalculatedComponents() {
     const selectedComponents = Array.from(document.querySelectorAll('.result-item')).map(result => {
         const component = result.querySelector('h4').textContent;
@@ -1833,21 +1747,25 @@ async function fetchCalculatedComponents() {
     return selectedComponents;
 }
 
-/*// script.js
-async function loadRecentActivity() {
-  const response = await fetch('/api/activity', { credentials: 'include' });
-  const activities = await response.json();
-  
-  const feed = document.getElementById('activity-feed');
-  activities.forEach(activity => {
-    feed.innerHTML += `
-      <div class="activity-item">
-        <small>${new Date(activity.timestamp).toLocaleString()}</small>
-        <p>${activity.description}</p>
-      </div>
-    `;
-  });
-}*/
+// script.js
+function getProjectIdFromUrl() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('project_id');
+}
+
+async function loadProjectData() {
+    const projectId = getProjectIdFromUrl();
+    if (!projectId) return;
+    const res = await fetch(`/api/projects/${projectId}`, { credentials: 'include' });
+    if (!res.ok) return;
+    const project = await res.json();
+    // Populate UI with project.components
+    project.components.forEach(comp => {
+        // For each component, set selected, fill inputs, and trigger calculation
+        // You need to implement this logic based on your UI structure
+    });
+}
+document.addEventListener('DOMContentLoaded', loadProjectData);
 
 // static/js/dashboard.js
 async function loadRecentActivity() {
@@ -1966,23 +1884,3 @@ function generateBOQSpreadsheet(format) {
         console.warn(`[BOQ Export] Unknown format requested: ${format}`);
     }
 }
-
-/*// Custom mix ratio logic
-document.addEventListener('DOMContentLoaded', function() {
-    const mixRatioSelect = document.getElementById('mix_ratio');
-    const customMixRow = document.getElementById('custom-mix-ratio-row');
-    const customMixInput = document.getElementById('custom_mix_ratio');
-    if (mixRatioSelect && customMixRow && customMixInput) {
-        mixRatioSelect.addEventListener('change', function() {
-            if (this.value === 'custom') {
-                customMixRow.style.display = '';
-                customMixInput.required = true;
-            } else {
-                customMixRow.style.display = 'none';
-                customMixInput.required = false;
-                customMixInput.value = ''; // clear value to avoid accidental validation
-            }
-        });
-    }
-});*/
-

@@ -51,7 +51,7 @@
                 <div class="action-card">
                     <h3>Professional Tools</h3>
                     <button onclick="location.href='/suppliers'">Manage Suppliers</button>
-                    <button onclick="location.href='/projects/new'">Create Project</button>
+                    <button id="create-project-btn">Create Project</button>
                 </div>
             {% endif %}
 
@@ -102,6 +102,9 @@
                     {% endfor %}
                 </div>
             </div>
+
+            <!-- Project List -->
+            <div id="project-list"></div>
         </div>
     </div>
 
