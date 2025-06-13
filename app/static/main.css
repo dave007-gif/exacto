@@ -397,6 +397,22 @@ hr {
   cursor: pointer;
 }
 
+.google-btn {
+  background-color: #dd4b39;
+  color: white;
+  padding: 10px 15px;
+  border-radius: 4px;
+  display: inline-block;
+  text-align: center;
+  text-decoration: none;
+  margin-top: 10px;
+  font-weight: bold;
+}
+.google-btn i {
+  margin-right: 8px;
+}
+
+
 
 .site-footer {
   background-color: #839ba45a;
