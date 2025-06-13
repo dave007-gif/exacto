@@ -1472,6 +1472,8 @@ function classifyComponent(component) {
         
         if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
         const { materials, labor } = await pricingResponse.json();
+        console.log('Pricing bundle materials:', materials);
+        console.log('Pricing bundle labor:', labor);
 
         // Material cost with null checks
         const materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
@@ -1574,12 +1576,14 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
         });
         if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
         const { materials, labor } = await pricingResponse.json();
+        console.log('Pricing bundle materials:', materials);
+        console.log('Pricing bundle labor:', labor);
 
         // Material cost
         let materialCost = 0;
         if (typeof formulaConfig.calculateMaterialCost === 'function') {
             // Prefer (inputs, materials) signature
-            materialCost = formulaConfig.calculateMaterialCost(inputs, materials);
+            materialCost = formulaConfig.calculateMaterialCost(quantity, materials, inputs);
         } else {
             // fallback to old signature if needed
             materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;

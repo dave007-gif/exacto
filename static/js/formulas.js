@@ -153,6 +153,7 @@ export const SMM7_2023 = {
             const totalCost = cementCost + sandCost + aggCost + waterCost;
 
             return totalCost;
+            
         },
         calculateLaborCost: (inputs, laborRates) => {
             const quantity = (inputs.mean_girth || 0) * (inputs.trench_width || 0) * (inputs.concrete_thickness || 0);
