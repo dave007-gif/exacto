@@ -4,7 +4,7 @@ import { COMPONENT_TO_FORMULA_MAP } from './component_to_formula_map.js';
 import { INPUT_UNITS } from './input_units.js'; // If in a separate file, else skip this line
 // --- Currency Service Imports and Setup ---
 import { fetchCurrencyRates, convertAmount, getLastRateTimestamp } from './currencyService.js';
-
+import { boqData, addToBOQ, addBill, setProjectDetails, calculateSummary, initBillsFromTemplate, resetBOQ } from './boqData.js';
 
 // --- Debug: Script loaded ---
 console.log("script.js loaded");
@@ -40,6 +40,19 @@ let currentFormulaVersion = null;
 let projectFormulaVersion = null;
 let autoSaveTimer = null;
 let lastSavedData = null;
+
+// Define your standard bill template (ACECoR/SMM7 style)
+const billTemplate = [
+    { billNo: "1", title: "Preliminaries / General Conditions" },
+    { billNo: "2A", title: "Substructure" },
+    { billNo: "2B", title: "Superstructure" },
+    { billNo: "PS", title: "Provisional Sums" },
+    { billNo: "CONT", title: "Contingencies" }
+];
+
+// Initialize bills at project start or when starting a new project
+initBillsFromTemplate(billTemplate);
+
 
 // Fetch the current formula version from backend
 async function fetchCurrentFormulaVersion() {
@@ -147,7 +160,21 @@ async function loadProjectIfNeeded() {
 }
 document.addEventListener('DOMContentLoaded', loadProjectIfNeeded);
 
-// ...rest of your script.js code...
+
+export async function loadProjectDetails(projectId) {
+    try {
+        const res = await fetch(`/api/projects/${projectId}`);
+        if (!res.ok) throw new Error('Failed to fetch project');
+        const project = await res.json();
+        setProjectDetails(project.details);
+        boqData.bills = project.bills || [];
+        // Optionally, recalculate summary if needed
+        // calculateSummary();
+        console.log('[loadProjectDetails] Loaded project:', boqData);
+    } catch (err) {
+        console.error('[loadProjectDetails] Error:', err);
+    }
+}
 
 function updateSectionAndGrandTotals() {
     const output = document.getElementById('output');
@@ -406,7 +433,7 @@ validateSMM7Data();
 
 let haulageMultiplier = 1.0;
 
-let boqData = {
+/*let boqData = {
     workSections: {},
     mainCategories: {
         "Substructure": { items: [], total: 0 },
@@ -418,9 +445,9 @@ let boqData = {
         multiplier: 1.0,
         band: ''
     }
-};
+};*/
 
-// Function to add an item to the BOQ
+/*// Function to add an item to the BOQ
 // Modified addToBOQ to match your data structure
 // Modified addToBOQ with haulage calculation
 function addToBOQ(component, quantity, unitCost, inputs) {
@@ -461,100 +488,152 @@ function addToBOQ(component, quantity, unitCost, inputs) {
     boqData.workSections[workSection].items.push(boqItem);
     boqData.workSections[workSection].total += boqItem.total;
     boqData.mainCategories[mainCategory].total += boqItem.total;
-}
+}*/
 
 // Function to generate the BOQ PDF
-async function generateBOQPDF() {
-    const { PDFDocument, rgb } = PDFLib;
-    
-    // Validate BOQ data
-    if (!boqData || Object.keys(boqData.workSections).length === 0) {
-        console.warn("No BOQ data available");
-        alert("No data to generate PDF");
-        return;
-    }
-
+export async function generateBOQPDF() {
+    console.log('[generateBOQPDF] Starting PDF generation...');
     try {
+        if (!boqData || !Array.isArray(boqData.bills) || boqData.bills.length === 0) {
+            console.error('[generateBOQPDF] No BOQ data or bills found:', boqData);
+            alert("No BOQ data available to generate PDF.");
+            return;
+        }
+        const { PDFDocument, rgb } = PDFLib;
         const pdfDoc = await PDFDocument.create();
-        let page = pdfDoc.addPage([595, 842]);
-        let yPos = 800;
-        const margin = 50;
+        const pageSize = [595, 842];
+        const margin = 40;
+        const colWidths = [40, 220, 50, 40, 70, 70];
+        const fontSize = 10;
+        let page = pdfDoc.addPage(pageSize);
+        let yPos = pageSize[1] - margin;
 
-        // Header
-        page.drawText("SMM7 BILL OF QUANTITIES", { 
-            x: margin, y: yPos, size: 16, color: rgb(0, 0, 0) 
-        });
-        yPos -= 40;
-
-        // Sections
-        Object.entries(boqData.workSections).forEach(([section, data]) => {
-            // Section header
-            page.drawText(`${section}: ${data.description}`, { 
-                x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) 
-            });
-            yPos -= 25;
-
-            // Add haulage information
-            page.drawText(`Haulage Band: ${boqData.haulage.band} (Multiplier: ${boqData.haulage.multiplier}x)`, {
-                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0)
-            });
-            yPos -= 20;
-
-            // Table headers
-            const headers = ["Code", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"];
-            page.drawText(headers.join(" | "), { 
-                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
-            });
-            yPos -= 20;
-
-            // Items
-            data.items.forEach(item => {
-                const row = [
-                    item.itemCode,
-                    item.description,
-                    item.quantity.toFixed(2),
-                    item.unit,
-                    `GHS ${item.rate.toFixed(2)}`,
-                    `GHS ${item.total.toFixed(2)}`
-                ].join(" | ");
-                
-                page.drawText(row, { 
-                    x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
+        // Header function
+        function drawHeader(page, yStart) {
+            let y = yStart;
+            const d = boqData.projectDetails || {};
+            try {
+                page.drawText(d.companyName || '', { x: margin, y, size: 12, color: rgb(0,0,0) });
+                y -= 15;
+                (d.companyAddress || '').split('\n').forEach(line => {
+                    page.drawText(line, { x: margin, y, size: fontSize, color: rgb(0,0,0) });
+                    y -= 12;
                 });
-                yPos -= 15;
+                page.drawText(d.contactInfo || '', { x: margin, y, size: fontSize });
+                y -= 15;
+                page.drawText(d.projectTitle || '', { x: margin, y, size: 13, color: rgb(0,0,0) });
+                y -= 15;
+                page.drawText(`FOR ${d.clientName || ''}`, { x: margin, y, size: 12, color: rgb(0,0,0) });
+                y -= 15;
+                page.drawText(d.projectPhase || '', { x: margin, y, size: 11, color: rgb(0,0,0) });
+                y -= 20;
+                console.log('[generateBOQPDF] Header drawn at y:', y);
+            } catch (err) {
+                console.error('[generateBOQPDF] Error drawing header:', err, d);
+            }
+            return y;
+        }
 
-                // New page if needed
-                if (yPos < 50) {
-                    page = pdfDoc.addPage([595, 842]);
-                    yPos = 800;
+        // Table header
+        function drawTableHeader(page, y) {
+            const headers = ["ITEM", "DESCRIPTION", "QTY", "UNIT", "RATE (GHe)", "AMOUNT (GHe)"];
+            let x = margin;
+            headers.forEach((h, i) => {
+                page.drawText(h, { x, y, size: fontSize, color: rgb(0,0,0) });
+                x += colWidths[i];
+            });
+            console.log('[generateBOQPDF] Table header drawn at y:', y);
+            return y - 15;
+        }
+
+        // Draw each bill
+        for (const bill of boqData.bills) {
+            if (!bill || !bill.items) {
+                console.warn('[generateBOQPDF] Skipping invalid bill:', bill);
+                continue;
+            }
+            if (yPos < 120) { 
+                page = pdfDoc.addPage(pageSize); 
+                yPos = drawHeader(page, pageSize[1] - margin); 
+            }
+            page.drawText(`BILL No. ${bill.billNo || ''}: ${bill.title || ''}`, { x: margin, y: yPos, size: 11, color: rgb(0,0,0) });
+            yPos -= 18;
+            yPos = drawTableHeader(page, yPos);
+
+            for (const item of bill.items) {
+                if (!item) {
+                    console.warn('[generateBOQPDF] Skipping invalid item:', item);
+                    continue;
                 }
-            });
+                if (yPos < 60) { 
+                    page = pdfDoc.addPage(pageSize); 
+                    yPos = drawHeader(page, pageSize[1] - margin); 
+                    yPos = drawTableHeader(page, yPos); 
+                }
+                let x = margin;
+                [
+                    item.itemCode || '',
+                    item.description || '',
+                    item.quantity ?? '',
+                    item.unit || '',
+                    (typeof item.rate === 'number' ? item.rate.toFixed(2) : ''),
+                    (typeof item.amount === 'number' ? item.amount.toFixed(2) : '')
+                ].forEach((cell, i) => {
+                    page.drawText(String(cell), { x, y: yPos, size: fontSize, color: rgb(0,0,0) });
+                    x += colWidths[i];
+                });
+                yPos -= 13;
+                console.log(`[generateBOQPDF] Drew item ${item.itemCode} at y:`, yPos);
+            }
 
-            // Section total
-            page.drawText(`Section Total: GHS ${data.total.toFixed(2)}`, { 
-                x: margin, y: yPos, size: 10, color: rgb(0, 0, 0) 
-            });
-            yPos -= 30;
-        });
+            // Bill summary
+            yPos -= 8;
+            page.drawText(`SUMMARY OF BILL No.${bill.billNo || ''}`, { x: margin, y: yPos, size: fontSize, color: rgb(0,0,0) });
+            page.drawText((typeof bill.total === 'number' ? bill.total.toFixed(2) : '0.00'), { x: margin + 420, y: yPos, size: fontSize, color: rgb(0,0,0) });
+            yPos -= 20;
+            console.log(`[generateBOQPDF] Bill ${bill.billNo} summary at y:`, yPos);
+        }
 
-        // Grand total
-        const grandTotal = Object.values(boqData.workSections)
-            .reduce((sum, section) => sum + section.total, 0);
-        page.drawText(`GRAND TOTAL: GHS ${grandTotal.toFixed(2)}`, { 
-            x: margin, y: yPos, size: 12, color: rgb(0, 0, 0) 
-        });
+        // Grand summary
+        let subtotal = 0, contingency = 0, grandTotal = 0;
+        try {
+            subtotal = boqData.bills.reduce((sum, b) => sum + (b.total || 0), 0);
+            contingency = boqData.bills.some(bill => bill.items && bill.items.some(i => i.type === 'contingency'))
+                ? boqData.bills.flatMap(bill => (bill.items || []).filter(i => i.type === 'contingency')).reduce((sum, i) => sum + (i.amount || 0), 0)
+                : subtotal * 0.15;
+            grandTotal = subtotal + contingency;
+        } catch (err) {
+            console.error('[generateBOQPDF] Error calculating summary:', err);
+        }
 
-        // Generate and download
-        const pdfBytes = await pdfDoc.save();
-        const blob = new Blob([pdfBytes], { type: "application/pdf" });
-        const link = document.createElement("a");
-        link.href = URL.createObjectURL(blob);
-        link.download = `BOQ-${new Date().toISOString().slice(0,10)}.pdf`;
-        link.click();
+        page.drawText("GENERAL SUMMARY", { x: margin, y: yPos, size: 11, color: rgb(0,0,0) });
+        yPos -= 15;
+        page.drawText(`SUB-TOTAL`, { x: margin, y: yPos, size: fontSize });
+        page.drawText(subtotal.toFixed(2), { x: margin + 420, y: yPos, size: fontSize });
+        yPos -= 13;
+        page.drawText(`ADD For Contingencies (15%)`, { x: margin, y: yPos, size: fontSize });
+        page.drawText(contingency.toFixed(2), { x: margin + 420, y: yPos, size: fontSize });
+        yPos -= 13;
+        page.drawText(`TOTAL ESTIMATE`, { x: margin, y: yPos, size: fontSize, color: rgb(0,0,0) });
+        page.drawText(grandTotal.toFixed(2), { x: margin + 420, y: yPos, size: fontSize, color: rgb(0,0,0) });
+        console.log('[generateBOQPDF] Grand summary:', { subtotal, contingency, grandTotal });
 
+        // Download
+        try {
+            const pdfBytes = await pdfDoc.save();
+            const blob = new Blob([pdfBytes], { type: "application/pdf" });
+            const link = document.createElement("a");
+            link.href = URL.createObjectURL(blob);
+            link.download = `BOQ-${(boqData.projectDetails.projectTitle || 'Project')}.pdf`;
+            link.click();
+            console.log('[generateBOQPDF] PDF generated and download triggered.');
+        } catch (err) {
+            console.error('[generateBOQPDF] Error saving or downloading PDF:', err);
+            alert('Failed to generate or download PDF. See console for details.');
+        }
     } catch (error) {
-        console.error("PDF generation failed:", error);
-        alert("Failed to generate PDF. Check console for details.");
+        console.error('[generateBOQPDF] PDF generation failed:', error);
+        alert("Failed to generate BOQ PDF. See console for details.");
     }
 }
 
@@ -1472,7 +1551,7 @@ async function saveProjectState() {
     }
 });*/
 
-// Function to classify a component
+/*// Function to classify a component
 function classifyComponent(component) {
     const workSection = Object.keys(SMM7_CATEGORIES).find((section) =>
         SMM7_CATEGORIES[section].components.includes(component)
@@ -1485,7 +1564,7 @@ function classifyComponent(component) {
             ? SMM7_CATEGORIES[workSection].mainCategory
             : "Other",
     };
-}
+}*/
 
 // Update calculateCompositeRate to use inputs for special-case logic
 async function calculateCompositeRate(componentType, quantity, inputs = {}) {
@@ -1590,17 +1669,9 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
 
 // In generateSMM7BOQ, pass inputs to calculateCompositeRate:
 async function generateSMM7BOQ() {
-    // Reset BOQ data on each generation
-    boqData = {
-        workSections: {},
-        mainCategories: {
-            "Substructure": { items: [], total: 0 },
-            "Superstructure": { items: [], total: 0 },
-            "Other": { items: [], total: 0 }
-        },
-        summary: {},
-        haulage: boqData.haulage || { multiplier: 1.0, band: '' }
-    };
+    // Reset BOQ data using your model's reset function
+    resetBOQ();
+    initBillsFromTemplate(billTemplate); // Ensure standard bills are present
 
     try {
         const components = await fetchCalculatedComponents();
@@ -1613,20 +1684,19 @@ async function generateSMM7BOQ() {
 
         for (const component of components) {
             try {
-                // Pass inputs to calculateCompositeRate
                 const compositeRate = await calculateCompositeRate(component.type, component.quantity, component.inputs);
                 if (!compositeRate?.totalCost) {
                     console.warn(`Skipping ${component.type} - invalid composite rate`);
                     continue;
                 }
 
-                // Use addToBOQ instead of manual insertion
-                addToBOQ(
-                    component.type,
-                    component.quantity,
-                    compositeRate.totalCost / component.quantity,
-                    component.inputs // pass inputs here
-                );
+                addToBOQ({
+                    component: component.type,
+                    quantity: component.quantity,
+                    unitCost: compositeRate.totalCost / component.quantity,
+                    inputs: component.inputs
+                    // type, billNo, billTitle, description, unit are optional and auto-determined
+                });
                 validComponents++;
             } catch (componentError) {
                 console.error(`Error processing ${component.type}:`, componentError);
@@ -1644,6 +1714,8 @@ async function generateSMM7BOQ() {
             return;
         }
 
+        calculateSummary();
+
         await generateBOQPDF();
         alert("BOQ Report has been successfully generated!");
 
@@ -1653,7 +1725,7 @@ async function generateSMM7BOQ() {
     }
 }
 
-function validateBOQStructure() {
+/*function validateBOQStructure() {
     const errors = [];
     
     // Validate work sections
@@ -1685,6 +1757,45 @@ function validateBOQStructure() {
             errors.push(`Invalid main category: ${category}`);
         }
     });
+
+    if (errors.length > 0) {
+        console.error("BOQ Validation Errors:\n- " + errors.join("\n- "));
+        return false;
+    }
+    return true;
+}*/
+
+function validateBOQStructure() {
+    const errors = [];
+
+    // Validate bills and items
+    if (!Array.isArray(boqData.bills) || boqData.bills.length === 0) {
+        errors.push("No bills found in BOQ data.");
+    } else {
+        boqData.bills.forEach(bill => {
+            if (!bill.billNo || !bill.title) {
+                errors.push(`Bill missing billNo or title: ${JSON.stringify(bill)}`);
+            }
+            if (!Array.isArray(bill.items) || bill.items.length === 0) {
+                errors.push(`Bill ${bill.billNo} (${bill.title}) has no items.`);
+            } else {
+                bill.items.forEach(item => {
+                    if (!item.category) {
+                        errors.push(`Item missing category in bill ${bill.billNo}`);
+                    }
+                    if (typeof item.quantity !== 'number' || isNaN(item.quantity)) {
+                        errors.push(`Invalid quantity for ${item.category} in bill ${bill.billNo}`);
+                    }
+                    if (typeof item.rate !== 'number' || isNaN(item.rate)) {
+                        errors.push(`Invalid rate for ${item.category} in bill ${bill.billNo}`);
+                    }
+                    if (typeof item.amount !== 'number' || isNaN(item.amount)) {
+                        errors.push(`Invalid amount for ${item.category} in bill ${bill.billNo}`);
+                    }
+                });
+            }
+        });
+    }
 
     if (errors.length > 0) {
         console.error("BOQ Validation Errors:\n- " + errors.join("\n- "));
@@ -1784,9 +1895,7 @@ async function loadRecentActivity() {
 }
 document.addEventListener('DOMContentLoaded', loadRecentActivity);
 
-// --- Modal logic for BOQ export ---
-// Place this block after DOMContentLoaded or at the end of your main JS
-
+// --- Modal logic for BOQ export (bill-centric) ---
 console.log('[BOQ Modal] Initializing modal export logic');
 
 const boqBtn = document.getElementById('generate-boq');
@@ -1797,36 +1906,29 @@ const xlsxBtn = document.getElementById('download-xlsx');
 const csvBtn = document.getElementById('download-csv');
 
 if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
-    // Open modal on BOQ button click
     boqBtn.addEventListener('click', function (e) {
         e.preventDefault();
         console.log('[BOQ Modal] Generate BOQ clicked, opening modal');
         boqModal.style.display = 'flex';
     });
 
-    // Close modal handler
-
-
     closeModalBtn.addEventListener('click', function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] Modal closed');
     });
 
-    // PDF export handler (reuse your existing PDF logic)
     pdfBtn.addEventListener('click', async function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] PDF export selected');
-        await generateSMM7BOQ(); // This should trigger your PDF logic as before
+        await generateSMM7BOQ(); // Triggers PDF logic
     });
 
-    // Excel export handler (requires SheetJS library)
     xlsxBtn.addEventListener('click', function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] Excel export selected');
         generateBOQSpreadsheet('xlsx');
     });
 
-    // CSV export handler
     csvBtn.addEventListener('click', function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] CSV export selected');
@@ -1834,29 +1936,41 @@ if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
     });
 }
 
-// --- Spreadsheet export function (SheetJS for Excel, native for CSV) ---
+// --- Spreadsheet export function (bill-centric, supports Excel and CSV) ---
 function generateBOQSpreadsheet(format) {
     console.log(`[BOQ Export] Generating spreadsheet in format: ${format}`);
-    // Build rows: headers first
     const rows = [
-
-        ["Section", "Code", "Description", "Qty", "Unit", "Rate (GHS)", "Total (GHS)"]
+        ["Bill No.", "Bill Title", "Item Code", "Description", "Qty", "Unit", "Rate (GHS)", "Amount (GHS)", "Type"]
     ];
-    Object.entries(boqData.workSections).forEach(([section, data]) => {
-        data.items.forEach(item => {
+
+    // Loop through bills and items
+    boqData.bills.forEach(bill => {
+        if (bill.items && bill.items.length > 0) {
+            bill.items.forEach(item => {
+                rows.push([
+                    bill.billNo,
+                    bill.title,
+                    item.itemCode || '',
+                    item.description || '',
+                    item.quantity ?? '',
+                    item.unit || '',
+                    typeof item.rate === 'number' ? item.rate.toFixed(2) : '',
+                    typeof item.amount === 'number' ? item.amount.toFixed(2) : '',
+                    item.type || ''
+                ]);
+            });
+            // Bill subtotal row
             rows.push([
-                section,
-                item.itemCode,
-                item.description,
-                item.quantity,
-                item.unit,
-                item.rate,
-                item.total
+                bill.billNo,
+                bill.title + " TOTAL",
+                "", "", "", "", "", bill.total.toFixed(2), ""
             ]);
-        });
-        rows.push([section + " Section Total", "", "", "", "", "", data.total]);
+        }
     });
-    rows.push(["GRAND TOTAL", "", "", "", "", "", Object.values(boqData.workSections).reduce((sum, s) => sum + s.total, 0)]);
+
+    // Grand summary row
+    const grandTotal = boqData.bills.reduce((sum, b) => sum + (b.total || 0), 0);
+    rows.push(["", "GRAND TOTAL", "", "", "", "", "", grandTotal.toFixed(2), ""]);
 
     if (format === 'xlsx') {
         if (typeof XLSX === 'undefined') {
@@ -1870,7 +1984,6 @@ function generateBOQSpreadsheet(format) {
         XLSX.writeFile(wb, `BOQ-${new Date().toISOString().slice(0,10)}.xlsx`);
         console.log('[BOQ Export] Excel file generated and download triggered');
     } else if (format === 'csv') {
-        // Simple CSV export
         const csv = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n');
         const blob = new Blob([csv], { type: "text/csv" });
         const link = document.createElement("a");
