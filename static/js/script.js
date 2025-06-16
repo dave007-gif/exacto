@@ -61,24 +61,17 @@ async function fetchCurrentFormulaVersion() {
     return data.version;
 }
 
-// Gather calculation data from UI (all input/select/textarea)
 function gatherCalculationData() {
     const data = {};
     document.querySelectorAll('input, select, textarea').forEach(input => {
         if (input.name) data[input.name] = input.value;
     });
-    // Optionally, gather more UI state here
-    return data;
-}
-
-// Restore calculation UI from saved data
-function restoreCalculationUI(data) {
-    if (!data) return;
-    for (const [key, value] of Object.entries(data)) {
-        const input = document.querySelector(`[name="${key}"]`);
-        if (input) input.value = value;
+    // Save selected components as their value (not label)
+    const componentSelect = document.getElementById('elements');
+    if (componentSelect) {
+        data.selectedComponents = Array.from(componentSelect.selectedOptions).map(opt => opt.value);
     }
-    // Optionally, trigger calculations or UI updates here
+    return data;
 }
 
 // Show version warning if needed
@@ -133,7 +126,7 @@ window.addEventListener('beforeunload', (e) => {
 document.addEventListener('input', scheduleAutoSave);
 document.addEventListener('change', scheduleAutoSave);
 
-// On page load, restore project if project_id is present
+/*// On page load, restore project if project_id is present
 async function loadProjectIfNeeded() {
     const params = new URLSearchParams(window.location.search);
     currentProjectId = params.get('project_id');
@@ -158,7 +151,7 @@ async function loadProjectIfNeeded() {
         showVersionWarning(projectFormulaVersion, currentFormulaVersion);
     }
 }
-document.addEventListener('DOMContentLoaded', loadProjectIfNeeded);
+document.addEventListener('DOMContentLoaded', loadProjectIfNeeded);*/
 
 
 export async function loadProjectDetails(projectId) {
@@ -173,6 +166,48 @@ export async function loadProjectDetails(projectId) {
         console.log('[loadProjectDetails] Loaded project:', boqData);
     } catch (err) {
         console.error('[loadProjectDetails] Error:', err);
+    }
+}
+
+function restoreCalculationUI(data) {
+    if (!data) return;
+    // Restore input values
+    for (const [key, value] of Object.entries(data)) {
+        if (key === "selectedComponents") continue; // handled below
+        const input = document.querySelector(`[name="${key}"]`);
+        if (input) input.value = value;
+    }
+    // Restore selected components in dropdown
+    const componentSelect = document.getElementById('elements');
+    let selected = data.selectedComponents;
+    // Fallback for old data: try to map label to value
+    if ((!selected || !selected.length) && data.elements) {
+        // Try to find the option whose label matches data.elements
+        selected = [];
+        Array.from(componentSelect.options).forEach(opt => {
+            if (opt.text.trim().toLowerCase() === data.elements.trim().toLowerCase()) {
+                selected.push(opt.value);
+            }
+        });
+    }
+    if (componentSelect && selected && selected.length) {
+        Array.from(componentSelect.options).forEach(opt => {
+            opt.selected = selected.includes(opt.value);
+        });
+        // Trigger change event to show fieldsets
+        componentSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        // Wait for DOM updates, then trigger calculate buttons
+        setTimeout(() => {
+            selected.forEach(component => {
+                const btn = document.querySelector(`.calculate-btn[data-component="${component}"]`);
+                if (btn) {
+                    console.log(`[RestoreProject] Triggering calculate for: ${component}`);
+                    btn.click();
+                } else {
+                    console.warn(`[RestoreProject] No calculate button found for: ${component}`);
+                }
+            });
+        }, 100);
     }
 }
 
@@ -658,6 +693,34 @@ document.addEventListener('DOMContentLoaded', async function () {
         // REMOVE or COMMENT OUT this line:
         // setupGenerateBOQButton();
         setupLogoutButton();
+
+        // On page load, restore project if project_id is present
+        const params = new URLSearchParams(window.location.search);
+        currentProjectId = params.get('project_id');
+        console.log('[RestoreProject] URL params:', Array.from(params.entries()));
+        if (currentProjectId) {
+            console.log('[RestoreProject] Found project_id:', currentProjectId);
+            // Fetch project
+            const res = await fetch(`/api/projects/${currentProjectId}`, { credentials: 'include' });
+            console.log('[RestoreProject] Fetch response:', res);
+            if (res.ok) {
+                const project = await res.json();
+                console.log('[RestoreProject] Loaded project:', project);
+                projectFormulaVersion = project.formula_version;
+                lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
+                console.log('[RestoreProject] Parsed calculation_data:', lastSavedData);
+                restoreCalculationUI(lastSavedData);
+
+                // Version warning
+                currentFormulaVersion = await fetchCurrentFormulaVersion();
+                if (projectFormulaVersion !== currentFormulaVersion) {
+                    showVersionWarning(projectFormulaVersion, currentFormulaVersion);
+                }
+            } else {
+                alert('Could not load project.');
+                console.error('[RestoreProject] Failed to fetch project. Status:', res.status);
+            }
+        }
 
         displayProjects();
     } catch (error) {
@@ -1864,7 +1927,7 @@ function getProjectIdFromUrl() {
     return params.get('project_id');
 }
 
-async function loadProjectData() {
+/*async function loadProjectData() {
     const projectId = getProjectIdFromUrl();
     if (!projectId) return;
     const res = await fetch(`/api/projects/${projectId}`, { credentials: 'include' });
@@ -1876,7 +1939,7 @@ async function loadProjectData() {
         // You need to implement this logic based on your UI structure
     });
 }
-document.addEventListener('DOMContentLoaded', loadProjectData);
+document.addEventListener('DOMContentLoaded', loadProjectData);*/
 
 // static/js/dashboard.js
 async function loadRecentActivity() {
