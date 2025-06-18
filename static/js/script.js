@@ -63,15 +63,119 @@ async function fetchCurrentFormulaVersion() {
 
 function gatherCalculationData() {
     const data = {};
+    // Save global inputs (if any)
     document.querySelectorAll('input, select, textarea').forEach(input => {
         if (input.name) data[input.name] = input.value;
     });
-    // Save selected components as their value (not label)
+    // Save selected components
     const componentSelect = document.getElementById('elements');
     if (componentSelect) {
         data.selectedComponents = Array.from(componentSelect.selectedOptions).map(opt => opt.value);
     }
+    // Save per-component input data
+    data.componentData = {};
+    document.querySelectorAll('fieldset[data-component]').forEach(fieldset => {
+        const component = fieldset.dataset.component;
+        data.componentData[component] = {};
+        fieldset.querySelectorAll('input, select').forEach(input => {
+            if (input.name) data.componentData[component][input.name] = input.value;
+        });
+    });
     return data;
+}
+
+async function calculateComponentFromData(componentType, inputs) {
+    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
+    if (!formulaKey || !SMM7_2023[formulaKey]) {
+        console.warn(`No formula found for component: ${componentType}`);
+        return null;
+    }
+
+    // Convert mm to meters where needed
+    const processedInputs = { ...inputs };
+    Object.keys(processedInputs).forEach(key => {
+        if (INPUT_UNITS[key] === 'mm') {
+            processedInputs[key] = parseFloat(processedInputs[key]) / 1000;
+        }
+    });
+
+    // Special case: mean girth for trench excavation
+    if (componentType === "trench excavation") {
+        const extGirth = 2 * ((processedInputs.ext_len || 0) + (processedInputs.ext_width || 0)) - 4 * (processedInputs.spread_trench || 0);
+        const intHor = (processedInputs.int_hor_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
+        const intVer = (processedInputs.int_ver_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
+        processedInputs.mean_girth = extGirth + intHor + intVer;
+    }
+
+    // Calculate quantity
+    const formula = SMM7_2023[formulaKey].formula;
+    const adjustments = window.adjustments || {};
+    const quantity = formula(processedInputs, adjustments.concrete_waste_factor || 1);
+
+    // Fetch prices
+    const prices = await fetchPricesForComponent(formulaKey);
+    if (!prices) return null;
+    const { materialPrices, laborRates } = prices;
+
+    // Material cost
+    let totalMaterialCost = 0;
+    for (const material of SMM7_2023[formulaKey].materials || []) {
+        totalMaterialCost += (materialPrices[material] || 0) * quantity;
+    }
+
+    // Labor cost
+    let laborTask;
+    if (typeof SMM7_2023[formulaKey].getLaborTask === 'function') {
+        laborTask = SMM7_2023[formulaKey].getLaborTask(processedInputs);
+    } else if (Array.isArray(SMM7_2023[formulaKey].laborTasks) && SMM7_2023[formulaKey].laborTasks.length > 0) {
+        laborTask = SMM7_2023[formulaKey].laborTasks[0];
+    } else {
+        laborTask = null;
+    }
+    let labor;
+    if (laborTask && typeof SMM7_2023[formulaKey].calculateLaborCost === 'function') {
+        labor = SMM7_2023[formulaKey].calculateLaborCost(processedInputs, laborRates);
+    } else {
+        labor = SMM7_2023.calculateLaborCost(
+            quantity,
+            8,
+            adjustments.labor_efficiency || 1,
+            8,
+            laborRates[laborTask] || 0,
+            laborTask
+        );
+    }
+
+    // Plant cost
+    const plantData = await fetchPlantData();
+    const equipmentList = SMM7_2023[formulaKey].equipment || [];
+    const relevantPlants = plantData.filter(plant =>
+        equipmentList.includes(plant.equipment)
+    );
+    const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
+
+    // Apply haulage multiplier
+    const haulageMultiplier = window.haulageMultiplier || 1.0;
+    totalMaterialCost *= haulageMultiplier;
+    labor.laborCost *= haulageMultiplier;
+    const finalPlantCost = plantCost * haulageMultiplier;
+
+    // Compose result
+    const unit = SMM7_2023[formulaKey].unit || "m³";
+    const description = typeof SMM7_2023[formulaKey].description === 'function'
+        ? SMM7_2023[formulaKey].description(processedInputs)
+        : (SMM7_2023[formulaKey].reference || componentType);
+
+    return {
+        componentType,
+        description,
+        quantity,
+        unit,
+        totalMaterialCost,
+        labor,
+        finalPlantCost,
+        inputs: processedInputs
+    };
 }
 
 // Show version warning if needed
@@ -103,12 +207,22 @@ async function saveProjectAuto() {
     if (JSON.stringify(calculationData) === JSON.stringify(lastSavedData)) return;
     lastSavedData = calculationData;
 
+    // Calculate total cost from result items
+    let totalCost = 0;
+    document.querySelectorAll('.result-item').forEach(result => {
+        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+        totalCost += materialCost + laborCost + plantCost;
+    });
+
     await fetch(`/api/projects/${currentProjectId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-            calculation_data: JSON.stringify(calculationData)
+            calculation_data: JSON.stringify(calculationData),
+            total_cost: totalCost
         })
     });
 }
@@ -169,45 +283,53 @@ export async function loadProjectDetails(projectId) {
     }
 }
 
-function restoreCalculationUI(data) {
+async function restoreCalculationUI(data) {
     if (!data) return;
-    // Restore input values
+    // Restore global inputs (if any)
     for (const [key, value] of Object.entries(data)) {
-        if (key === "selectedComponents") continue; // handled below
+        if (key === "selectedComponents" || key === "componentData") continue;
         const input = document.querySelector(`[name="${key}"]`);
         if (input) input.value = value;
     }
     // Restore selected components in dropdown
     const componentSelect = document.getElementById('elements');
-    let selected = data.selectedComponents;
-    // Fallback for old data: try to map label to value
-    if ((!selected || !selected.length) && data.elements) {
-        // Try to find the option whose label matches data.elements
-        selected = [];
-        Array.from(componentSelect.options).forEach(opt => {
-            if (opt.text.trim().toLowerCase() === data.elements.trim().toLowerCase()) {
-                selected.push(opt.value);
-            }
-        });
-    }
-    if (componentSelect && selected && selected.length) {
+    let selected = data.selectedComponents || [];
+    if (componentSelect && selected.length) {
         Array.from(componentSelect.options).forEach(opt => {
             opt.selected = selected.includes(opt.value);
         });
-        // Trigger change event to show fieldsets
         componentSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        // Wait for DOM updates, then trigger calculate buttons
-        setTimeout(() => {
-            selected.forEach(component => {
-                const btn = document.querySelector(`.calculate-btn[data-component="${component}"]`);
-                if (btn) {
-                    console.log(`[RestoreProject] Triggering calculate for: ${component}`);
-                    btn.click();
-                } else {
-                    console.warn(`[RestoreProject] No calculate button found for: ${component}`);
+    }
+    // Restore per-component fieldsets and results
+    if (data.componentData) {
+        for (const component of selected) {
+            const fieldset = document.querySelector(`fieldset[data-component="${component}"]`);
+            if (fieldset) {
+                fieldset.classList.remove('hidden');
+                // Fill inputs for this component
+                const compInputs = data.componentData[component] || {};
+                for (const [name, value] of Object.entries(compInputs)) {
+                    const input = fieldset.querySelector(`[name="${name}"]`);
+                    if (input) input.value = value;
+                }
+            }
+            // Calculate and render result for this component
+            calculateComponentFromData(component, data.componentData[component] || {}).then(result => {
+                if (result) {
+                    renderResultItem(
+                        result.componentType,
+                        result.description,
+                        result.quantity,
+                        result.unit,
+                        result.totalMaterialCost,
+                        result.labor,
+                        result.finalPlantCost,
+                        result.inputs
+                    );
+                    updateSectionAndGrandTotals();
                 }
             });
-        }, 100);
+        }
     }
 }
 
@@ -1538,7 +1660,7 @@ function clearInvalidProjects() {
 }
 clearInvalidProjects();
 
-// Function to display saved projects
+/*// Function to display saved projects
 function displayProjects() {
     const projects = JSON.parse(localStorage.getItem('projects')) || [];
     console.log("Displaying projects:", projects); // Debugging line
@@ -1565,12 +1687,57 @@ function displayProjects() {
         `;
         projectList.appendChild(projectItem);
     });
+}*/
+
+async function displayProjects() {
+    try {
+        const response = await fetch('/api/projects', { credentials: 'include' });
+        if (!response.ok) {
+            console.error("Failed to fetch projects from backend:", response.statusText);
+            return;
+        }
+        const data = await response.json();
+        const projects = Array.isArray(data) ? data : data.projects;
+        console.log("Displaying projects from backend:", projects);
+
+        const projectList = document.getElementById('project-list');
+        projectList.innerHTML = ''; // Clear existing projects
+
+        if (Array.isArray(projects)) {
+            projects.forEach(project => {
+                if (!project.total_cost || isNaN(project.total_cost)) {
+                    console.error("Invalid project data:", project);
+                    return; // Skip invalid projects
+                }
+                const projectItem = document.createElement('div');
+                projectItem.classList.add('project-item');
+                projectItem.innerHTML = `
+                    <h4>${project.project_name}</h4>
+                    <p>Total Cost: GHS ${project.total_cost}</p>
+                    <p>Date: ${project.last_modified || ''}</p>
+                `;
+                projectList.appendChild(projectItem);
+            });
+        } else {
+            console.error("Projects data is not an array:", projects);
+        }
+    } catch (error) {
+        console.error("Error displaying projects:", error);
+    }
 }
 
 // Modified project saving with locations
 async function saveProject(projectData) {
     const projectLoc = document.getElementById('project-location').value;
     const supplierLoc = document.getElementById('supplier-location').value;
+    const calculationData = gatherCalculationData();
+    let totalCost = 0;
+    document.querySelectorAll('.result-item').forEach(result => {
+        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+        totalCost += materialCost + laborCost + plantCost;
+    });
 
     try {
         const response = await fetch('/api/projects', {
@@ -1579,12 +1746,12 @@ async function saveProject(projectData) {
             body: JSON.stringify({
                 ...projectData,
                 project_location: projectLoc,
-                supplier_location: supplierLoc
-                // Add user_id here if your backend requires it
+                supplier_location: supplierLoc,
+                calculation_data: JSON.stringify(calculationData),
+                total_cost: totalCost
             }),
             credentials: 'include'
         });
-
         if (!response.ok) throw new Error('Project save failed');
         return await response.json();
     } catch (error) {
@@ -1655,9 +1822,7 @@ function classifyComponent(component) {
     };
 }*/
 
-// ...existing code...
-
-// Update calculateCompositeRate to use inputs for special-case logic
+// --- Update calculateCompositeRate to use inputs for special-case logic
 async function calculateCompositeRate(componentType, quantity, inputs = {}) {
     if (!componentType || !quantity || quantity <= 0) {
         console.error('Invalid input:', { componentType, quantity });

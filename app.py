@@ -99,6 +99,7 @@ def init_db():
             formula_version TEXT DEFAULT '2023.1',
             rates_timestamp TEXT,
             calculation_data TEXT, -- JSON blob of all components/inputs/results
+            component_data TEXT,   -- JSON blob for component-level data
             last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
