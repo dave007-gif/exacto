@@ -178,6 +178,17 @@ export const SMM7_2023 = {
             return blockCost + mortarCost;
         }
     },
+    'preliminaries_item': {
+        formula: (inputs) => Number(inputs.value) || 0,
+        unit: 'item',
+        description: (inputs) => inputs.description || "Preliminaries Item",
+        reference: 'SMM7 A10',
+        materials: [],
+        laborTasks: [],
+        calculateMaterialCost: () => 0,
+        calculateLaborCost: () => 0,
+        calculatePlantCost: () => 0
+    },
     calculateLaborCost: (volume, laborHoursPerUnit, efficiency, hoursPerDay, dailyRate) => {
         const totalHours = volume * laborHoursPerUnit / efficiency;
         const totalDays = totalHours / hoursPerDay;

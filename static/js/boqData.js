@@ -1,4 +1,7 @@
 import { SMM7_CATEGORIES } from './smm7_categories.js';
+import { COMPONENT_TO_FORMULA_MAP } from './component_to_formula_map.js';
+import { SMM7_2023 } from './formulas.js'; // <-- ADD THIS LINE
+
 
 // Bill-centric BOQ data model
 export let boqData = {
@@ -28,25 +31,6 @@ export function addBill(billNo, title) {
     }
 }
 
-/*// Add an item to a bill (applies haulage multiplier)
-export function addBOQItem({ billNo, title, item }) {
-    let bill = boqData.bills.find(b => b.billNo === billNo);
-    if (!bill) {
-        bill = { billNo, title, items: [], total: 0 };
-        boqData.bills.push(bill);
-    }
-    // Apply haulage multiplier to rate and amount
-    const multiplier = boqData.haulage.multiplier || 1.0;
-    const adjustedItem = {
-        ...item,
-        rate: Number((item.rate * multiplier).toFixed(2)),
-        amount: Number((item.amount * multiplier).toFixed(2)),
-        haulageMultiplier: multiplier
-    };
-    bill.items.push(adjustedItem);
-    bill.total += adjustedItem.amount;
-}*/
-
 // Initialize bills from a template (array of {billNo, title})
 export function initBillsFromTemplate(template) {
     boqData.bills = template.map(b => ({ ...b, items: [], total: 0 }));
@@ -72,71 +56,6 @@ export function resetBOQ() {
     boqData.haulage = { multiplier: 1.0, band: '' };
 }
 
-// --- Generic, bill-centric addToBOQ ---
-export function addToBOQ({ 
-    component, 
-    quantity, 
-    unitCost, 
-    inputs = {}, 
-    type = "normal", 
-    billNo = null, 
-    billTitle = null, 
-    description = null, 
-    unit = null 
-}) {
-    // 1. Classify component (for calculated items)
-    let workSection, mainCategory;
-    if (!billNo || !billTitle) {
-        const sectionInfo = classifyComponent(component);
-        workSection = sectionInfo.workSection;
-        mainCategory = sectionInfo.mainCategory;
-        billNo = workSection; // Use section as billNo if not provided
-        billTitle = workSection; // Use section as billTitle if not provided
-    }
-
-    // 2. Description and unit
-    if (!description) {
-        // Use dynamic description if available, else fallback
-        const formulaKey = window.COMPONENT_TO_FORMULA_MAP?.[component];
-        const formulaObj = window.SMM7_2023?.[formulaKey];
-        description = (formulaObj && typeof formulaObj.description === 'function')
-            ? formulaObj.description(inputs)
-            : (formulaObj?.reference || component);
-        unit = unit || (formulaObj?.unit || "m³");
-    }
-
-    // 3. Apply haulage multiplier
-    const multiplier = boqData.haulage?.multiplier || 1.0;
-    const rate = Number((unitCost * multiplier).toFixed(2));
-    const total = Number((quantity * unitCost * multiplier).toFixed(2));
-
-    // 4. Create item
-    const boqItem = {
-        itemCode: `ITEM-${Date.now().toString(36)}`,
-        category: component,
-        description,
-        quantity: Number(quantity.toFixed(2)),
-        unit,
-        rate,
-        amount: total,
-        haulageMultiplier: multiplier,
-        type
-    };
-
-    // 5. Find or create bill
-    let bill = boqData.bills.find(b => b.billNo === billNo);
-    if (!bill) {
-        bill = { billNo, title: billTitle, items: [], total: 0 };
-        boqData.bills.push(bill);
-        console.log(`[addToBOQ] Created new bill: ${billNo} - ${billTitle}`);
-    }
-
-    // 6. Add item to bill
-    bill.items.push(boqItem);
-    bill.total += boqItem.amount;
-    console.log(`[addToBOQ] Added "${component}" to bill "${billNo}" (${billTitle}). Item:`, boqItem);
-}
-
 // --- Helper: Classify component ---
 export function classifyComponent(component) {
     const workSection = Object.keys(SMM7_CATEGORIES).find((section) =>
@@ -149,4 +68,144 @@ export function classifyComponent(component) {
             ? SMM7_CATEGORIES[workSection].mainCategory
             : "Other",
     };
+}
+
+// --- Component to BillNo mapping ---
+export const COMPONENT_TO_BILLNO = {
+    // Preliminaries
+    "Mobilization and Demobilization": "1",
+    "Site Office and Facilities": "1",
+    "Temporary Fencing": "1",
+    "Water for Works": "1",
+    "Electricity for Works": "1",
+    "Insurance": "1",
+    "Health and Safety": "1",
+    "Setting Out": "1",
+    "Project Signboard": "1",
+    "Other Preliminaries": "1",
+
+    // Substructure
+    "Tree Cutting": "2A",
+    "Site Clearance": "2A",
+    "Topsoil Excavation": "2A",
+    "Retaining Topsoil": "2A",
+    "Trench Excavation": "2A",
+    "Concrete in Trench": "2A",
+    "Blockwork in Foundation": "2A",
+    // ...add mappings for all components
+};
+
+// --- Add all Preliminaries to BOQ if missing ---
+export function ensurePreliminariesInBOQ() {
+    const prelimComponents = Object.keys(COMPONENT_TO_BILLNO).filter(
+        c => COMPONENT_TO_BILLNO[c] === "1"
+    );
+    const prelimBill = boqData.bills.find(b => b.billNo === "1");
+    if (!prelimBill) return;
+    prelimComponents.forEach(component => {
+        const alreadyAdded = prelimBill.items.some(item => item.category === component);
+        if (!alreadyAdded) {
+            // Add as "item" with quantity 1, unit "item", rate 0, amount 0
+            prelimBill.items.push({
+                itemCode: `ITEM-${Date.now().toString(36)}`,
+                category: component,
+                description: component,
+                quantity: 1,
+                unit: "item",
+                rate: 0,
+                amount: 0,
+                haulageMultiplier: 1,
+                type: "item"
+            });
+        }
+    });
+}
+
+// --- Modified addToBOQ ---
+export function addToBOQ({ 
+    component, 
+    quantity, 
+    unitCost, 
+    inputs = {}, 
+    type = "normal", 
+    billNo = null, 
+    billTitle = null, 
+    description = null, 
+    unit = null 
+}) {
+    // 1. Determine correct billNo using mapping
+    if (!billNo) {
+        billNo = COMPONENT_TO_BILLNO[component];
+        if (!billNo) {
+            // Fallback: use first bill in boqData.bills
+            if (boqData.bills.length > 0) {
+                billNo = boqData.bills[0].billNo;
+            } else {
+                console.error(`[addToBOQ] No bill mapping for component "${component}" and no bills initialized.`);
+                return;
+            }
+        }
+    }
+
+    // 2. Find the bill in boqData.bills
+    let bill = boqData.bills.find(b => b.billNo === billNo);
+    if (!bill) {
+        console.error(`[addToBOQ] Bill with billNo "${billNo}" not found. Make sure you called initBillsFromTemplate first.`);
+        return;
+    }
+
+    // 3. Description and unit
+    const formulaKey = COMPONENT_TO_FORMULA_MAP[component];
+    const formulaObj = SMM7_2023[formulaKey];
+    console.log('addToBOQ:', { component, formulaKey, formulaObj, inputs });
+
+    if (!description) {
+        if (formulaObj && typeof formulaObj.description === 'function') {
+            description = formulaObj.description(inputs);
+        } else if (formulaObj?.reference) {
+            description = formulaObj.reference;
+        } else {
+            description = component;
+        }
+        unit = unit || (formulaObj?.unit || "m³");
+    }
+
+    // 4. Apply haulage multiplier
+    const multiplier = boqData.haulage?.multiplier || 1.0;
+    const rate = Number((unitCost * multiplier).toFixed(2));
+    const total = Number((quantity * unitCost * multiplier).toFixed(2));
+
+    // 5. Create item
+    const boqItem = {
+        itemCode: `ITEM-${Date.now().toString(36)}`,
+        category: component,
+        description,
+        quantity: Number(quantity?.toFixed?.(2) ?? 1),
+        unit,
+        rate,
+        amount: total,
+        haulageMultiplier: multiplier,
+        type
+    };
+
+    // 6. Add item to bill
+    bill.items.push(boqItem);
+    bill.total += boqItem.amount;
+    console.log(`[addToBOQ] Added "${component}" to bill "${billNo}" (${bill.title}). Item:`, boqItem);
+}
+
+// --- BOQ Validation: Only Preliminaries compulsory ---
+export function validateBOQ() {
+    const prelimBill = boqData.bills.find(b => b.billNo === "1");
+    if (!prelimBill || prelimBill.items.length === 0) {
+        return ["Preliminaries / General Conditions bill must have at least one item."];
+    }
+    // No validation for other bills
+    return [];
+}
+
+// --- When generating BOQ, always ensure Preliminaries are present ---
+export function prepareBOQForExport() {
+    ensurePreliminariesInBOQ();
+    calculateSummary();
 }

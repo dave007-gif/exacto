@@ -36,7 +36,7 @@
     </div>
     {% endif %}
 
-    <div id="version-warning" style="display:none;"></div>
+    <div id="version-warning" style="display: none"></div>
 
     <!-- Location Selectors -->
     <div
@@ -58,6 +58,272 @@
       <p>Select the building element type</p>
 
       <form action="/Calculate" method="post">
+        <!-- Mobilization and Demobilization -->
+        <fieldset
+          id="mobilizationField"
+          data-component="Mobilization and Demobilization"
+          class="hidden"
+        >
+          <legend>Mobilization and Demobilization</legend>
+          <p>
+            <label for="mobilization_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="mobilization_value"
+              id="mobilization_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Mobilization and Demobilization"
+          >
+            Add Mobilization and Demobilization
+          </button>
+        </fieldset>
+
+        <!-- Site Office and Facilities -->
+        <fieldset
+          id="siteOfficeField"
+          data-component="Site Office and Facilities"
+          class="hidden"
+        >
+          <legend>Site Office and Facilities</legend>
+          <p>
+            <label for="site_office_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="site_office_value"
+              id="site_office_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Site Office and Facilities"
+          >
+            Add Site Office and Facilities
+          </button>
+        </fieldset>
+
+        <!-- Temporary Fencing -->
+        <fieldset
+          id="tempFencingField"
+          data-component="Temporary Fencing"
+          class="hidden"
+        >
+          <legend>Temporary Fencing</legend>
+          <p>
+            <label for="temp_fencing_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="temp_fencing_value"
+              id="temp_fencing_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Temporary Fencing"
+          >
+            Add Temporary Fencing
+          </button>
+        </fieldset>
+
+        <!-- Water for Works -->
+        <fieldset
+          id="waterWorksField"
+          data-component="Water for Works"
+          class="hidden"
+        >
+          <legend>Water for Works</legend>
+          <p>
+            <label for="water_works_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="water_works_value"
+              id="water_works_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Water for Works"
+          >
+            Add Water for Works
+          </button>
+        </fieldset>
+
+        <!-- Electricity for Works -->
+        <fieldset
+          id="electricityWorksField"
+          data-component="Electricity for Works"
+          class="hidden"
+        >
+          <legend>Electricity for Works</legend>
+          <p>
+            <label for="electricity_works_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="electricity_works_value"
+              id="electricity_works_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Electricity for Works"
+          >
+            Add Electricity for Works
+          </button>
+        </fieldset>
+
+        <!-- Insurance -->
+        <fieldset id="insuranceField" data-component="Insurance" class="hidden">
+          <legend>Insurance</legend>
+          <p>
+            <label for="insurance_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="insurance_value"
+              id="insurance_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Insurance"
+          >
+            Add Insurance
+          </button>
+        </fieldset>
+
+        <!-- Health and Safety -->
+        <fieldset
+          id="healthSafetyField"
+          data-component="Health and Safety"
+          class="hidden"
+        >
+          <legend>Health and Safety</legend>
+          <p>
+            <label for="health_safety_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="health_safety_value"
+              id="health_safety_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Health and Safety"
+          >
+            Add Health and Safety
+          </button>
+        </fieldset>
+
+        <!-- Setting Out -->
+        <fieldset
+          id="settingOutField"
+          data-component="Setting Out"
+          class="hidden"
+        >
+          <legend>Setting Out</legend>
+          <p>
+            <label for="setting_out_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="setting_out_value"
+              id="setting_out_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Setting Out"
+          >
+            Add Setting Out
+          </button>
+        </fieldset>
+
+        <!-- Project Signboard -->
+        <fieldset
+          id="projectSignboardField"
+          data-component="Project Signboard"
+          class="hidden"
+        >
+          <legend>Project Signboard</legend>
+          <p>
+            <label for="project_signboard_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="project_signboard_value"
+              id="project_signboard_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Project Signboard"
+          >
+            Add Project Signboard
+          </button>
+        </fieldset>
+
+        <!-- Other Preliminaries -->
+        <fieldset
+          id="otherPrelimField"
+          data-component="Other Preliminaries"
+          class="hidden"
+        >
+          <legend>Other Preliminaries</legend>
+          <p>
+            <label for="other_prelim_value">Amount (GHS)</label>
+            <input
+              type="number"
+              name="other_prelim_value"
+              id="other_prelim_value"
+              min="0"
+              step="0.01"
+            />
+            <span class="error-message"></span>
+          </p>
+          <button
+            type="button"
+            class="calculate-btn"
+            data-component="Other Preliminaries"
+          >
+            Add Other Preliminaries
+          </button>
+        </fieldset>
+
         <!-- Tree Cutting/Removal -->
         <fieldset
           id="treeCuttingField"
@@ -452,6 +718,26 @@
           <p>
             <label for="elements"> Component Type:</label>
             <select name="elements" id="elements" multiple size="5">
+              <optgroup label="A. Preliminaries / General Conditions">
+                <option value="Mobilization and Demobilization">
+                  Mobilization and Demobilization
+                </option>
+                <option value="Site Office and Facilities">
+                  Site Office and Facilities
+                </option>
+                <option value="Temporary Fencing">Temporary Fencing</option>
+                <option value="Water for Works">Water for Works</option>
+                <option value="Electricity for Works">
+                  Electricity for Works
+                </option>
+                <option value="Insurance">Insurance</option>
+                <option value="Health and Safety">Health and Safety</option>
+                <option value="Setting Out">Setting Out</option>
+                <option value="Project Signboard">Project Signboard</option>
+                <option value="Other Preliminaries">Other Preliminaries</option>
+              </optgroup>
+              <!-- ...existing optgroups... -->
+
               <optgroup label="D. Groundworks">
                 <option value="tree cutting">Tree/Tree Stump Removal</option>
                 <option value="site clearance">Site Clearance</option>
@@ -515,6 +801,7 @@
     {% endif %}
 
     <button id="dashboard-btn">Go to Dashboard</button>
+    <script src="https://unpkg.com/pdf-lib/dist/pdf-lib.min.js"></script>
     <script type="module" src="static/js/formulas.js"></script>
     <script type="module" src="static/js/script.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/pdf-lib/dist/pdf-lib.min.js"></script>

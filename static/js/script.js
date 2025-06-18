@@ -4,7 +4,7 @@ import { COMPONENT_TO_FORMULA_MAP } from './component_to_formula_map.js';
 import { INPUT_UNITS } from './input_units.js'; // If in a separate file, else skip this line
 // --- Currency Service Imports and Setup ---
 import { fetchCurrencyRates, convertAmount, getLastRateTimestamp } from './currencyService.js';
-import { boqData, addToBOQ, addBill, setProjectDetails, calculateSummary, initBillsFromTemplate, resetBOQ } from './boqData.js';
+import { boqData, addToBOQ, addBill, setProjectDetails, calculateSummary, initBillsFromTemplate, resetBOQ, prepareBOQForExport, validateBOQ } from './boqData.js';
 
 // --- Debug: Script loaded ---
 console.log("script.js loaded");
@@ -468,64 +468,6 @@ validateSMM7Data();
 
 let haulageMultiplier = 1.0;
 
-/*let boqData = {
-    workSections: {},
-    mainCategories: {
-        "Substructure": { items: [], total: 0 },
-        "Superstructure": { items: [], total: 0 },
-        "Other": { items: [], total: 0 }
-    },
-    summary: {},
-    haulage: {
-        multiplier: 1.0,
-        band: ''
-    }
-};*/
-
-/*// Function to add an item to the BOQ
-// Modified addToBOQ to match your data structure
-// Modified addToBOQ with haulage calculation
-function addToBOQ(component, quantity, unitCost, inputs) {
-    const formulaKey = COMPONENT_TO_FORMULA_MAP[component];
-    if (!formulaKey || !SMM7_2023[formulaKey]) return;
-
-    const formulaObj = SMM7_2023[formulaKey];
-    // Use dynamic description if available, else fallback
-    const description = typeof formulaObj.description === 'function'
-        ? formulaObj.description(inputs)
-        : (formulaObj.reference || component);
-
-    const { workSection, mainCategory } = classifyComponent(component);
-    console.log(`[addToBOQ] Adding "${component}" to section "${workSection}"`);
-    const total = quantity * unitCost * haulageMultiplier;
-
-    const boqItem = {
-        itemCode: `ITEM-${Date.now().toString(36)}`,
-        category: component,
-        description, // <-- use the dynamic description
-        quantity: Number(quantity.toFixed(2)),
-        unit: formulaObj.unit || "m³",
-        rate: Number(unitCost.toFixed(2)),
-        total: Number(total.toFixed(2)),
-        haulageMultiplier
-    };
-
-    // Initialize section if needed
-    if (!boqData.workSections[workSection]) {
-        boqData.workSections[workSection] = {
-            description: SMM7_CATEGORIES[workSection]?.description || "Unclassified",
-            items: [],
-            total: 0
-        };
-    }
-
-    // Add to structures
-    boqData.workSections[workSection].items.push(boqItem);
-    boqData.workSections[workSection].total += boqItem.total;
-    boqData.mainCategories[mainCategory].total += boqItem.total;
-}*/
-
-// Function to generate the BOQ PDF
 export async function generateBOQPDF() {
     console.log('[generateBOQPDF] Starting PDF generation...');
     try {
@@ -534,16 +476,44 @@ export async function generateBOQPDF() {
             alert("No BOQ data available to generate PDF.");
             return;
         }
-        const { PDFDocument, rgb } = PDFLib;
+        // --- PDFLib setup ---
+        const { PDFDocument, StandardFonts, rgb } = PDFLib;
         const pdfDoc = await PDFDocument.create();
         const pageSize = [595, 842];
         const margin = 40;
-        const colWidths = [40, 220, 50, 40, 70, 70];
-        const fontSize = 10;
-        let page = pdfDoc.addPage(pageSize);
-        let yPos = pageSize[1] - margin;
+        // 1. Wider description column and padding
+        const colWidths = [40, 260, 45, 40, 65, 65]; // Adjust as needed
+        const descPadding = 6; // Padding for description column
 
-        // Header function
+        // --- Embed fonts ---
+        const normalFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+        const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+
+        // --- Helper: Draw vertical column lines (with double lines for outer columns) ---
+        function drawColumnLines(page, yTop, yBottom) {
+            let x = margin;
+            for (let i = 0; i <= colWidths.length; i++) {
+                const isOuter = (i === 0 || i === colWidths.length);
+                if (isOuter) {
+                    // Double line for outer columns
+                    page.drawLine({ start: { x, y: yTop }, end: { x, y: yBottom }, thickness: 1.2, color: rgb(0,0,0) });
+                    page.drawLine({ start: { x: x + 2, y: yTop }, end: { x: x + 2, y: yBottom }, thickness: 1.2, color: rgb(0,0,0) });
+                } else {
+                    // Single line for inner columns
+                    page.drawLine({ start: { x, y: yTop }, end: { x, y: yBottom }, thickness: 0.5, color: rgb(0,0,0) });
+                }
+                x += colWidths[i] || 0;
+            }
+        }
+
+        // --- Helper: Draw double horizontal line ---
+        function drawDoubleHorizontalLine(page, y) {
+            const totalWidth = colWidths.reduce((a, b) => a + b, 0);
+            page.drawLine({ start: { x: margin, y }, end: { x: margin + totalWidth, y }, thickness: 1.2, color: rgb(0,0,0) });
+            page.drawLine({ start: { x: margin, y: y - 2 }, end: { x: margin + totalWidth, y: y - 2 }, thickness: 1.2, color: rgb(0,0,0) });
+        }
+
+        // --- Header function (unchanged) ---
         function drawHeader(page, yStart) {
             let y = yStart;
             const d = boqData.projectDetails || {};
@@ -562,14 +532,13 @@ export async function generateBOQPDF() {
                 y -= 15;
                 page.drawText(d.projectPhase || '', { x: margin, y, size: 11, color: rgb(0,0,0) });
                 y -= 20;
-                console.log('[generateBOQPDF] Header drawn at y:', y);
             } catch (err) {
                 console.error('[generateBOQPDF] Error drawing header:', err, d);
             }
             return y;
         }
 
-        // Table header
+        // --- Table header with double horizontal line below ---
         function drawTableHeader(page, y) {
             const headers = ["ITEM", "DESCRIPTION", "QTY", "UNIT", "RATE (GHe)", "AMOUNT (GHe)"];
             let x = margin;
@@ -577,59 +546,118 @@ export async function generateBOQPDF() {
                 page.drawText(h, { x, y, size: fontSize, color: rgb(0,0,0) });
                 x += colWidths[i];
             });
-            console.log('[generateBOQPDF] Table header drawn at y:', y);
+            // Draw double horizontal line below header
+            drawDoubleHorizontalLine(page, y - 3);
+            // Draw vertical column lines for the table area (header row height: 15)
+            drawColumnLines(page, y + 3, y - 15);
             return y - 15;
         }
 
-        // Draw each bill
-        for (const bill of boqData.bills) {
-            if (!bill || !bill.items) {
-                console.warn('[generateBOQPDF] Skipping invalid bill:', bill);
-                continue;
+        // 2. Word-wrap helper
+        function wrapText(text, font, fontSize, maxWidth) {
+            const words = text.split(' ');
+            let lines = [];
+            let currentLine = '';
+            for (let word of words) {
+                const testLine = currentLine ? currentLine + ' ' + word : word;
+                const testWidth = font.widthOfTextAtSize(testLine, fontSize);
+                if (testWidth > maxWidth && currentLine) {
+                    lines.push(currentLine);
+                    currentLine = word;
+                } else {
+                    currentLine = testLine;
+                }
             }
-            if (yPos < 120) { 
-                page = pdfDoc.addPage(pageSize); 
-                yPos = drawHeader(page, pageSize[1] - margin); 
+            if (currentLine) lines.push(currentLine);
+            return lines;
+        }
+
+        // 3. Improved row rendering with word-wrap and padding
+        function drawBOQItemRow(page, yPos, item, itemCode, normalFont, boldFont) {
+            let x = margin;
+
+            // Draw item code (A, B, ...)
+            page.drawText(itemCode, { x, y: yPos, size: fontSize, font: normalFont, color: rgb(0,0,0) });
+            x += colWidths[0];
+
+            // Draw Description: Component name (bold, underlined), then description (word-wrapped)
+            let descY = yPos;
+            page.drawText(item.category, { x: x + descPadding, y: descY, size: fontSize, font: boldFont, color: rgb(0,0,0) });
+            const compWidth = boldFont.widthOfTextAtSize(item.category, fontSize);
+            page.drawLine({
+                start: { x: x + descPadding, y: descY - 2 },
+                end: { x: x + descPadding + compWidth, y: descY - 2 },
+                thickness: 0.7,
+                color: rgb(0,0,0)
+            });
+            descY -= fontSize + 2;
+
+            // --- Word-wrap the description ---
+            const descLines = wrapText(item.description, normalFont, fontSize, colWidths[1] - 2 * descPadding);
+            for (const line of descLines) {
+                page.drawText(line, { x: x + descPadding, y: descY, size: fontSize, font: normalFont, color: rgb(0,0,0) });
+                descY -= fontSize + 1;
+            }
+
+            // Draw other columns (Qty, Unit, Rate, Amount) aligned with the first line
+            let colX = margin + colWidths[0] + colWidths[1];
+            const columns = [
+                item.quantity ?? '',
+                item.unit || '',
+                typeof item.rate === 'number' ? item.rate.toFixed(2) : '',
+                typeof item.amount === 'number' ? item.amount.toFixed(2) : ''
+            ];
+            columns.forEach((cell, i) => {
+                page.drawText(String(cell), { x: colX, y: yPos, size: fontSize, font: normalFont, color: rgb(0,0,0) });
+                colX += colWidths[i + 2];
+            });
+
+            // Adjust row height for wrapped description
+            const rowHeight = (fontSize + 1) * (descLines.length + 1) + 6;
+            drawColumnLines(page, yPos + 3, yPos - rowHeight);
+
+            // Return new yPos (move down by the row height)
+            return yPos - rowHeight;
+        }
+
+        // --- PDF page and yPos setup ---
+        let page = pdfDoc.addPage(pageSize);
+        let fontSize = 10;
+        let yPos = pageSize[1] - margin; // <-- Initialize yPos at the start
+
+        // --- Draw each bill ---
+        for (const bill of boqData.bills) {
+            if (!bill || !bill.items) continue;
+            if (yPos < 120) {
+                page = pdfDoc.addPage(pageSize);
+                yPos = drawHeader(page, pageSize[1] - margin);
             }
             page.drawText(`BILL No. ${bill.billNo || ''}: ${bill.title || ''}`, { x: margin, y: yPos, size: 11, color: rgb(0,0,0) });
             yPos -= 18;
             yPos = drawTableHeader(page, yPos);
 
+            let itemCodeChar = 0;
             for (const item of bill.items) {
-                if (!item) {
-                    console.warn('[generateBOQPDF] Skipping invalid item:', item);
-                    continue;
+                if (!item) continue;
+                if (yPos < 60) {
+                    page = pdfDoc.addPage(pageSize);
+                    yPos = drawHeader(page, pageSize[1] - margin);
+                    yPos = drawTableHeader(page, yPos);
+                    itemCodeChar = 0;
                 }
-                if (yPos < 60) { 
-                    page = pdfDoc.addPage(pageSize); 
-                    yPos = drawHeader(page, pageSize[1] - margin); 
-                    yPos = drawTableHeader(page, yPos); 
-                }
-                let x = margin;
-                [
-                    item.itemCode || '',
-                    item.description || '',
-                    item.quantity ?? '',
-                    item.unit || '',
-                    (typeof item.rate === 'number' ? item.rate.toFixed(2) : ''),
-                    (typeof item.amount === 'number' ? item.amount.toFixed(2) : '')
-                ].forEach((cell, i) => {
-                    page.drawText(String(cell), { x, y: yPos, size: fontSize, color: rgb(0,0,0) });
-                    x += colWidths[i];
-                });
-                yPos -= 13;
-                console.log(`[generateBOQPDF] Drew item ${item.itemCode} at y:`, yPos);
+                const itemCode = String.fromCharCode(65 + itemCodeChar);
+                yPos = drawBOQItemRow(page, yPos, item, itemCode, normalFont, boldFont);
+                itemCodeChar++;
+                if (itemCodeChar > 25) itemCodeChar = 0;
             }
 
-            // Bill summary
             yPos -= 8;
             page.drawText(`SUMMARY OF BILL No.${bill.billNo || ''}`, { x: margin, y: yPos, size: fontSize, color: rgb(0,0,0) });
             page.drawText((typeof bill.total === 'number' ? bill.total.toFixed(2) : '0.00'), { x: margin + 420, y: yPos, size: fontSize, color: rgb(0,0,0) });
             yPos -= 20;
-            console.log(`[generateBOQPDF] Bill ${bill.billNo} summary at y:`, yPos);
         }
 
-        // Grand summary
+        // Grand summary (unchanged)
         let subtotal = 0, contingency = 0, grandTotal = 0;
         try {
             subtotal = boqData.bills.reduce((sum, b) => sum + (b.total || 0), 0);
@@ -651,9 +679,8 @@ export async function generateBOQPDF() {
         yPos -= 13;
         page.drawText(`TOTAL ESTIMATE`, { x: margin, y: yPos, size: fontSize, color: rgb(0,0,0) });
         page.drawText(grandTotal.toFixed(2), { x: margin + 420, y: yPos, size: fontSize, color: rgb(0,0,0) });
-        console.log('[generateBOQPDF] Grand summary:', { subtotal, contingency, grandTotal });
 
-        // Download
+        // Download (unchanged)
         try {
             const pdfBytes = await pdfDoc.save();
             const blob = new Blob([pdfBytes], { type: "application/pdf" });
@@ -661,7 +688,7 @@ export async function generateBOQPDF() {
             link.href = URL.createObjectURL(blob);
             link.download = `BOQ-${(boqData.projectDetails.projectTitle || 'Project')}.pdf`;
             link.click();
-            console.log('[generateBOQPDF] PDF generated and download triggered.');
+            alert("BOQ Report has been successfully generated!"); // <-- Success alert only here
         } catch (err) {
             console.error('[generateBOQPDF] Error saving or downloading PDF:', err);
             alert('Failed to generate or download PDF. See console for details.');
@@ -671,7 +698,6 @@ export async function generateBOQPDF() {
         alert("Failed to generate BOQ PDF. See console for details.");
     }
 }
-
 
 document.addEventListener('DOMContentLoaded', async function () {
     console.log("DOMContentLoaded event fired");
@@ -1629,6 +1655,8 @@ function classifyComponent(component) {
     };
 }*/
 
+// ...existing code...
+
 // Update calculateCompositeRate to use inputs for special-case logic
 async function calculateCompositeRate(componentType, quantity, inputs = {}) {
     if (!componentType || !quantity || quantity <= 0) {
@@ -1828,34 +1856,68 @@ async function generateSMM7BOQ() {
     return true;
 }*/
 
+// Only Preliminaries are compulsory. All Preliminaries items must be present (even if amount 0).
+// Other bills/items are optional and not validated for presence or content.
 function validateBOQStructure() {
+    // Always ensure Preliminaries are present before validation
+    prepareBOQForExport();
+    console.log('[validateBOQStructure] Validating BOQ structure...');
     const errors = [];
 
-    // Validate bills and items
-    if (!Array.isArray(boqData.bills) || boqData.bills.length === 0) {
-        errors.push("No bills found in BOQ data.");
+    // Find the Preliminaries bill (by billNo or title)
+    const prelimBill = (boqData.bills || []).find(
+        bill =>
+            (bill.billNo && bill.billNo.toString().toLowerCase().startsWith('1')) ||
+            (bill.title && bill.title.toLowerCase().includes('prelim'))
+    );
+
+    console.log('[validateBOQStructure] Preliminaries bill found:', prelimBill);
+
+    if (!prelimBill) {
+        errors.push("Preliminaries bill is missing.");
     } else {
-        boqData.bills.forEach(bill => {
-            if (!bill.billNo || !bill.title) {
-                errors.push(`Bill missing billNo or title: ${JSON.stringify(bill)}`);
-            }
-            if (!Array.isArray(bill.items) || bill.items.length === 0) {
-                errors.push(`Bill ${bill.billNo} (${bill.title}) has no items.`);
+        // Use the actual Preliminaries categories from your UI
+        const expectedPrelimCategories = [
+            "Mobilization and Demobilization",
+            "Site Office and Facilities",
+            "Temporary Fencing",
+            "Water for Works",
+            "Electricity for Works",
+            "Insurance",
+            "Health and Safety",
+            "Setting Out",
+            "Project Signboard",
+            "Other Preliminaries"
+        ];
+        const presentCategories = (prelimBill.items || []).map(item => item.category);
+        console.log('[validateBOQStructure] Present prelim categories:', presentCategories);
+
+        expectedPrelimCategories.forEach(cat => {
+            if (!presentCategories.includes(cat)) {
+                errors.push(`Preliminaries item missing: ${cat}`);
+                console.warn(`[validateBOQStructure] Missing preliminaries item: ${cat}`);
             } else {
-                bill.items.forEach(item => {
-                    if (!item.category) {
-                        errors.push(`Item missing category in bill ${bill.billNo}`);
-                    }
-                    if (typeof item.quantity !== 'number' || isNaN(item.quantity)) {
-                        errors.push(`Invalid quantity for ${item.category} in bill ${bill.billNo}`);
-                    }
-                    if (typeof item.rate !== 'number' || isNaN(item.rate)) {
-                        errors.push(`Invalid rate for ${item.category} in bill ${bill.billNo}`);
-                    }
-                    if (typeof item.amount !== 'number' || isNaN(item.amount)) {
-                        errors.push(`Invalid amount for ${item.category} in bill ${bill.billNo}`);
-                    }
-                });
+                console.log(`[validateBOQStructure] Found preliminaries item: ${cat}`);
+            }
+        });
+
+        // Validate preliminaries item fields
+        (prelimBill.items || []).forEach(item => {
+            if (!item.category) {
+                errors.push(`Preliminaries item missing category`);
+                console.warn('[validateBOQStructure] Preliminaries item missing category:', item);
+            }
+            if (typeof item.quantity !== 'number' || isNaN(item.quantity)) {
+                errors.push(`Invalid quantity for preliminaries item: ${item.category}`);
+                console.warn('[validateBOQStructure] Invalid quantity for:', item);
+            }
+            if (typeof item.rate !== 'number' || isNaN(item.rate)) {
+                errors.push(`Invalid rate for preliminaries item: ${item.category}`);
+                console.warn('[validateBOQStructure] Invalid rate for:', item);
+            }
+            if (typeof item.amount !== 'number' || isNaN(item.amount)) {
+                errors.push(`Invalid amount for preliminaries item: ${item.category}`);
+                console.warn('[validateBOQStructure] Invalid amount for:', item);
             }
         });
     }
@@ -1864,6 +1926,7 @@ function validateBOQStructure() {
         console.error("BOQ Validation Errors:\n- " + errors.join("\n- "));
         return false;
     }
+    console.log('[validateBOQStructure] BOQ structure is valid.');
     return true;
 }
 
@@ -1958,7 +2021,7 @@ async function loadRecentActivity() {
 }
 document.addEventListener('DOMContentLoaded', loadRecentActivity);
 
-// --- Modal logic for BOQ export (bill-centric) ---
+// --- Modal logic for BOQ export (bill-centric, with Preliminaries validation) ---
 console.log('[BOQ Modal] Initializing modal export logic');
 
 const boqBtn = document.getElementById('generate-boq');
@@ -1967,6 +2030,16 @@ const closeModalBtn = document.getElementById('close-boq-modal');
 const pdfBtn = document.getElementById('download-pdf');
 const xlsxBtn = document.getElementById('download-xlsx');
 const csvBtn = document.getElementById('download-csv');
+
+async function handleBOQExport(exportFn) {
+    prepareBOQForExport();
+    const errors = validateBOQ();
+    if (errors.length > 0) {
+        alert("BOQ Validation Error:\n" + errors.join('\n'));
+        return;
+    }
+    await exportFn();
+}
 
 if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
     boqBtn.addEventListener('click', function (e) {
@@ -1983,44 +2056,71 @@ if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
     pdfBtn.addEventListener('click', async function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] PDF export selected');
-        await generateSMM7BOQ(); // Triggers PDF logic
+        await handleBOQExport(generateSMM7BOQ);
     });
 
     xlsxBtn.addEventListener('click', function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] Excel export selected');
-        generateBOQSpreadsheet('xlsx');
+        handleBOQExport(() => generateBOQSpreadsheet('xlsx'));
     });
 
     csvBtn.addEventListener('click', function () {
         boqModal.style.display = 'none';
         console.log('[BOQ Modal] CSV export selected');
-        generateBOQSpreadsheet('csv');
+        handleBOQExport(() => generateBOQSpreadsheet('csv'));
     });
 }
 
 // --- Spreadsheet export function (bill-centric, supports Excel and CSV) ---
 function generateBOQSpreadsheet(format) {
     console.log(`[BOQ Export] Generating spreadsheet in format: ${format}`);
+
+    // SheetJS rich text for Description (XLSX only)
+    function getRichDescription(item) {
+        return [
+            { text: item.category + '\n', bold: true, underline: true },
+            { text: item.description || '' }
+        ];
+    }
+
+    // For CSV: add clear separation and padding
+    function getCSVDescription(item) {
+        // Two line breaks and a little indent for description
+        return `${item.category}\n\n  ${item.description || ''}`;
+    }
+
+    // Helper for alphabetical item code per page (A-Z, restart per 40 rows)
+    function getItemCode(rowIdx) {
+        const code = String.fromCharCode(65 + (rowIdx % 26));
+        return code;
+    }
+
+    // Build rows for SheetJS
     const rows = [
         ["Bill No.", "Bill Title", "Item Code", "Description", "Qty", "Unit", "Rate (GHS)", "Amount (GHS)", "Type"]
     ];
 
-    // Loop through bills and items
+    // For XLSX, keep track of row for per-page item code
+    let excelRowIdx = 0;
     boqData.bills.forEach(bill => {
         if (bill.items && bill.items.length > 0) {
-            bill.items.forEach(item => {
+            let itemCodeChar = 0;
+            bill.items.forEach((item, idx) => {
                 rows.push([
                     bill.billNo,
                     bill.title,
-                    item.itemCode || '',
-                    item.description || '',
+                    getItemCode(itemCodeChar),
+                    format === 'xlsx' ? getRichDescription(item) : getCSVDescription(item),
                     item.quantity ?? '',
                     item.unit || '',
                     typeof item.rate === 'number' ? item.rate.toFixed(2) : '',
                     typeof item.amount === 'number' ? item.amount.toFixed(2) : '',
                     item.type || ''
                 ]);
+                itemCodeChar++;
+                if (itemCodeChar > 25) itemCodeChar = 0; // Restart at 'A' after 'Z'
+                excelRowIdx++;
             });
             // Bill subtotal row
             rows.push([
@@ -2028,6 +2128,7 @@ function generateBOQSpreadsheet(format) {
                 bill.title + " TOTAL",
                 "", "", "", "", "", bill.total.toFixed(2), ""
             ]);
+            excelRowIdx++;
         }
     });
 
@@ -2041,12 +2142,60 @@ function generateBOQSpreadsheet(format) {
             console.error('[BOQ Export] XLSX library not found');
             return;
         }
+        // Create worksheet
         const ws = XLSX.utils.aoa_to_sheet(rows);
+
+        // Apply rich text and borders
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        for (let R = 1; R <= range.e.r; ++R) {
+            // Rich text for Description
+            if (ws[XLSX.utils.encode_cell({ r: R, c: 3 })] && Array.isArray(rows[R][3])) {
+                ws[XLSX.utils.encode_cell({ r: R, c: 3 })].r = rows[R][3];
+            }
+            // Borders for all cells
+            for (let C = 0; C <= 8; ++C) {
+                const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
+                if (cell) {
+                    cell.s = cell.s || {};
+                    cell.s.border = {
+                        top:    { style: "thin", color: { rgb: "000000" } },
+                        bottom: { style: "thin", color: { rgb: "000000" } },
+                        left:   { style: "thin", color: { rgb: "000000" } },
+                        right:  { style: "thin", color: { rgb: "000000" } }
+                    };
+                    // Double border for outer columns and header
+                    if (C === 0 || C === 8 || R === 0) {
+                        cell.s.border.left = { style: "double", color: { rgb: "000000" } };
+                        cell.s.border.right = { style: "double", color: { rgb: "000000" } };
+                        if (R === 0) {
+                            cell.s.border.top = { style: "double", color: { rgb: "000000" } };
+                            cell.s.border.bottom = { style: "double", color: { rgb: "000000" } };
+                        }
+                    }
+                }
+            }
+        }
+
+        // Set column widths for better appearance (wider Description)
+        ws['!cols'] = [
+            { wch: 10 }, // Bill No.
+            { wch: 25 }, // Bill Title
+            { wch: 8 },  // Item Code
+            { wch: 60 }, // Description (wider)
+            { wch: 8 },  // Qty
+            { wch: 8 },  // Unit
+            { wch: 12 }, // Rate
+            { wch: 14 }, // Amount
+            { wch: 10 }  // Type
+        ];
+
+        // Create workbook and export
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, "BOQ");
         XLSX.writeFile(wb, `BOQ-${new Date().toISOString().slice(0,10)}.xlsx`);
         console.log('[BOQ Export] Excel file generated and download triggered');
     } else if (format === 'csv') {
+        // CSV: plain text, no formatting, but keep category and description separated
         const csv = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n');
         const blob = new Blob([csv], { type: "text/csv" });
         const link = document.createElement("a");

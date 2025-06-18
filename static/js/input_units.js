@@ -26,5 +26,20 @@ export const INPUT_UNITS = {
     int_ver_trenches: 'mm',
     concrete_thickness: 'mm',
     mean_girth: 'mm',
+
+    // --- Preliminaries ---
+    prelim_site_clearance: 'm²',
+    prelim_mobilisation: 'item',
+    prelim_insurance: 'item',
+    prelim_permit: 'item',
+    prelim_scaffolding: 'item',
+    prelim_water: 'item',
+    prelim_electricity: 'item',
+    prelim_hoarding: 'm',
+    prelim_signboard: 'item',
+    prelim_toilets: 'item',
+    prelim_health_safety: 'item',
+    prelim_security: 'item',
+    prelim_others: 'item',
     // Add more as needed
 };

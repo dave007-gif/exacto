@@ -1,4 +1,16 @@
 export const COMPONENT_TO_FORMULA_MAP = {
+    // Preliminaries
+    "Mobilization and Demobilization": "preliminaries_item",
+    "Site Office and Facilities": "preliminaries_item",
+    "Temporary Fencing": "preliminaries_item",
+    "Water for Works": "preliminaries_item",
+    "Electricity for Works": "preliminaries_item",
+    "Insurance": "preliminaries_item",
+    "Health and Safety": "preliminaries_item",
+    "Setting Out": "preliminaries_item",
+    "Project Signboard": "preliminaries_item",
+    "Other Preliminaries": "preliminaries_item",
+
     // Components in "D. Groundworks"
     "Tree Cutting": "tree cutting",
     "Site Clearance": "site clearance",
