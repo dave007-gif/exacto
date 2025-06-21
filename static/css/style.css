@@ -80,3 +80,161 @@
   background: #aaa;
   color: #fff;
 }
+
+/* Project Details Modal Styles */
+#project-details-modal {
+  display: none;
+  position: fixed;
+  z-index: 1100;
+  left: 0; top: 0;
+  width: 100vw; height: 100vh;
+  background: rgba(0,0,0,0.35);
+  align-items: center;
+  justify-content: center;
+}
+
+#project-details-modal[style*="display: flex"] {
+  display: flex !important;
+}
+
+/* Add this new rule */
+#project-details-modal .modal-content {
+  max-height: 85vh; /* Limit height to 85% of viewport */
+  overflow-y: auto; /* Enable scrolling */
+}
+
+#project-details-modal .modal-content {
+  background: #fff;
+  padding: 2em 2.5em;
+  border-radius: 10px;
+  min-width: 320px;
+  max-width: 95vw;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+  text-align: left;
+}
+
+#project-details-modal h3 {
+  margin-top: 0;
+  margin-bottom: 1em;
+  font-size: 1.3em;
+  color: #2196F3;
+}
+
+#project-details-modal label {
+  display: block;
+  margin-bottom: 0.9em;
+  font-weight: 500;
+  color: #222;
+}
+
+#project-details-modal input,
+#project-details-modal textarea {
+  width: 100%;
+  padding: 0.5em 0.7em;
+  margin-top: 0.3em;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+  font-size: 1em;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+#project-details-modal textarea {
+  min-height: 48px;
+  max-height: 120px;
+}
+
+#save-project-details {
+  margin-top: 1em;
+  padding: 0.7em 2em;
+  background: #2196F3;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#save-project-details:hover {
+  background: #1769aa;
+}
+
+/* Add to your style.css */
+/* .modal-content button {
+  display: inline-block;
+  margin: 8px 4px 0 0;
+} */
+
+#project-details-modal .modal-content button {
+  display: inline-block;
+  margin: 8px 4px 0 0;
+  padding: 0.7em 2em;
+  background: #2196F3;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 1em;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+#project-details-modal .modal-content button:hover {
+  background: #1769aa;
+}
+
+.loading-spinner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  z-index: 2000;
+}
+
+.spinner {
+  border: 4px solid rgba(255,255,255,0.3);
+  border-radius: 50%;
+  border-top: 4px solid #2196F3;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Add to your CSS */
+#project-details-modal {
+  z-index: 1100; /* Ensure it's above other content */
+}
+
+#project-details-modal .modal-content {
+  max-width: 90vw; /* Responsive width */
+  max-height: 90vh; /* Prevent taking full screen height */
+  overflow-y: auto; /* Enable scrolling for tall content */
+  padding: 20px; /* Add some padding */
+}
+
+/* Button container styling */
+.button-container {
+  display: flex;
+  gap: 15px;
+  margin-top: 20px;
+  justify-content: flex-end;
+}
+
+/* Make buttons more visible */
+#save-project-details,
+#save-and-continue-project-details {
+  padding: 12px 25px;
+  font-size: 16px;
+  font-weight: bold;
+}

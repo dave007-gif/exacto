@@ -98,3 +98,20 @@ document.getElementById('create-project-btn').addEventListener('click', async ()
     // Redirect to calculation page with project_id
     window.location.href = `/calculation?project_id=${id}`;
 });
+
+// static/js/dashboard.js
+async function loadRecentActivity() {
+  const response = await fetch('/api/activity', { credentials: 'include' });
+  const activities = await response.json();
+  const feed = document.getElementById('activity-list');
+  feed.innerHTML = '';
+  activities.forEach(activity => {
+    feed.innerHTML += `
+      <div class="activity-item">
+        <small>${new Date(activity.timestamp).toLocaleString()}</small>
+        <p>${activity.description}</p>
+      </div>
+    `;
+  });
+}
+document.addEventListener('DOMContentLoaded', loadRecentActivity);

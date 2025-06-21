@@ -38,6 +38,42 @@
 
     <div id="version-warning" style="display: none"></div>
 
+    <!-- Project Details Modal -->
+    <div id="project-details-modal" class="modal" style="display: none">
+      <div class="modal-content">
+        <h3>Project Details</h3>
+        <label
+          >Company Name: <input id="company-name" type="text" required /></label
+        ><br />
+        <label
+          >Company Address:
+          <textarea id="company-address" required></textarea></label
+        ><br />
+        <label
+          >Contact Info: <input id="contact-info" type="text" required /></label
+        ><br />
+        <label
+          >Project Title:
+          <input id="project-title" type="text" required /></label
+        ><br />
+        <label
+          >Client Name: <input id="client-name" type="text" required /></label
+        ><br />
+        <label>Project Phase: <input id="project-phase" type="text" /></label
+        ><br />
+        <button id="save-project-details">Save</button>
+        <button id="save-and-continue-project-details">
+          Save &amp; Continue
+        </button>
+      </div>
+    </div>
+
+    <!-- Add this anywhere in your <body> -->
+    <div id="loading" class="loading-spinner" style="display: none">
+      <div class="spinner"></div>
+      <p>Loading project details...</p>
+    </div>
+
     <!-- Location Selectors -->
     <div
       id="location-fields"

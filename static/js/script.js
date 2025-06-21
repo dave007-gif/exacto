@@ -9,6 +9,19 @@ import { boqData, addToBOQ, addBill, setProjectDetails, calculateSummary, initBi
 // --- Debug: Script loaded ---
 console.log("script.js loaded");
 
+document.getElementById('project-details-modal').style.display = 'none';
+// --- Project Context Enforcement ---
+// Extract project_id from URL and set currentProjectId
+// Replace getProjectIdFromURL function:
+function getProjectIdFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const id = params.get('project_id');
+    return id ? parseInt(id, 10) : null; // Convert to integer
+}
+let currentProjectId = getProjectIdFromURL();
+
+// If calculation page is loaded without a project_id, redirect or show modal
+
 // Clear all saved projects from localStorage on calculation page load
 localStorage.removeItem('projects');
 
@@ -35,11 +48,104 @@ function setupCurrencyUI(userRoles) {
 
 // --- Auto-save, Restore, and Version Warning Logic ---
 
-let currentProjectId = null;
 let currentFormulaVersion = null;
 let projectFormulaVersion = null;
 let autoSaveTimer = null;
 let lastSavedData = null;
+
+// --- Project Details Modal Logic ---
+
+// Add these utility functions to your script.js
+function showLoading() {
+  const loader = document.getElementById('loading');
+  if (loader) loader.style.display = 'flex';
+}
+
+function hideLoading() {
+  const loader = document.getElementById('loading');
+  if (loader) loader.style.display = 'none';
+}
+
+function centerProjectDetailsModal() {
+  const modal = document.getElementById('project-details-modal');
+  if (modal && modal.style.display === 'flex') {
+    modal.scrollTop = 0; // Scroll to top when shown
+  }
+}
+
+
+function showProjectDetailsModal() {
+    console.trace('[DEBUG] Showing project details modal');
+    console.log('[Modal] showProjectDetailsModal called');
+    console.trace('Modal visibility changed - SHOWING');
+    const modal = document.getElementById('project-details-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        centerProjectDetailsModal();
+    }
+    }
+function hideProjectDetailsModal() {
+    console.trace('[DEBUG] Hiding project details modal');
+    console.log('[Modal] hideProjectDetailsModal called');
+    console.trace('Modal visibility changed - HIDING');
+    document.getElementById('project-details-modal').style.display = 'none';
+}
+
+
+// --- LocalStorage Fallback for Project Details Modal ---
+// Update flag functions:
+function setProjectDetailsSavedFlag(projectId) {
+    if (projectId) {
+        const id = parseInt(projectId, 10); // Ensure numeric
+        localStorage.setItem(`projectDetailsSaved_${id}`, '1');
+    }
+}
+
+function clearProjectDetailsSavedFlag(projectId) {
+    if (projectId) {
+        const id = parseInt(projectId, 10); // Ensure numeric
+        localStorage.removeItem(`projectDetailsSaved_${id}`);
+    }
+}
+
+function isProjectDetailsSavedFlag(projectId) {
+    if (!projectId) return false;
+    const id = parseInt(projectId, 10); // Ensure numeric
+    return !!localStorage.getItem(`projectDetailsSaved_${id}`);
+}
+
+async function loadProjectDetailsWithLoading(projectId) {
+  showLoading();
+  try {
+    const details = await fetchProjectDetails(projectId);
+    console.log('Fetched project details:', details);
+    
+    // Updated modal logic with robust checks
+    if (details && 
+        typeof details === 'object' && 
+        Object.keys(details).length > 0 &&
+        details.companyName && 
+        details.projectTitle && 
+        details.clientName
+    ) {
+      setProjectDetails(details); // <-- ADD THIS LINE  
+      console.log('Project details complete - hiding modal');
+      hideProjectDetailsModal();
+      clearProjectDetailsSavedFlag(projectId);
+    } else {
+      console.warn('Incomplete project details - showing modal');
+      showProjectDetailsModal();
+    }
+    
+    return details;
+  } catch (error) {
+    console.error("Project details load failed", error);
+    showProjectDetailsModal();
+    return null;
+  } finally {
+    hideLoading();
+  }
+}
 
 // Define your standard bill template (ACECoR/SMM7 style)
 const billTemplate = [
@@ -240,40 +346,15 @@ window.addEventListener('beforeunload', (e) => {
 document.addEventListener('input', scheduleAutoSave);
 document.addEventListener('change', scheduleAutoSave);
 
-/*// On page load, restore project if project_id is present
-async function loadProjectIfNeeded() {
-    const params = new URLSearchParams(window.location.search);
-    currentProjectId = params.get('project_id');
-    if (!currentProjectId) return;
-
-    // Fetch project
-    const res = await fetch(`/api/projects/${currentProjectId}`, { credentials: 'include' });
-    if (!res.ok) {
-        alert('Could not load project.');
-        return;
-    }
-    const project = await res.json();
-    projectFormulaVersion = project.formula_version;
-    lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
-
-    // Restore UI from lastSavedData
-    restoreCalculationUI(lastSavedData);
-
-    // Version warning
-    currentFormulaVersion = await fetchCurrentFormulaVersion();
-    if (projectFormulaVersion !== currentFormulaVersion) {
-        showVersionWarning(projectFormulaVersion, currentFormulaVersion);
-    }
-}
-document.addEventListener('DOMContentLoaded', loadProjectIfNeeded);*/
-
-
 export async function loadProjectDetails(projectId) {
     try {
         const res = await fetch(`/api/projects/${projectId}`);
         if (!res.ok) throw new Error('Failed to fetch project');
         const project = await res.json();
-        setProjectDetails(project.details);
+        // Fetch project/company details from backend
+        const details = await fetchProjectDetails(projectId);
+        console.log('Fetched project details:', details);
+        if (details) setProjectDetails(details);
         boqData.bills = project.bills || [];
         // Optionally, recalculate summary if needed
         // calculateSummary();
@@ -592,6 +673,14 @@ let haulageMultiplier = 1.0;
 
 export async function generateBOQPDF() {
     console.log('[generateBOQPDF] Starting PDF generation...');
+    // Enforce project details
+    const details = boqData.projectDetails;
+    if (!details || !details.companyName || !details.projectTitle || !details.clientName) {
+        showProjectDetailsModal();
+        alert('Please fill in project details before exporting BOQ.');
+        return;
+    }
+
     try {
         if (!boqData || !Array.isArray(boqData.bills) || boqData.bills.length === 0) {
             console.error('[generateBOQPDF] No BOQ data or bills found:', boqData);
@@ -639,24 +728,20 @@ export async function generateBOQPDF() {
         function drawHeader(page, yStart) {
             let y = yStart;
             const d = boqData.projectDetails || {};
-            try {
-                page.drawText(d.companyName || '', { x: margin, y, size: 12, color: rgb(0,0,0) });
-                y -= 15;
-                (d.companyAddress || '').split('\n').forEach(line => {
-                    page.drawText(line, { x: margin, y, size: fontSize, color: rgb(0,0,0) });
-                    y -= 12;
-                });
-                page.drawText(d.contactInfo || '', { x: margin, y, size: fontSize });
-                y -= 15;
-                page.drawText(d.projectTitle || '', { x: margin, y, size: 13, color: rgb(0,0,0) });
-                y -= 15;
-                page.drawText(`FOR ${d.clientName || ''}`, { x: margin, y, size: 12, color: rgb(0,0,0) });
-                y -= 15;
-                page.drawText(d.projectPhase || '', { x: margin, y, size: 11, color: rgb(0,0,0) });
-                y -= 20;
-            } catch (err) {
-                console.error('[generateBOQPDF] Error drawing header:', err, d);
-            }
+            page.drawText(d.companyName || '', { x: margin, y, size: 12, color: rgb(0,0,0) });
+            y -= 15;
+            (d.companyAddress || '').split('\n').forEach(line => {
+                page.drawText(line, { x: margin, y, size: fontSize, color: rgb(0,0,0) });
+                y -= 12;
+            });
+            page.drawText(d.contactInfo || '', { x: margin, y, size: fontSize });
+            y -= 15;
+            page.drawText(d.projectTitle || '', { x: margin, y, size: 13, color: rgb(0,0,0) });
+            y -= 15;
+            page.drawText(`FOR ${d.clientName || ''}`, { x: margin, y, size: 12, color: rgb(0,0,0) });
+            y -= 15;
+            page.drawText(d.projectPhase || '', { x: margin, y, size: 11, color: rgb(0,0,0) });
+            y -= 20;
             return y;
         }
 
@@ -821,7 +906,154 @@ export async function generateBOQPDF() {
     }
 }
 
+// Save project/company details to backend
+export async function saveProjectDetails(projectId, details) {
+    try {
+        const res = await fetch(`/api/projects/${projectId}/details`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify(details)
+        });
+        console.log('[saveProjectDetails] Response status:', res.status, res.statusText);
+        let data = null;
+        try {
+            data = await res.json();
+        } catch (jsonErr) {
+            console.warn('[saveProjectDetails] Could not parse JSON:', jsonErr);
+        }
+        console.log('[saveProjectDetails] Response data:', data);
+        if (!res.ok) throw new Error('Failed to save project details');
+        // Defensive: check for empty object or missing fields
+        if (!data || Object.keys(data).length === 0) {
+            console.warn('[saveProjectDetails] Warning: Empty response object after saving project details.');
+        }
+        if (data && (!data.companyName || !data.projectTitle || !data.clientName)) {
+            console.warn('[saveProjectDetails] Warning: Missing required fields in saved project details:', data);
+        }
+        return data;
+    } catch (err) {
+        console.error('[saveProjectDetails] Error:', err);
+        throw err;
+    }
+}
+
+// Fetch project/company details from backend
+export async function fetchProjectDetails(projectId) {
+    try {
+        const res = await fetch(`/api/projects/${projectId}/details`, {
+            credentials: 'include'
+        });
+        console.log('[fetchProjectDetails] Response status:', res.status, res.statusText);
+        let data = null;
+        try {
+            data = await res.json();
+        } catch (jsonErr) {
+            console.warn('[fetchProjectDetails] Could not parse JSON:', jsonErr);
+        }
+        console.log('[fetchProjectDetails] Response data:', data);
+        if (!res.ok) throw new Error('Failed to fetch project details');
+        // Defensive: check for empty object or missing fields
+        if (!data || Object.keys(data).length === 0) {
+            console.warn('[fetchProjectDetails] Warning: Empty response object when fetching project details.');
+        }
+        if (data && (!data.companyName || !data.projectTitle || !data.clientName)) {
+            console.warn('[fetchProjectDetails] Warning: Missing required fields in fetched project details:', data);
+        }
+        return data;
+    } catch (err) {
+        console.error('[fetchProjectDetails] Error:', err);
+        return null;
+    }
+}
+
 document.addEventListener('DOMContentLoaded', async function () {
+    console.log("DOMContentLoaded event fired");
+    try {
+        await checkAuthentication();
+        const userRoles = await fetchUserRoles();
+        console.log("User roles:", userRoles);
+        console.log("User roles array:", userRoles, typeof userRoles[0]);
+        checkRoleVisibility(userRoles);
+
+        await loadLocations();
+        await checkFormulaVersion();
+        await fetchInitialRates();
+
+        setupInputValidation();
+        setupComponentDropdown();
+        setupCalculateButtons();
+        setupSaveProjectButton();
+        setupLogoutButton();
+
+        // On page load, restore project if project_id is present
+        const params = new URLSearchParams(window.location.search);
+        currentProjectId = getProjectIdFromURL(); // Use the updated function
+        console.log('[RestoreProject] URL params:', Array.from(params.entries()));
+        
+        if (currentProjectId) {
+            console.log('[RestoreProject] Found project_id:', currentProjectId);
+            showLoading(); // Show initial loading spinner
+            
+            try {
+                // Fetch project data
+                const res = await fetch(`/api/projects/${currentProjectId}`, { 
+                    credentials: 'include' 
+                });
+                
+                console.log('[RestoreProject] Fetch response:', res);
+                if (res.ok) {
+                    const project = await res.json();
+                    console.log('[RestoreProject] Loaded project:', project);
+                    projectFormulaVersion = project.formula_version;
+                    lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
+                    console.log('[RestoreProject] Parsed calculation_data:', lastSavedData);
+                    restoreCalculationUI(lastSavedData);
+
+                    // Version warning
+                    currentFormulaVersion = await fetchCurrentFormulaVersion();
+                    if (projectFormulaVersion !== currentFormulaVersion) {
+                        showVersionWarning(projectFormulaVersion, currentFormulaVersion);
+                    }
+                } else {
+                    alert('Could not load project.');
+                    console.error('[RestoreProject] Failed to fetch project. Status:', res.status);
+                }
+                
+                // Load project details WITH LOADING HANDLER
+                console.log('[ProjectDetailsModal] Checking flag for projectId:', currentProjectId, 
+                            'Flag:', isProjectDetailsSavedFlag(currentProjectId));
+
+                if (isProjectDetailsSavedFlag(currentProjectId)) {
+                    hideProjectDetailsModal();
+                }
+                
+                // USE THE NEW LOADING FUNCTION HERE
+                await loadProjectDetailsWithLoading(currentProjectId);
+                
+            } catch (error) {
+                console.error('Project load error:', error);
+                showProjectDetailsModal();
+            } finally {
+                hideLoading(); // Hide spinner when done
+            }
+        } else {
+            // No project ID - show modal immediately
+            showProjectDetailsModal();
+        }
+
+        displayProjects();
+
+    } catch (error) {
+        console.error("Initialization failed:", error);
+        alert("A critical error occurred during initialization. Please reload the page.");
+    } finally {
+        hideLoading(); // Ensure loading is hidden in case of errors
+    }
+    // Add this at the end of your DOMContentLoaded handler
+window.addEventListener('resize', centerProjectDetailsModal);
+});
+/*document.addEventListener('DOMContentLoaded', async function () {
     console.log("DOMContentLoaded event fired");
     try {
         await checkAuthentication();
@@ -871,11 +1103,48 @@ document.addEventListener('DOMContentLoaded', async function () {
         }
 
         displayProjects();
+
+        // Enforce project context
+        if (currentProjectId) {
+            // --- Optimistically hide modal if localStorage flag is set ---
+            console.log('[ProjectDetailsModal] Checking flag for projectId:', currentProjectId, 'Flag:', isProjectDetailsSavedFlag(currentProjectId));
+
+            if (isProjectDetailsSavedFlag(currentProjectId)) {
+                hideProjectDetailsModal();
+            }
+            try {
+                const details = await fetchProjectDetails(currentProjectId);
+                console.log('Fetched project details:', details);
+                // Replace the details check with:
+                console.log('Checking project details:', details);
+                if (details && 
+                    typeof details === 'object' && 
+                    Object.keys(details).length > 0 &&
+                    details.companyName && 
+                    details.projectTitle && 
+                    details.clientName
+                ) {
+                    hideProjectDetailsModal();
+                    clearProjectDetailsSavedFlag(currentProjectId);
+                } else {
+                    console.warn('Incomplete project details - showing modal');
+                    showProjectDetailsModal();
+                }
+            } catch (err) {
+                showProjectDetailsModal();
+            }
+        } else {
+            showProjectDetailsModal();
+        }
+
+
+
+
     } catch (error) {
         console.error("Initialization failed:", error);
         alert("A critical error occurred during initialization. Please reload the page.");
     }
-});
+});*/
 
 // --- Modularized Functions ---
 
@@ -1435,6 +1704,55 @@ function setupSaveProjectButton() {
     });
 }
 
+document.getElementById('save-and-continue-project-details').onclick = async function() {
+    const details = {
+        companyName: document.getElementById('company-name').value.trim(),
+        companyAddress: document.getElementById('company-address').value.trim(),
+        contactInfo: document.getElementById('contact-info').value.trim(),
+        projectTitle: document.getElementById('project-title').value.trim(),
+        clientName: document.getElementById('client-name').value.trim(),
+        projectPhase: document.getElementById('project-phase').value.trim(),
+        date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    };
+    if (!details.companyName || !details.companyAddress || !details.projectTitle || !details.clientName) {
+        alert('Please fill all required fields.');
+        return;
+    }
+    boqData.projectDetails = details;
+
+    try {
+        // If no project ID, create a new project first
+        if (!currentProjectId) {
+            const response = await fetch('/api/projects', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify({
+                    project_name: details.projectTitle,
+                    total_cost: 0 // or any default
+                })
+            });
+            if (!response.ok) throw new Error('Failed to create project');
+            const project = await response.json();
+            currentProjectId = project.id || project.project_id || project._id;
+        }
+        console.log('[ProjectDetailsModal] Setting flag for projectId:', currentProjectId);
+        
+        // Now save the project details
+        console.log('Saving project details:', currentProjectId, boqData.projectDetails);
+        await saveProjectDetails(currentProjectId, boqData.projectDetails);
+
+        // --- Set the localStorage flag ---
+        setProjectDetailsSavedFlag(currentProjectId);
+
+        alert('Project details saved!');
+        window.location.href = `/calculation?project_id=${currentProjectId}`;
+    } catch (err) {
+        alert('Failed to save project details to backend.');
+    }
+};
+
+
 function setupLogoutButton() {
     console.log("Setting up dashboard button");
     const dashboardBtn = document.getElementById('dashboard-btn');
@@ -1453,10 +1771,10 @@ function validateInput(input) {
     const value = input.value.trim();
 
     input.classList.remove('invalid');
-    errorSpan.style.display = 'none';
+    if (errorSpan) errorSpan.style.display = 'none';
 
     if (value === '') {
-        showError(input, errorSpan, 'This field is required');
+        if (errorSpan) showError(input, errorSpan, 'This field is required');
         return false;
     }
 
@@ -1476,12 +1794,12 @@ function validateInput(input) {
 
     // Check for valid number using html 5 validation
     if (!input.checkValidity() || isNaN(numericValue)) {
-        showError(input, errorSpan, 'Please enter a valid number');
+        if (errorSpan) showError(input, errorSpan, 'Please enter a valid number');
         return false;
     }
 
     if (numericValue < 0) {
-        showError(input, errorSpan, 'Value cannot be negative');
+        if (errorSpan) showError(input, errorSpan, 'Value cannot be negative');
         return false;
     }
     console.log("Input value is valid:", numericValue); // Debugging line here
@@ -1660,35 +1978,6 @@ function clearInvalidProjects() {
 }
 clearInvalidProjects();
 
-/*// Function to display saved projects
-function displayProjects() {
-    const projects = JSON.parse(localStorage.getItem('projects')) || [];
-    console.log("Displaying projects:", projects); // Debugging line
-
-    const projectList = document.getElementById('project-list');
-    projectList.innerHTML = ''; // Clear existing projects
-
-    projects.forEach(project => {
-        if (!project.totalCost || isNaN(project.totalCost)) {
-            console.error("Invalid project data:", project);
-            return; // Skip invalid projects
-        }
-
-        const projectItem = document.createElement('div');
-        projectItem.classList.add('project-item');
-        projectItem.innerHTML = `
-            <h4>${project.name} (${project.component})</h4>
-            <p>Quantity: ${project.quantity} m³</p>
-            <p>Material Cost: GHS ${project.materialCost}</p>
-            <p>Labor Cost: GHS ${project.laborCost}</p>
-            <p>Plant Cost: GHS ${project.plantCost}</p>
-            <p>Total Cost: GHS ${project.totalCost}</p>
-            <p>Date: ${project.date}</p>
-        `;
-        projectList.appendChild(projectItem);
-    });
-}*/
-
 async function displayProjects() {
     try {
         const response = await fetch('/api/projects', { credentials: 'include' });
@@ -1705,10 +1994,16 @@ async function displayProjects() {
 
         if (Array.isArray(projects)) {
             projects.forEach(project => {
-                if (!project.total_cost || isNaN(project.total_cost)) {
+                
+                if (
+                    project.total_cost === null ||
+                    project.total_cost === undefined ||
+                    isNaN(project.total_cost)
+                ) {
                     console.error("Invalid project data:", project);
-                    return; // Skip invalid projects
+                    return; // Skip truly invalid projects
                 }
+                
                 const projectItem = document.createElement('div');
                 projectItem.classList.add('project-item');
                 projectItem.innerHTML = `
@@ -1775,52 +2070,6 @@ async function saveProjectState() {
         body: JSON.stringify({ components })
     });
 }
-
-/*document.getElementById('save-project-btn').addEventListener('click', async function () {
-    const projectName = prompt("Enter a name for this project:");
-    if (!projectName) {
-        alert("Project name is required.");
-        return;
-    }
-
-    // Collect all results
-    const results = document.querySelectorAll('.result-item');
-    let totalCost = 0;
-
-    results.forEach(result => {
-        const materialCost = parseFloat(result.querySelector('p:nth-child(3)').textContent.split(': ')[1].replace('GHS ', ''));
-        const laborCost = parseFloat(result.querySelector('p:nth-child(5)').textContent.split(': ')[1].replace('GHS ', ''));
-        const plantCost = parseFloat(result.querySelector('p:nth-child(6)').textContent.split(': ')[1].replace('GHS ', ''));
-        totalCost += materialCost + laborCost + plantCost;
-    });
-
-    // Save the project ONCE
-    try {
-        await saveProject({
-            project_name: projectName,
-            total_cost: totalCost
-        });
-        alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
-        displayProjects();
-    } catch (e) {
-        alert("Failed to save project.");
-    }
-});*/
-
-/*// Function to classify a component
-function classifyComponent(component) {
-    const workSection = Object.keys(SMM7_CATEGORIES).find((section) =>
-        SMM7_CATEGORIES[section].components.includes(component)
-    );
-    // Debug log:
-    console.log(`[classifyComponent] "${component}" mapped to section "${workSection}"`);
-    return {
-        workSection: workSection || "Z. Unclassified Works",
-        mainCategory: workSection
-            ? SMM7_CATEGORIES[workSection].mainCategory
-            : "Other",
-    };
-}*/
 
 // --- Update calculateCompositeRate to use inputs for special-case logic
 async function calculateCompositeRate(componentType, quantity, inputs = {}) {
@@ -1981,46 +2230,6 @@ async function generateSMM7BOQ() {
     }
 }
 
-/*function validateBOQStructure() {
-    const errors = [];
-    
-    // Validate work sections
-    Object.entries(boqData.workSections).forEach(([sectionKey, section]) => {
-        if (!SMM7_CATEGORIES[sectionKey]) {
-            errors.push(`Invalid work section: ${sectionKey}`);
-        }
-        
-        // Validate items
-        section.items.forEach(item => {
-            if (!COMPONENT_TO_FORMULA_MAP[item.category]) {
-                errors.push(`Unmapped component: ${item.category}`);
-            }
-            if (isNaN(item.quantity)) {
-                errors.push(`Invalid quantity for ${item.category}`);
-            }
-            if (isNaN(item.rate)) {
-                errors.push(`Invalid rate for ${item.category}`);
-            }
-            if (isNaN(item.total)) {
-                errors.push(`Invalid total cost for ${item.category}`);
-            }
-        });
-    });
-
-    // Validate main categories
-    Object.keys(boqData.mainCategories).forEach(category => {
-        if (!['Substructure', 'Superstructure', 'Other'].includes(category)) {
-            errors.push(`Invalid main category: ${category}`);
-        }
-    });
-
-    if (errors.length > 0) {
-        console.error("BOQ Validation Errors:\n- " + errors.join("\n- "));
-        return false;
-    }
-    return true;
-}*/
-
 // Only Preliminaries are compulsory. All Preliminaries items must be present (even if amount 0).
 // Other bills/items are optional and not validated for presence or content.
 function validateBOQStructure() {
@@ -2154,37 +2363,6 @@ function getProjectIdFromUrl() {
     const params = new URLSearchParams(window.location.search);
     return params.get('project_id');
 }
-
-/*async function loadProjectData() {
-    const projectId = getProjectIdFromUrl();
-    if (!projectId) return;
-    const res = await fetch(`/api/projects/${projectId}`, { credentials: 'include' });
-    if (!res.ok) return;
-    const project = await res.json();
-    // Populate UI with project.components
-    project.components.forEach(comp => {
-        // For each component, set selected, fill inputs, and trigger calculation
-        // You need to implement this logic based on your UI structure
-    });
-}
-document.addEventListener('DOMContentLoaded', loadProjectData);*/
-
-// static/js/dashboard.js
-async function loadRecentActivity() {
-  const response = await fetch('/api/activity', { credentials: 'include' });
-  const activities = await response.json();
-  const feed = document.getElementById('activity-list');
-  feed.innerHTML = '';
-  activities.forEach(activity => {
-    feed.innerHTML += `
-      <div class="activity-item">
-        <small>${new Date(activity.timestamp).toLocaleString()}</small>
-        <p>${activity.description}</p>
-      </div>
-    `;
-  });
-}
-document.addEventListener('DOMContentLoaded', loadRecentActivity);
 
 // --- Modal logic for BOQ export (bill-centric, with Preliminaries validation) ---
 console.log('[BOQ Modal] Initializing modal export logic');

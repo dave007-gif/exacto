@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from flask_cors import CORS
 import requests
 from dotenv import load_dotenv
+import json
 
 # Load environment variables from .env file
 load_dotenv()
@@ -100,10 +101,12 @@ def init_db():
             rates_timestamp TEXT,
             calculation_data TEXT, -- JSON blob of all components/inputs/results
             component_data TEXT,   -- JSON blob for component-level data
+            project_details TEXT,  -- JSON blob for project/company details
             last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
+
 
     # Sources table
     cursor.execute('''
@@ -747,7 +750,7 @@ def api_get_project(project_id):
         cursor = conn.cursor()
         cursor.execute('''
             SELECT id, project_name, project_location, supplier_location,
-                   total_cost, formula_version, rates_timestamp, calculation_data, last_modified
+                   total_cost, formula_version, rates_timestamp, calculation_data, last_modified, project_details
             FROM Projects
             WHERE id = ? AND user_id = ?
         ''', (project_id, request.user_id))
@@ -755,8 +758,15 @@ def api_get_project(project_id):
     if not row:
         return jsonify({'message': 'Project not found'}), 404
     keys = ['id', 'project_name', 'project_location', 'supplier_location',
-            'total_cost', 'formula_version', 'rates_timestamp', 'calculation_data', 'last_modified']
-    return jsonify(dict(zip(keys, row)))
+            'total_cost', 'formula_version', 'rates_timestamp', 'calculation_data', 'last_modified', 'project_details']
+    project = dict(zip(keys, row))
+    # Parse project_details JSON if present
+    if project.get('project_details'):
+        try:
+            project['project_details'] = json.loads(project['project_details'])
+        except Exception:
+            project['project_details'] = None
+    return jsonify(project)
 
 @app.route('/api/projects/<int:project_id>', methods=['PUT'])
 @role_required('professional', 'firm')
@@ -1016,6 +1026,41 @@ def api_list_projects():
             for row in cursor.fetchall()
         ]
     return jsonify({'projects': projects})
+
+# --- API to update project details ---
+@app.route('/api/projects/<int:project_id>/details', methods=['PUT'])
+@token_required
+def update_project_details(project_id):
+    data = request.json
+    # Validate required fields
+    required = ['companyName', 'companyAddress', 'contactInfo', 'projectTitle', 'clientName']
+    if not all(data.get(k) for k in required):
+        return jsonify({'message': 'Missing required project/company details'}), 400
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            UPDATE Projects
+            SET project_details = ?, last_modified = CURRENT_TIMESTAMP
+            WHERE id = ? AND user_id = ?
+        ''', (json.dumps(data), project_id, request.user_id))
+        conn.commit()
+    return jsonify({'message': 'Project details updated'})
+
+# --- API to get project details ---
+@app.route('/api/projects/<int:project_id>/details', methods=['GET'])
+@token_required
+def get_project_details(project_id):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT project_details FROM Projects
+            WHERE id = ? AND user_id = ?
+        ''', (project_id, request.user_id))
+        row = cursor.fetchone()
+    if not row or not row[0]:
+        return jsonify({'message': 'No project/company details found'}), 404
+    return jsonify(json.loads(row[0]))
 
 if __name__ == '__main__':
     app.run(debug=True)
