@@ -53,6 +53,65 @@ let projectFormulaVersion = null;
 let autoSaveTimer = null;
 let lastSavedData = null;
 
+// --- Project Details Banner/Editing Logic ---
+function updateProjectDetailsUI() {
+    const details = boqData.projectDetails;
+    const banner = document.getElementById('project-details-banner');
+    const summary = document.getElementById('project-details-summary');
+    const title = document.getElementById('summary-project-title');
+    const client = document.getElementById('summary-client-name');
+    const company = document.getElementById('summary-company-name');
+
+    if (details && details.companyName && details.projectTitle && details.clientName) {
+        // Show summary, hide banner
+        if (banner) banner.style.display = 'none';
+        if (summary) summary.style.display = '';
+        if (title) title.textContent = details.projectTitle;
+        if (client) client.textContent = details.clientName;
+        if (company) company.textContent = details.companyName;
+    } else {
+        // Show banner, hide summary
+        if (banner) banner.style.display = '';
+        if (summary) summary.style.display = 'none';
+    }
+}
+
+// Attach edit button logic (both in banner and summary)
+function setupEditProjectDetailsButtons() {
+    const editBtns = [
+        document.getElementById('edit-project-details-btn'),
+        document.getElementById('edit-project-details-btn2')
+    ];
+    editBtns.forEach(btn => {
+        if (btn) {
+            btn.onclick = function() {
+                // Pre-fill modal if possible
+                const details = boqData.projectDetails || {};
+                document.getElementById('company-name').value = details.companyName || '';
+                document.getElementById('company-address').value = details.companyAddress || '';
+                document.getElementById('contact-info').value = details.contactInfo || '';
+                document.getElementById('project-title').value = details.projectTitle || '';
+                document.getElementById('client-name').value = details.clientName || '';
+                document.getElementById('project-phase').value = details.projectPhase || '';
+                showProjectDetailsModal();
+            };
+        }
+    });
+}
+
+// Call this after any details change or on page load
+function refreshProjectDetailsUI() {
+    updateProjectDetailsUI();
+    setupEditProjectDetailsButtons();
+}
+
+// --- Patch: After setting project details, update UI ---
+function setProjectDetailsAndUI(details) {
+    setProjectDetails(details);
+    boqData.projectDetails = details;
+    refreshProjectDetailsUI();
+}
+
 // --- Project Details Modal Logic ---
 
 // Add these utility functions to your script.js
@@ -114,38 +173,44 @@ function isProjectDetailsSavedFlag(projectId) {
     return !!localStorage.getItem(`projectDetailsSaved_${id}`);
 }
 
+// --- Patch: Use setProjectDetailsAndUI everywhere you set details ---
 async function loadProjectDetailsWithLoading(projectId) {
   showLoading();
   try {
     const details = await fetchProjectDetails(projectId);
     console.log('Fetched project details:', details);
-    
-    // Updated modal logic with robust checks
-    if (details && 
-        typeof details === 'object' && 
-        Object.keys(details).length > 0 &&
-        details.companyName && 
-        details.projectTitle && 
-        details.clientName
+
+    if (
+      details &&		
+      typeof details === 'object' &&
+      Object.keys(details).length > 0 &&
+      details.companyName &&
+      details.projectTitle &&
+      details.clientName
     ) {
-      setProjectDetails(details); // <-- ADD THIS LINE  
+      setProjectDetailsAndUI(details); // <-- Use new function
       console.log('Project details complete - hiding modal');
       hideProjectDetailsModal();
       clearProjectDetailsSavedFlag(projectId);
     } else {
+      boqData.projectDetails = details || {};
+      refreshProjectDetailsUI();
       console.warn('Incomplete project details - showing modal');
-      showProjectDetailsModal();
+      // Don't force modal here; let user edit via banner/button
     }
-    
+
     return details;
   } catch (error) {
     console.error("Project details load failed", error);
-    showProjectDetailsModal();
+    boqData.projectDetails = {};
+    refreshProjectDetailsUI();
+    // Don't force modal here
     return null;
   } finally {
     hideLoading();
   }
 }
+
 
 // Define your standard bill template (ACECoR/SMM7 style)
 const billTemplate = [
@@ -673,12 +738,41 @@ let haulageMultiplier = 1.0;
 
 export async function generateBOQPDF() {
     console.log('[generateBOQPDF] Starting PDF generation...');
-    // Enforce project details
-    const details = boqData.projectDetails;
-    if (!details || !details.companyName || !details.projectTitle || !details.clientName) {
-        showProjectDetailsModal();
-        alert('Please fill in project details before exporting BOQ.');
-        return;
+
+    // Always fetch latest details from backend before generating BOQ
+    let details = null;
+    if (currentProjectId) {
+        details = await fetchProjectDetails(currentProjectId);
+        if (details && details.companyName && details.projectTitle && details.clientName) {
+            boqData.projectDetails = details;
+        } else {
+            // Pre-fill modal if possible
+            const d = boqData.projectDetails || {};
+            document.getElementById('company-name').value = d.companyName || '';
+            document.getElementById('company-address').value = d.companyAddress || '';
+            document.getElementById('contact-info').value = d.contactInfo || '';
+            document.getElementById('project-title').value = d.projectTitle || '';
+            document.getElementById('client-name').value = d.clientName || '';
+            document.getElementById('project-phase').value = d.projectPhase || '';
+            showProjectDetailsModal();
+            alert('Please fill in project details before exporting BOQ.');
+            return;
+        }
+    } else {
+        // No project ID, fallback to local data
+        details = boqData.projectDetails;
+        if (!details || !details.companyName || !details.projectTitle || !details.clientName) {
+            const d = boqData.projectDetails || {};
+            document.getElementById('company-name').value = d.companyName || '';
+            document.getElementById('company-address').value = d.companyAddress || '';
+            document.getElementById('contact-info').value = d.contactInfo || '';
+            document.getElementById('project-title').value = d.projectTitle || '';
+            document.getElementById('client-name').value = d.clientName || '';
+            document.getElementById('project-phase').value = d.projectPhase || '';
+            showProjectDetailsModal();
+            alert('Please fill in project details before exporting BOQ.');
+            return;
+        }
     }
 
     try {
@@ -687,35 +781,71 @@ export async function generateBOQPDF() {
             alert("No BOQ data available to generate PDF.");
             return;
         }
-        // --- PDFLib setup ---
         const { PDFDocument, StandardFonts, rgb } = PDFLib;
         const pdfDoc = await PDFDocument.create();
         const pageSize = [595, 842];
         const margin = 40;
-        // 1. Wider description column and padding
-        const colWidths = [40, 260, 45, 40, 65, 65]; // Adjust as needed
-        const descPadding = 6; // Padding for description column
+        const colWidths = [40, 260, 45, 40, 65, 65];
+        const descPadding = 6;
 
         // --- Embed fonts ---
         const normalFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-        // --- Helper: Draw vertical column lines (with double lines for outer columns) ---
-        function drawColumnLines(page, yTop, yBottom) {
-            let x = margin;
-            for (let i = 0; i <= colWidths.length; i++) {
-                const isOuter = (i === 0 || i === colWidths.length);
-                if (isOuter) {
-                    // Double line for outer columns
-                    page.drawLine({ start: { x, y: yTop }, end: { x, y: yBottom }, thickness: 1.2, color: rgb(0,0,0) });
-                    page.drawLine({ start: { x: x + 2, y: yTop }, end: { x: x + 2, y: yBottom }, thickness: 1.2, color: rgb(0,0,0) });
-                } else {
-                    // Single line for inner columns
-                    page.drawLine({ start: { x, y: yTop }, end: { x, y: yBottom }, thickness: 0.5, color: rgb(0,0,0) });
-                }
-                x += colWidths[i] || 0;
-            }
+        // --- Helper: Draw underlined, centered text ---
+        function drawCenteredUnderlinedText(page, text, y, font, fontSize) {
+            const textWidth = font.widthOfTextAtSize(text, fontSize);
+            const x = (pageSize[0] - textWidth) / 2;
+            page.drawText(text, { x, y, size: fontSize, font, color: rgb(0,0,0) });
+            // Underline
+            page.drawLine({
+                start: { x, y: y - 2 },
+                end: { x: x + textWidth, y: y - 2 },
+                thickness: 1,
+                color: rgb(0,0,0)
+            });
         }
+
+        // --- Helper: Draw header/footer on each page ---
+        function drawHeaderFooter(page, yStart, billNo, pageNo) {
+            const d = boqData.projectDetails || {};
+            let y = yStart;
+            // Company name (bold)
+            page.drawText(d.companyName || '', { x: margin, y, size: 11, font: boldFont, color: rgb(0,0,0) });
+            y -= 13;
+            // Company address
+            (d.companyAddress || '').split('\n').forEach(line => {
+                page.drawText(line, { x: margin, y, size: 9, font: normalFont, color: rgb(0,0,0) });
+                y -= 11;
+            });
+            // Contact info
+            page.drawText(d.contactInfo || '', { x: margin, y, size: 9, font: normalFont, color: rgb(0,0,0) });
+            // Bill No. and Page No. (right-aligned)
+            const billText = billNo ? `Bill No: ${billNo}` : '';
+            const pageText = `Page ${pageNo}`;
+            const rightText = [billText, pageText].filter(Boolean).join('   ');
+            const rightTextWidth = normalFont.widthOfTextAtSize(rightText, 9);
+            page.drawText(rightText, { x: pageSize[0] - margin - rightTextWidth, y: yStart, size: 9, font: normalFont, color: rgb(0,0,0) });
+        }
+
+        // --- Helper: Draw project title (centered, bold, underlined) ---
+        function drawProjectTitle(page, y) {
+            const d = boqData.projectDetails || {};
+            drawCenteredUnderlinedText(page, d.projectTitle || '', y, boldFont, 15);
+            return y - 22;
+        }
+
+        // --- Helper: Draw project phase (centered, bold, underlined) ---
+        function drawProjectPhase(page, y) {
+            const d = boqData.projectDetails || {};
+            if (d.projectPhase) {
+                drawCenteredUnderlinedText(page, d.projectPhase, y, boldFont, 12);
+                return y - 18;
+            }
+            return y;
+        }
+
+        // ...inside generateBOQPDF, before drawTableHeader...
 
         // --- Helper: Draw double horizontal line ---
         function drawDoubleHorizontalLine(page, y) {
@@ -723,34 +853,29 @@ export async function generateBOQPDF() {
             page.drawLine({ start: { x: margin, y }, end: { x: margin + totalWidth, y }, thickness: 1.2, color: rgb(0,0,0) });
             page.drawLine({ start: { x: margin, y: y - 2 }, end: { x: margin + totalWidth, y: y - 2 }, thickness: 1.2, color: rgb(0,0,0) });
         }
+        // ...inside generateBOQPDF, before drawTableHeader...
 
-        // --- Header function (unchanged) ---
-        function drawHeader(page, yStart) {
-            let y = yStart;
-            const d = boqData.projectDetails || {};
-            page.drawText(d.companyName || '', { x: margin, y, size: 12, color: rgb(0,0,0) });
-            y -= 15;
-            (d.companyAddress || '').split('\n').forEach(line => {
-                page.drawText(line, { x: margin, y, size: fontSize, color: rgb(0,0,0) });
-                y -= 12;
-            });
-            page.drawText(d.contactInfo || '', { x: margin, y, size: fontSize });
-            y -= 15;
-            page.drawText(d.projectTitle || '', { x: margin, y, size: 13, color: rgb(0,0,0) });
-            y -= 15;
-            page.drawText(`FOR ${d.clientName || ''}`, { x: margin, y, size: 12, color: rgb(0,0,0) });
-            y -= 15;
-            page.drawText(d.projectPhase || '', { x: margin, y, size: 11, color: rgb(0,0,0) });
-            y -= 20;
-            return y;
+        // --- Helper: Draw vertical column lines for the table area ---
+        function drawColumnLines(page, yTop, yBottom) {
+            let x = margin;
+            for (let i = 0; i < colWidths.length + 1; i++) {
+                page.drawLine({
+                    start: { x, y: yTop },
+                    end: { x, y: yBottom },
+                    thickness: 0.7,
+                    color: rgb(0,0,0)
+                });
+                if (i < colWidths.length) x += colWidths[i];
+            }
         }
+
 
         // --- Table header with double horizontal line below ---
         function drawTableHeader(page, y) {
             const headers = ["ITEM", "DESCRIPTION", "QTY", "UNIT", "RATE (GHe)", "AMOUNT (GHe)"];
             let x = margin;
             headers.forEach((h, i) => {
-                page.drawText(h, { x, y, size: fontSize, color: rgb(0,0,0) });
+                page.drawText(h, { x, y, size: 10, font: boldFont, color: rgb(0,0,0) });
                 x += colWidths[i];
             });
             // Draw double horizontal line below header
@@ -759,6 +884,7 @@ export async function generateBOQPDF() {
             drawColumnLines(page, y + 3, y - 15);
             return y - 15;
         }
+
 
         // 2. Word-wrap helper
         function wrapText(text, font, fontSize, maxWidth) {
@@ -830,25 +956,68 @@ export async function generateBOQPDF() {
         // --- PDF page and yPos setup ---
         let page = pdfDoc.addPage(pageSize);
         let fontSize = 10;
-        let yPos = pageSize[1] - margin; // <-- Initialize yPos at the start
+        let yPos = pageSize[1] - margin;
+
+        // --- Draw project title at the top of the first page ---
+        yPos = drawProjectTitle(page, yPos);
+
+        let pageNo = 1;
+        let isFirstBill = true; // Add this before the loop
 
         // --- Draw each bill ---
         for (const bill of boqData.bills) {
             if (!bill || !bill.items) continue;
-            if (yPos < 120) {
+
+            // --- Always start each bill on a new page (except the first) ---
+            if (!isFirstBill) {
+                // Footer for previous page
+                page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+                page.drawText(`Page ${++pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+
+                // New page for new bill
                 page = pdfDoc.addPage(pageSize);
-                yPos = drawHeader(page, pageSize[1] - margin);
+                yPos = pageSize[1] - margin;
             }
-            page.drawText(`BILL No. ${bill.billNo || ''}: ${bill.title || ''}`, { x: margin, y: yPos, size: 11, color: rgb(0,0,0) });
-            yPos -= 18;
+            isFirstBill = false;
+
+            // Draw header/footer for each new page
+            drawHeaderFooter(page, pageSize[1] - margin + 10, bill.billNo, pageNo);
+
+            // Draw project phase above bill heading
+            yPos = drawProjectPhase(page, yPos);
+
+            // Bill heading (bold, underlined)
+            let billHeading = `BILL No. ${bill.billNo || ''}: ${bill.title || ''}`;
+            drawCenteredUnderlinedText(page, billHeading, yPos, boldFont, 12);
+            yPos -= 20;
+
             yPos = drawTableHeader(page, yPos);
 
             let itemCodeChar = 0;
             for (const item of bill.items) {
                 if (!item) continue;
-                if (yPos < 60) {
+                if (yPos < 80) {
+                    // Footer for previous page
+                    page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+                    page.drawText(`Page ${++pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+
+                    // New page
                     page = pdfDoc.addPage(pageSize);
-                    yPos = drawHeader(page, pageSize[1] - margin);
+                    yPos = pageSize[1] - margin;
+
+                    // Header/footer for new page
+                    drawHeaderFooter(page, pageSize[1] - margin + 10, bill.billNo, pageNo);
+
+                    // Project title only on first page
+                    if (pageNo === 1) yPos = drawProjectTitle(page, yPos);
+
+                    // Project phase above bill heading
+                    yPos = drawProjectPhase(page, yPos);
+
+                    // Bill heading
+                    drawCenteredUnderlinedText(page, billHeading, yPos, boldFont, 12);
+                    yPos -= 20;
+
                     yPos = drawTableHeader(page, yPos);
                     itemCodeChar = 0;
                 }
@@ -887,6 +1056,10 @@ export async function generateBOQPDF() {
         page.drawText(`TOTAL ESTIMATE`, { x: margin, y: yPos, size: fontSize, color: rgb(0,0,0) });
         page.drawText(grandTotal.toFixed(2), { x: margin + 420, y: yPos, size: fontSize, color: rgb(0,0,0) });
 
+        // Footer for last page
+        page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+        page.drawText(`Page ${pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+
         // Download (unchanged)
         try {
             const pdfBytes = await pdfDoc.save();
@@ -895,7 +1068,7 @@ export async function generateBOQPDF() {
             link.href = URL.createObjectURL(blob);
             link.download = `BOQ-${(boqData.projectDetails.projectTitle || 'Project')}.pdf`;
             link.click();
-            alert("BOQ Report has been successfully generated!"); // <-- Success alert only here
+            alert("BOQ Report has been successfully generated!");
         } catch (err) {
             console.error('[generateBOQPDF] Error saving or downloading PDF:', err);
             alert('Failed to generate or download PDF. See console for details.');
@@ -905,6 +1078,7 @@ export async function generateBOQPDF() {
         alert("Failed to generate BOQ PDF. See console for details.");
     }
 }
+
 
 // Save project/company details to backend
 export async function saveProjectDetails(projectId, details) {
@@ -969,6 +1143,7 @@ export async function fetchProjectDetails(projectId) {
 
 document.addEventListener('DOMContentLoaded', async function () {
     console.log("DOMContentLoaded event fired");
+    refreshProjectDetailsUI();
     try {
         await checkAuthentication();
         const userRoles = await fetchUserRoles();
@@ -1020,27 +1195,16 @@ document.addEventListener('DOMContentLoaded', async function () {
                     console.error('[RestoreProject] Failed to fetch project. Status:', res.status);
                 }
                 
-                // Load project details WITH LOADING HANDLER
-                console.log('[ProjectDetailsModal] Checking flag for projectId:', currentProjectId, 
-                            'Flag:', isProjectDetailsSavedFlag(currentProjectId));
-
-                if (isProjectDetailsSavedFlag(currentProjectId)) {
-                    hideProjectDetailsModal();
-                }
-                
                 // USE THE NEW LOADING FUNCTION HERE
                 await loadProjectDetailsWithLoading(currentProjectId);
                 
             } catch (error) {
                 console.error('Project load error:', error);
-                showProjectDetailsModal();
+                //showProjectDetailsModal();
             } finally {
                 hideLoading(); // Hide spinner when done
             }
-        } else {
-            // No project ID - show modal immediately
-            showProjectDetailsModal();
-        }
+        } 
 
         displayProjects();
 
@@ -1053,98 +1217,6 @@ document.addEventListener('DOMContentLoaded', async function () {
     // Add this at the end of your DOMContentLoaded handler
 window.addEventListener('resize', centerProjectDetailsModal);
 });
-/*document.addEventListener('DOMContentLoaded', async function () {
-    console.log("DOMContentLoaded event fired");
-    try {
-        await checkAuthentication();
-        const userRoles = await fetchUserRoles();
-        console.log("User roles:", userRoles);
-        console.log("User roles array:", userRoles, typeof userRoles[0]); // <-- Add here
-        checkRoleVisibility(userRoles);
-
-        await loadLocations();
-        await checkFormulaVersion();
-        await fetchInitialRates();
-
-        setupInputValidation();
-        setupComponentDropdown();
-        setupCalculateButtons();
-        setupSaveProjectButton();
-        // REMOVE or COMMENT OUT this line:
-        // setupGenerateBOQButton();
-        setupLogoutButton();
-
-        // On page load, restore project if project_id is present
-        const params = new URLSearchParams(window.location.search);
-        currentProjectId = params.get('project_id');
-        console.log('[RestoreProject] URL params:', Array.from(params.entries()));
-        if (currentProjectId) {
-            console.log('[RestoreProject] Found project_id:', currentProjectId);
-            // Fetch project
-            const res = await fetch(`/api/projects/${currentProjectId}`, { credentials: 'include' });
-            console.log('[RestoreProject] Fetch response:', res);
-            if (res.ok) {
-                const project = await res.json();
-                console.log('[RestoreProject] Loaded project:', project);
-                projectFormulaVersion = project.formula_version;
-                lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
-                console.log('[RestoreProject] Parsed calculation_data:', lastSavedData);
-                restoreCalculationUI(lastSavedData);
-
-                // Version warning
-                currentFormulaVersion = await fetchCurrentFormulaVersion();
-                if (projectFormulaVersion !== currentFormulaVersion) {
-                    showVersionWarning(projectFormulaVersion, currentFormulaVersion);
-                }
-            } else {
-                alert('Could not load project.');
-                console.error('[RestoreProject] Failed to fetch project. Status:', res.status);
-            }
-        }
-
-        displayProjects();
-
-        // Enforce project context
-        if (currentProjectId) {
-            // --- Optimistically hide modal if localStorage flag is set ---
-            console.log('[ProjectDetailsModal] Checking flag for projectId:', currentProjectId, 'Flag:', isProjectDetailsSavedFlag(currentProjectId));
-
-            if (isProjectDetailsSavedFlag(currentProjectId)) {
-                hideProjectDetailsModal();
-            }
-            try {
-                const details = await fetchProjectDetails(currentProjectId);
-                console.log('Fetched project details:', details);
-                // Replace the details check with:
-                console.log('Checking project details:', details);
-                if (details && 
-                    typeof details === 'object' && 
-                    Object.keys(details).length > 0 &&
-                    details.companyName && 
-                    details.projectTitle && 
-                    details.clientName
-                ) {
-                    hideProjectDetailsModal();
-                    clearProjectDetailsSavedFlag(currentProjectId);
-                } else {
-                    console.warn('Incomplete project details - showing modal');
-                    showProjectDetailsModal();
-                }
-            } catch (err) {
-                showProjectDetailsModal();
-            }
-        } else {
-            showProjectDetailsModal();
-        }
-
-
-
-
-    } catch (error) {
-        console.error("Initialization failed:", error);
-        alert("A critical error occurred during initialization. Please reload the page.");
-    }
-});*/
 
 // --- Modularized Functions ---
 
@@ -1704,6 +1776,30 @@ function setupSaveProjectButton() {
     });
 }
 
+// --- Add these lines near the top (after your imports) ---
+let pendingBOQExportFn = null;
+
+// --- PATCH handleBOQExport to set pending export if details missing ---
+async function handleBOQExport(exportFn) {
+    prepareBOQForExport();
+    const errors = validateBOQ();
+    if (errors.length > 0) {
+        alert("BOQ Validation Error:\n" + errors.join('\n'));
+        return;
+    }
+    // Check if project details are filled
+    const details = boqData.projectDetails;
+    if (!details || !details.companyName || !details.projectTitle || !details.clientName) {
+        pendingBOQExportFn = exportFn; // Save for later
+        // Show modal (will be shown by generateBOQPDF, but ensure here too)
+        showProjectDetailsModal();
+        alert('Please fill in project details before exporting BOQ.');
+        return;
+    }
+    await exportFn();
+}
+
+// --- PATCH your save-and-continue-project-details handler ---
 document.getElementById('save-and-continue-project-details').onclick = async function() {
     const details = {
         companyName: document.getElementById('company-name').value.trim(),
@@ -1718,7 +1814,7 @@ document.getElementById('save-and-continue-project-details').onclick = async fun
         alert('Please fill all required fields.');
         return;
     }
-    boqData.projectDetails = details;
+    setProjectDetailsAndUI(details);
 
     try {
         // If no project ID, create a new project first
@@ -1736,6 +1832,9 @@ document.getElementById('save-and-continue-project-details').onclick = async fun
             const project = await response.json();
             currentProjectId = project.id || project.project_id || project._id;
         }
+
+        setProjectDetailsSavedFlag(currentProjectId);
+
         console.log('[ProjectDetailsModal] Setting flag for projectId:', currentProjectId);
         
         // Now save the project details
@@ -1743,10 +1842,28 @@ document.getElementById('save-and-continue-project-details').onclick = async fun
         await saveProjectDetails(currentProjectId, boqData.projectDetails);
 
         // --- Set the localStorage flag ---
-        setProjectDetailsSavedFlag(currentProjectId);
+        //setProjectDetailsSavedFlag(currentProjectId);
+
+        // --- Always fetch latest details from backend and update UI ---
+        const latestDetails = await fetchProjectDetails(currentProjectId);
+        if (latestDetails && latestDetails.companyName && latestDetails.projectTitle && latestDetails.clientName) {
+            boqData.projectDetails = latestDetails;
+            refreshProjectDetailsUI();
+        }
 
         alert('Project details saved!');
-        window.location.href = `/calculation?project_id=${currentProjectId}`;
+        hideProjectDetailsModal();
+        refreshProjectDetailsUI();
+        // Do NOT redirect/reload here; just update UI
+
+        // --- PATCH: Resume pending export if set ---
+        if (pendingBOQExportFn) {
+            const fn = pendingBOQExportFn;
+            pendingBOQExportFn = null;
+            await fn();
+        }
+
+
     } catch (err) {
         alert('Failed to save project details to backend.');
     }
@@ -1978,6 +2095,7 @@ function clearInvalidProjects() {
 }
 clearInvalidProjects();
 
+// --- Patch: Mark incomplete projects in project list ---
 async function displayProjects() {
     try {
         const response = await fetch('/api/projects', { credentials: 'include' });
@@ -1994,20 +2112,12 @@ async function displayProjects() {
 
         if (Array.isArray(projects)) {
             projects.forEach(project => {
-                
-                if (
-                    project.total_cost === null ||
-                    project.total_cost === undefined ||
-                    isNaN(project.total_cost)
-                ) {
-                    console.error("Invalid project data:", project);
-                    return; // Skip truly invalid projects
-                }
-                
+                const incomplete = !project.companyName || !project.projectTitle || !project.clientName;
                 const projectItem = document.createElement('div');
                 projectItem.classList.add('project-item');
+                if (incomplete) projectItem.classList.add('incomplete');
                 projectItem.innerHTML = `
-                    <h4>${project.project_name}</h4>
+                    <h4>${project.project_name || project.projectTitle || 'Untitled Project'}</h4>
                     <p>Total Cost: GHS ${project.total_cost}</p>
                     <p>Date: ${project.last_modified || ''}</p>
                 `;
@@ -2020,6 +2130,7 @@ async function displayProjects() {
         console.error("Error displaying projects:", error);
     }
 }
+
 
 // Modified project saving with locations
 async function saveProject(projectData) {
@@ -2222,7 +2333,7 @@ async function generateSMM7BOQ() {
         calculateSummary();
 
         await generateBOQPDF();
-        alert("BOQ Report has been successfully generated!");
+        //alert("BOQ Report has been successfully generated!");
 
     } catch (globalError) {
         console.error("BOQ generation failed:", globalError);
@@ -2373,16 +2484,6 @@ const closeModalBtn = document.getElementById('close-boq-modal');
 const pdfBtn = document.getElementById('download-pdf');
 const xlsxBtn = document.getElementById('download-xlsx');
 const csvBtn = document.getElementById('download-csv');
-
-async function handleBOQExport(exportFn) {
-    prepareBOQForExport();
-    const errors = validateBOQ();
-    if (errors.length > 0) {
-        alert("BOQ Validation Error:\n" + errors.join('\n'));
-        return;
-    }
-    await exportFn();
-}
 
 if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
     boqBtn.addEventListener('click', function (e) {

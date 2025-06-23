@@ -10,6 +10,70 @@
     <h1>Welcome to the Calculation Page</h1>
     <p>Here you can calculate building costs.</p>
 
+    <!-- Project Details Banner (hidden by default) -->
+    <div
+      id="project-details-banner"
+      style="
+        display: none;
+        background: #fff3cd;
+        color: #856404;
+        border: 1px solid #ffeeba;
+        padding: 10px;
+        margin-bottom: 15px;
+        border-radius: 5px;
+      "
+    >
+      <span id="project-details-banner-text">
+        Project details are missing.
+        <button
+          id="edit-project-details-btn"
+          style="
+            margin-left: 10px;
+            background: #2196f3;
+            color: #fff;
+            border: none;
+            border-radius: 4px;
+            padding: 5px 15px;
+            cursor: pointer;
+          "
+        >
+          Add Project Details
+        </button>
+      </span>
+    </div>
+
+    <!-- Project Details Summary (shown if details exist) -->
+    <div
+      id="project-details-summary"
+      style="
+        display: none;
+        background: #e3f2fd;
+        color: #0d47a1;
+        border: 1px solid #90caf9;
+        padding: 10px;
+        margin-bottom: 15px;
+        border-radius: 5px;
+      "
+    >
+      <strong>Project:</strong> <span id="summary-project-title"></span> |
+      <strong>Client:</strong> <span id="summary-client-name"></span> |
+      <strong>Company:</strong> <span id="summary-company-name"></span>
+      <button
+        id="edit-project-details-btn2"
+        style="
+          margin-left: 10px;
+          background: #2196f3;
+          color: #fff;
+          border: none;
+          border-radius: 4px;
+          padding: 5px 15px;
+          cursor: pointer;
+        "
+      >
+        Edit
+      </button>
+    </div>
+
     <!-- Currency Selector: Only for professionals/firms -->
     {% if 'professional' in current_user.roles or 'firm' in current_user.roles
     %}
