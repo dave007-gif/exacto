@@ -42,7 +42,7 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     }
 });
 
-// Fetch and display user's projects
+/*// Fetch and display user's projects
 async function loadProjects() {
     const projectList = document.getElementById('project-list');
     if (!projectList) return;
@@ -77,7 +77,56 @@ async function loadProjects() {
     } catch (err) {
         projectList.innerHTML = '<p>Error loading projects.</p>';
     }
+}*/
+
+let currentFilter = 'recent';
+	
+async function loadProjects(filter = 'recent', search = '') {
+    currentFilter = filter;
+    const projectList = document.getElementById('project-list');
+    if (!projectList) return;
+
+    projectList.innerHTML = '<p>Loading projects...</p>';
+
+    let url = `/api/projects?filter=${filter}`;
+    if (search) url += `&search=${encodeURIComponent(search)}`;
+
+    try {
+        const res = await fetch(url, { credentials: 'include' });
+        if (!res.ok) {
+            projectList.innerHTML = '<p>Could not load projects.</p>';
+            return;
+        }
+        const data = await res.json();
+        const projects = data.projects || [];
+
+        if (projects.length === 0) {
+            projectList.innerHTML = '<p>No projects found.</p>';
+            return;
+        }
+
+        projectList.innerHTML = '';
+        projects.forEach(project => {
+            const link = document.createElement('a');
+            link.href = `/calculation?project_id=${project.id}`;
+            link.textContent = `${project.project_name} (Last modified: ${new Date(project.last_modified).toLocaleString()})`;
+            link.className = 'project-link';
+            link.style.display = 'block';
+            projectList.appendChild(link);
+        });
+    } catch (err) {
+        projectList.innerHTML = '<p>Error loading projects.</p>';
+    }
 }
+
+function searchProjects() {
+    const search = document.getElementById('project-search').value;
+    loadProjects(currentFilter, search);
+}
+
+// Load recent projects on page load
+document.addEventListener('DOMContentLoaded', () => loadProjects('recent'));
+
 
 // In dashboard.js
 document.getElementById('create-project-btn').addEventListener('click', async () => {

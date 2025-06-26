@@ -100,9 +100,13 @@ def init_db():
             formula_version TEXT DEFAULT '2023.1',
             rates_timestamp TEXT,
             calculation_data TEXT, -- JSON blob of all components/inputs/results
-            component_data TEXT,   -- JSON blob for component-level data
-            project_details TEXT,  -- JSON blob for project/company details
+            calculation_snapshot TEXT, -- NEW: JSON blob of calculated outputs, prices, etc.
+            component_data TEXT,
+            project_details TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- NEW
             last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
+            starred INTEGER DEFAULT 0,
+            archived INTEGER DEFAULT 0,
             FOREIGN KEY (user_id) REFERENCES users(id)
         )
     ''')
@@ -731,12 +735,12 @@ def api_create_project():
         cursor.execute('''
             INSERT INTO Projects (
                 user_id, project_name, project_location, supplier_location,
-                formula_version, rates_timestamp, calculation_data
+                formula_version, rates_timestamp, calculation_data, total_cost
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             request.user_id, project_name, project_loc, supplier_loc,
-            formula_version, rates_timestamp, calculation_data
+            formula_version, rates_timestamp, calculation_data, data.get('total_cost', 0)
         ))
         project_id = cursor.lastrowid
         conn.commit()
@@ -774,17 +778,26 @@ def api_get_project(project_id):
 def api_update_project(project_id):
     data = request.json
     calculation_data = data.get('calculation_data')
+    calculation_snapshot = data.get('calculation_snapshot')  # NEW
     total_cost = data.get('total_cost')
-    # Optionally allow updating formula_version/rates_timestamp if you want to "recalculate"
-    # But by default, freeze them
+    formula_version = data.get('formula_version', '2023.1')
+    rates_snapshot = data.get('rates_snapshot')  # NEW
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE Projects
-            SET calculation_data = ?, total_cost = ?, last_modified = CURRENT_TIMESTAMP
+            SET calculation_data = ?, calculation_snapshot = ?, total_cost = ?, formula_version = ?, rates_timestamp = ?, last_modified = CURRENT_TIMESTAMP
             WHERE id = ? AND user_id = ?
-        ''', (calculation_data, total_cost, project_id, request.user_id))
+        ''', (
+            calculation_data,
+            calculation_snapshot,
+            total_cost,
+            formula_version,
+            json.dumps(rates_snapshot) if rates_snapshot else None,
+            project_id,
+            request.user_id
+        ))
         conn.commit()
 
     return jsonify({'message': 'Project updated'})
@@ -1010,22 +1023,51 @@ def get_fx_rates():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+# --- 2. ENHANCED PROJECT LIST API ---
 @app.route('/api/projects', methods=['GET'])
-@token_required
+@token_required	
 def api_list_projects():
+    filter_type = request.args.get('filter', 'all')
+    sort = request.args.get('sort', 'last_modified')
+    order = request.args.get('order', 'desc')
+    page = int(request.args.get('page', 1))
+    page_size = int(request.args.get('page_size', 10))
+    offset = (page - 1) * page_size
+
+    # WHERE clause
+    where = "user_id = ?"
+    params = [request.user_id]
+    if filter_type == 'starred':
+        where += " AND starred = 1"
+    elif filter_type == 'archived':
+        where += " AND archived = 1"
+    elif filter_type == 'recent':
+        where += " AND archived = 0"
+    else:
+        where += " AND archived = 0"
+
+    sort_fields = {'name': 'project_name', 'cost': 'total_cost', 'date': 'last_modified'}
+    sort_field = sort_fields.get(sort, 'last_modified')
+    order = 'ASC' if order == 'asc' else 'DESC'
+
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT id, project_name, total_cost, last_modified, formula_version
+        cursor.execute(f'''
+            SELECT id, project_name, total_cost, last_modified, formula_version, starred, archived
             FROM Projects
-            WHERE user_id = ?
-            ORDER BY last_modified DESC
-        ''', (request.user_id,))
+            WHERE {where}
+            ORDER BY {sort_field} {order}
+            LIMIT ? OFFSET ?
+        ''', (*params, page_size, offset))
         projects = [
-            dict(zip(['id', 'project_name', 'total_cost', 'last_modified', 'formula_version'], row))
+            dict(zip(['id', 'project_name', 'total_cost', 'last_modified', 'formula_version', 'starred', 'archived'], row))
             for row in cursor.fetchall()
         ]
-    return jsonify({'projects': projects})
+        cursor.execute(f'SELECT COUNT(*) FROM Projects WHERE {where}', params)
+        total_count = cursor.fetchone()[0]
+
+    return jsonify({'projects': projects, 'total': total_count, 'page': page, 'page_size': page_size})
+
 
 # --- API to update project details ---
 @app.route('/api/projects/<int:project_id>/details', methods=['PUT'])
@@ -1061,6 +1103,26 @@ def get_project_details(project_id):
     if not row or not row[0]:
         return jsonify({'message': 'No project/company details found'}), 404
     return jsonify(json.loads(row[0]))
+
+# --- 3. STAR/ARCHIVE ENDPOINTS ---
+@app.route('/api/projects/<int:project_id>/star', methods=['POST'])
+@token_required
+def star_project(project_id):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE Projects SET starred = 1 WHERE id = ? AND user_id = ?', (project_id, request.user_id))
+        conn.commit()
+    return jsonify({'message': 'Project starred'})
+
+@app.route('/api/projects/<int:project_id>/archive', methods=['POST'])
+@role_required('professional', 'firm')
+def archive_project(project_id):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('UPDATE Projects SET archived = 1 WHERE id = ? AND user_id = ?', (project_id, request.user_id))
+        conn.commit()
+    return jsonify({'message': 'Project archived'})
+
 
 if __name__ == '__main__':
     app.run(debug=True)

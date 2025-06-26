@@ -232,7 +232,7 @@ async function fetchCurrentFormulaVersion() {
     return data.version;
 }
 
-function gatherCalculationData() {
+/*function gatherCalculationData() {
     const data = {};
     // Save global inputs (if any)
     document.querySelectorAll('input, select, textarea').forEach(input => {
@@ -253,10 +253,35 @@ function gatherCalculationData() {
         });
     });
     return data;
+}*/
+
+function gatherCalculationData() {
+    const data = {};
+    // Save global inputs (if any)
+    document.querySelectorAll('input, select, textarea').forEach(input => {
+        if (input.name) data[input.name] = input.value;
+    });
+    // Save selected components
+    const componentSelect = document.getElementById('elements');
+    if (componentSelect) {
+        data.selectedComponents = Array.from(componentSelect.selectedOptions).map(opt => opt.value.toLowerCase());
+    }
+    // Save per-component input data
+    data.componentData = {};
+    document.querySelectorAll('fieldset[data-component]').forEach(fieldset => {
+        const component = fieldset.dataset.component.toLowerCase();
+        data.componentData[component] = {};
+        fieldset.querySelectorAll('input, select').forEach(input => {
+            if (input.name) data.componentData[component][input.name] = input.value;
+        });
+    });
+    return data;
 }
 
+
 async function calculateComponentFromData(componentType, inputs) {
-    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
+    const key = componentType.toLowerCase();
+    const formulaKey = COMPONENT_TO_FORMULA_MAP[key];
     if (!formulaKey || !SMM7_2023[formulaKey]) {
         console.warn(`No formula found for component: ${componentType}`);
         return null;
@@ -349,7 +374,7 @@ async function calculateComponentFromData(componentType, inputs) {
     };
 }
 
-// Show version warning if needed
+/*// Show version warning if needed
 function showVersionWarning(projectVersion, currentVersion) {
     let warning = document.getElementById('version-warning');
     if (!warning) {
@@ -364,6 +389,69 @@ function showVersionWarning(projectVersion, currentVersion) {
     }
     warning.textContent = `Warning: This project uses formula version ${projectVersion}, but the current version is ${currentVersion}. Results are frozen.`;
     warning.style.display = 'block';
+}*/
+
+function showVersionWarning(savedVersion, currentVersion, isSnapshot) {
+    let warning = document.getElementById('version-warning');
+    if (!warning) {
+        warning = document.createElement('div');
+        warning.id = 'version-warning';
+        warning.style.background = '#ffe0b2';
+        warning.style.color = '#b26a00';
+        warning.style.padding = '10px';
+        warning.style.marginBottom = '10px';
+        warning.style.fontWeight = 'bold';
+        document.body.prepend(warning);
+    }
+    warning.innerHTML = isSnapshot
+        ? `This project was calculated with version ${savedVersion}. <button id="recalc-btn">Recalculate with latest formulas/prices</button>`
+        : `Warning: This project uses formula version ${savedVersion}, but the current version is ${currentVersion}. Results are frozen.`;
+    warning.style.display = 'block';
+    if (isSnapshot) {
+        document.getElementById('recalc-btn').onclick = () => {
+            recalculateProject();
+        };
+    }
+}
+
+async function recalculateProject() {
+    // Use current calculation data and recalculate all components
+    const calculationData = gatherCalculationData();
+    const selected = (calculationData.selectedComponents || []).map(c => c.toLowerCase());
+
+    // Clear previous results
+    const output = document.getElementById('output');
+    if (output) output.innerHTML = '';
+
+    if (calculationData.componentData) {
+        for (const component of selected) {
+            const fieldset = document.querySelector(`fieldset[data-component="${component}"]`);
+            if (fieldset) {
+                fieldset.classList.remove('hidden');
+                // Fill inputs for this component
+                const compInputs = calculationData.componentData[component] || {};
+                for (const [name, value] of Object.entries(compInputs)) {
+                    const input = fieldset.querySelector(`[name="${name}"]`);
+                    if (input) input.value = value;
+                }
+            }
+            // Calculate and render result for this component
+            const result = await calculateComponentFromData(component, calculationData.componentData[component] || {});
+            if (result) {
+                renderResultItem(
+                    result.componentType,
+                    result.description,
+                    result.quantity,
+                    result.unit,
+                    result.totalMaterialCost,
+                    result.labor,
+                    result.finalPlantCost,
+                    result.inputs
+                );
+                updateSectionAndGrandTotals();
+            }
+        }
+    }
 }
 
 // Auto-save logic
@@ -372,8 +460,29 @@ function scheduleAutoSave() {
     autoSaveTimer = setTimeout(saveProjectAuto, 2000); // Save 2s after last change
 }
 
-async function saveProjectAuto() {
-    if (!currentProjectId) return;
+/*async function saveProjectAuto() {
+    // If no project yet, create one automatically
+    if (!currentProjectId) {
+        // You can use a default name or prompt the user
+        const projectName = document.getElementById('project-title')?.value || 'Untitled Project';
+        const response = await fetch('/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+                project_name: projectName,
+                total_cost: 0
+            })
+        });
+        if (response.ok) {
+            const project = await response.json();
+            currentProjectId = project.id || project.project_id || project._id;
+        } else {
+            console.error('Failed to auto-create project');
+            return;
+        }
+    }
+
     const calculationData = gatherCalculationData();
     if (JSON.stringify(calculationData) === JSON.stringify(lastSavedData)) return;
     lastSavedData = calculationData;
@@ -396,7 +505,51 @@ async function saveProjectAuto() {
             total_cost: totalCost
         })
     });
+}*/
+
+async function saveProjectAuto() {
+    if (!currentProjectId) return;
+    const calculationData = gatherCalculationData();
+
+    // --- NEW: Gather snapshot ---
+    const calculationSnapshot = {
+        results: Array.from(document.querySelectorAll('.result-item')).map(item => ({
+            type: item.querySelector('h4').textContent,
+            inputs: JSON.parse(item.getAttribute('data-inputs')),
+            outputs: {
+                materialCost: parseFloat(item.getAttribute('data-material-cost')),
+                laborCost: parseFloat(item.getAttribute('data-labor-cost')),
+                plantCost: parseFloat(item.getAttribute('data-plant-cost')),
+            }
+        })),
+        formula_version: currentFormulaVersion,
+        prices: await fetchCurrentPrices(), // Implement this to get current prices used
+        timestamp: new Date().toISOString()
+    };
+
+    // Calculate total cost from result items
+    let totalCost = 0;
+    document.querySelectorAll('.result-item').forEach(result => {
+        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+        totalCost += materialCost + laborCost + plantCost;
+    });
+
+    await fetch(`/api/projects/${currentProjectId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+            calculation_data: JSON.stringify(calculationData),
+            calculation_snapshot: JSON.stringify(calculationSnapshot),
+            total_cost: totalCost,
+            formula_version: currentFormulaVersion,
+            rates_snapshot: calculationSnapshot.prices
+        })
+    });
 }
+
 
 // Prompt on page unload if unsaved changes
 window.addEventListener('beforeunload', (e) => {
@@ -429,7 +582,55 @@ export async function loadProjectDetails(projectId) {
     }
 }
 
-async function restoreCalculationUI(data) {
+async function fetchCurrentPrices() {
+    // --- Materials ---
+    const materials = ['cement', 'sand', 'aggregate', 'blocks', 'mortar', 'water'];
+    const prices = { materials: {}, labor: {}, special: {} };
+
+    for (const mat of materials) {
+        const res = await fetch(`/api/prices/${mat}`, { credentials: 'include' });
+        if (res.ok) {
+            const data = await res.json();
+            prices.materials[mat] = data.unit_cost;
+        }
+    }
+
+    // --- Standard Labor Tasks ---
+    const laborTasks = [
+        'bricklaying',
+        'concreting',
+        'site clearance',
+        'excavation'
+    ];
+    for (const task of laborTasks) {
+        const res = await fetch(`/api/labor/${encodeURIComponent(task)}`, { credentials: 'include' });
+        if (res.ok) {
+            const data = await res.json();
+            prices.labor[task] = data.rate;
+        }
+    }
+
+    // --- Special-case Labor Rates (e.g., tree cutting by girth) ---
+    const treeCuttingBands = [
+        'tree cutting 600-1500',
+        'tree cutting 1500-3000',
+        'tree cutting over 3000'
+    ];
+    prices.special.treeCutting = {};
+    for (const band of treeCuttingBands) {
+        const res = await fetch(`/api/labor/${encodeURIComponent(band)}`, { credentials: 'include' });
+        if (res.ok) {
+            const data = await res.json();
+            prices.special.treeCutting[band] = data.rate;
+        }
+    }
+
+    // --- Add more special-case rates here as needed ---
+
+    return prices;
+}
+
+/*async function restoreCalculationUI(data) {
     if (!data) return;
     // Restore global inputs (if any)
     for (const [key, value] of Object.entries(data)) {
@@ -477,7 +678,174 @@ async function restoreCalculationUI(data) {
             });
         }
     }
+}*/
+
+async function restoreCalculationUI(data, snapshot, projectVersion) {
+    if (!data) return;
+    if (snapshot) {
+        // Render snapshot results (do not recalculate)
+        renderResultsFromSnapshot(snapshot.results);
+        // Show warning if formula_version !== currentFormulaVersion
+        if (snapshot.formula_version !== currentFormulaVersion) {
+            showVersionWarning(snapshot.formula_version, currentFormulaVersion, true);
+            showRecalculateButton();
+        }
+    } else {
+
+        // Restore global inputs (if any)
+        for (const [key, value] of Object.entries(data)) {
+            if (key === "selectedComponents" || key === "componentData") continue;
+            const input = document.querySelector(`[name="${key}"]`);
+            if (input) input.value = value;
+        }
+        // Restore selected components in dropdown
+        const componentSelect = document.getElementById('elements');
+        let selected = (data.selectedComponents || []).map(c => c.toLowerCase());
+        if (componentSelect && selected.length) {
+            Array.from(componentSelect.options).forEach(opt => {
+                opt.selected = selected.includes(opt.value.toLowerCase());
+            });
+            componentSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        // Restore per-component fieldsets and results
+        if (data.componentData) {
+            for (const component of selected) {
+                const fieldset = document.querySelector(`fieldset[data-component="${component}"]`);
+                if (fieldset) {
+                    fieldset.classList.remove('hidden');
+                    // Fill inputs for this component
+                    const compInputs = data.componentData[component] || {};
+                    for (const [name, value] of Object.entries(compInputs)) {
+                        const input = fieldset.querySelector(`[name="${name}"]`);
+                        if (input) input.value = value;
+                    }
+                }
+                // Calculate and render result for this component
+                calculateComponentFromData(component, data.componentData[component] || {}).then(result => {
+                    if (result) {
+                        renderResultItem(
+                            result.componentType,
+                            result.description,
+                            result.quantity,
+                            result.unit,
+                            result.totalMaterialCost,
+                            result.labor,
+                            result.finalPlantCost,
+                            result.inputs
+                        );
+                        updateSectionAndGrandTotals();
+                    }
+                });
+            }
+        }
+    }
 }
+
+function renderResultsFromSnapshot(results) {
+    const output = document.getElementById('output');
+    output.innerHTML = '';
+    results.forEach(result => {
+        renderResultItem(
+            result.type,
+            '', // description if available
+            result.outputs.quantity || 0,
+            result.outputs.unit || '',
+            result.outputs.materialCost,
+            { laborCost: result.outputs.laborCost, totalDays: 0 },
+            result.outputs.plantCost,
+            result.inputs
+        );
+    });
+}
+
+
+// --- PROJECT LIST FILTERING, SORTING, PAGINATION, ROLE-BASED DISPLAY ---
+
+async function fetchProjects({filter='all', sort='date', order='desc', page=1, pageSize=10}) {
+    const params = new URLSearchParams({filter, sort, order, page, page_size: pageSize});
+    const res = await fetch(`/api/projects?${params.toString()}`, {credentials: 'include'});
+    return await res.json();
+}
+
+function getCurrentUserRole() {
+    // You may want to cache/fetch this from /api/profile or template context
+    return window.currentUserRole || 'professional'; // fallback
+}
+
+async function renderProjectList(role) {
+    const filter = document.getElementById('filter-select').value;
+    const sort = document.getElementById('sort-select').value;
+    const order = document.getElementById('order-select').value;
+    const page = parseInt(document.getElementById('page-input').value, 10) || 1;
+
+    // Show loading spinner
+    const list = document.getElementById('project-list');
+    list.innerHTML = '<div class="loading-spinner"><div class="spinner"></div></div>';
+
+    const {projects, total, page_size} = await fetchProjects({filter, sort, order, page, pageSize: 10});
+    list.innerHTML = '';
+
+    projects.forEach(project => {
+        const div = document.createElement('div');
+        div.className = 'project-item' + (project.archived ? ' archived' : '') + (project.starred ? ' starred' : '');
+        div.innerHTML = `<span style="font-weight:bold">${project.project_name}</span>`;
+        if (role !== 'student') {
+            div.innerHTML += `
+                <span style="margin-left:1em;">GHS ${Number(project.total_cost).toLocaleString()}</span>
+                <span style="margin-left:1em;">${new Date(project.last_modified).toLocaleString()}</span>
+                <span style="margin-left:1em;">v${project.formula_version}</span>
+                <button onclick="starProject(${project.id}, this)">${project.starred ? '★' : '☆'}</button>
+                <button onclick="archiveProject(${project.id}, this)">Archive</button>
+            `;
+        } else {
+            div.innerHTML += `<button onclick="showProjectDetails(${project.id})" style="margin-left:1em;">Details</button>`;
+        }
+        list.appendChild(div);
+    });
+
+    renderPaginationControls(page, Math.ceil(total / page_size));
+}
+
+// --- Pagination controls ---
+function renderPaginationControls(currentPage, totalPages) {
+    document.getElementById('page-input').value = currentPage;
+    document.getElementById('prev-page').disabled = currentPage <= 1;
+    document.getElementById('next-page').disabled = currentPage >= totalPages;
+}
+
+// --- Star/Archive handlers ---
+window.starProject = async function(projectId, btn) {
+    await fetch(`/api/projects/${projectId}/star`, {method: 'POST', credentials: 'include'});
+    btn.textContent = '★';
+};
+window.archiveProject = async function(projectId, btn) {
+    await fetch(`/api/projects/${projectId}/archive`, {method: 'POST', credentials: 'include'});
+    btn.closest('.project-item').classList.add('archived');
+};
+
+// --- Details handler for students ---
+window.showProjectDetails = function(projectId) {
+    alert('Show details for project ' + projectId);
+};
+
+// --- Event listeners for controls ---
+['filter-select', 'sort-select', 'order-select'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => renderProjectList(getCurrentUserRole()));
+});
+document.getElementById('prev-page').addEventListener('click', () => {
+    let page = parseInt(document.getElementById('page-input').value, 10) || 1;
+    if (page > 1) {
+        document.getElementById('page-input').value = page - 1;
+        renderProjectList(getCurrentUserRole());
+    }
+});
+document.getElementById('next-page').addEventListener('click', () => {
+    let page = parseInt(document.getElementById('page-input').value, 10) || 1;
+    document.getElementById('page-input').value = page + 1;
+    renderProjectList(getCurrentUserRole());
+});
+document.getElementById('page-input').addEventListener('change', () => renderProjectList(getCurrentUserRole()));
+
 
 function updateSectionAndGrandTotals() {
     const output = document.getElementById('output');
@@ -1151,6 +1519,12 @@ document.addEventListener('DOMContentLoaded', async function () {
         console.log("User roles array:", userRoles, typeof userRoles[0]);
         checkRoleVisibility(userRoles);
 
+        // --- Place here ---
+        let role = userRoles && userRoles[0] || 'professional';
+        window.currentUserRole = role;
+        renderProjectList(role);
+        // --- end placement ---
+
         await loadLocations();
         await checkFormulaVersion();
         await fetchInitialRates();
@@ -1179,11 +1553,12 @@ document.addEventListener('DOMContentLoaded', async function () {
                 console.log('[RestoreProject] Fetch response:', res);
                 if (res.ok) {
                     const project = await res.json();
-                    console.log('[RestoreProject] Loaded project:', project);
                     projectFormulaVersion = project.formula_version;
                     lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
-                    console.log('[RestoreProject] Parsed calculation_data:', lastSavedData);
-                    restoreCalculationUI(lastSavedData);
+                    const calculationSnapshot = project.calculation_snapshot ? JSON.parse(project.calculation_snapshot) : null;
+                    restoreCalculationUI(lastSavedData, calculationSnapshot, projectFormulaVersion);
+                    console.log('[RestoreProject] Project data loaded:', project);
+
 
                     // Version warning
                     currentFormulaVersion = await fetchCurrentFormulaVersion();
@@ -2095,6 +2470,40 @@ function clearInvalidProjects() {
 }
 clearInvalidProjects();
 
+// Modified project saving with locations
+async function saveProject(projectData) {
+    const projectLoc = document.getElementById('project-location').value;
+    const supplierLoc = document.getElementById('supplier-location').value;
+    const calculationData = gatherCalculationData();
+    let totalCost = 0;
+    document.querySelectorAll('.result-item').forEach(result => {
+        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+        totalCost += materialCost + laborCost + plantCost;
+    });
+
+    try {
+        const response = await fetch('/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                ...projectData,
+                project_location: projectLoc,
+                supplier_location: supplierLoc,
+                calculation_data: JSON.stringify(calculationData),
+                total_cost: totalCost
+            }),
+            credentials: 'include'
+        });
+        if (!response.ok) throw new Error('Project save failed');
+        return await response.json();
+    } catch (error) {
+        console.error('Error saving project:', error);
+        throw error;
+    }
+}
+
 // --- Patch: Mark incomplete projects in project list ---
 async function displayProjects() {
     try {
@@ -2128,41 +2537,6 @@ async function displayProjects() {
         }
     } catch (error) {
         console.error("Error displaying projects:", error);
-    }
-}
-
-
-// Modified project saving with locations
-async function saveProject(projectData) {
-    const projectLoc = document.getElementById('project-location').value;
-    const supplierLoc = document.getElementById('supplier-location').value;
-    const calculationData = gatherCalculationData();
-    let totalCost = 0;
-    document.querySelectorAll('.result-item').forEach(result => {
-        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
-        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
-        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
-        totalCost += materialCost + laborCost + plantCost;
-    });
-
-    try {
-        const response = await fetch('/api/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ...projectData,
-                project_location: projectLoc,
-                supplier_location: supplierLoc,
-                calculation_data: JSON.stringify(calculationData),
-                total_cost: totalCost
-            }),
-            credentials: 'include'
-        });
-        if (!response.ok) throw new Error('Project save failed');
-        return await response.json();
-    } catch (error) {
-        console.error('Error saving project:', error);
-        throw error;
     }
 }
 
