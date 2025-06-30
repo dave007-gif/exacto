@@ -68,6 +68,17 @@ def init_db():
         )
     ''')
 
+    #verification_tokens table
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS verification_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        token TEXT NOT NULL UNIQUE,
+        expires_at DATETIME NOT NULL
+    )
+''')
+
+
     # Locations table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS locations (
@@ -491,6 +502,39 @@ def get_adjustments():
         'thickness': thickness
     })
 
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
+
+def send_verification_email(to_email, token):
+    verify_link = f'http://127.0.0.1:5000/verify-email/{token}'
+    # Replace with domain for production
+    message = Mail(
+        from_email='middle_child13555@protonmail.com',  # Use a verified sender email
+        to_emails=to_email,
+        subject='Verify Your Account',
+        html_content=f'<p>Click <a href="{verify_link}">here</a> to verify your account.</p>'
+    )
+    try:
+        sg = SendGridAPIClient(os.environ.get('SENDGRID_API_KEY'))
+        sg.send(message)
+    except Exception as e:
+        print(f"Error sending verification email: {e}")
+
+def send_password_reset_email(to_email, token):
+    reset_link = f'http://127.0.0.1:5000/reset-password/{token}'  # Replace with domain for production
+    message = Mail(
+        from_email='middle_child13555@protonmail.com',  # Use a verified sender email
+        to_emails=to_email,
+        subject='Password Reset Request',
+        html_content=f'<p>Click <a href="{reset_link}">here</a> to reset your password.</p>'
+    )
+    try:
+        sg = SendGridAPIClient(os.environ.get('SENDGRID_API_KEY'))
+        sg.send(message)
+    except Exception as e:
+        print(f"Error sending reset email: {e}")
+
+
 # GET /signup
 @app.route('/signup', methods=['GET'])
 def signup_page():
@@ -502,8 +546,7 @@ def signup():
     data = request.json
     email = data.get('email')
     password = data.get('password')
-    # Accept both 'role' and 'user_type' for compatibility
-    role = data.get('role') or data.get('user_type') or 'student'
+    role = data.get('role') or 'student'
 
     if not email or not password:
         return jsonify({'message': 'Missing required fields'}), 400
@@ -513,8 +556,7 @@ def signup():
     try:
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
-            cursor.execute('INSERT INTO users (email, password) VALUES (?, ?)',
-                           (email, hashed_password))
+            cursor.execute('INSERT INTO users (email, password, verified) VALUES (?, ?, 0)', (email, hashed_password))
             user_id = cursor.lastrowid
 
             # Assign role
@@ -525,29 +567,22 @@ def signup():
             role_id = role_row[0]
             cursor.execute('INSERT INTO user_roles (user_id, role_id) VALUES (?, ?)', (user_id, role_id))
 
+            # Generate and store verification token
+            import secrets
+            token = secrets.token_urlsafe(32)
+            expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+            cursor.execute('''
+                INSERT INTO verification_tokens (email, token, expires_at)
+                VALUES (?, ?, ?)
+            ''', (email, token, expires_at))
             conn.commit()
+
+        send_verification_email(email, token)
+        return jsonify({'message': 'Signup successful! Check your email to verify your account.'})
+
     except sqlite3.IntegrityError:
         return jsonify({'message': 'User already exists'}), 400
 
-    # Fetch roles
-    with sqlite3.connect('users.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT r.name FROM roles r
-            JOIN user_roles ur ON ur.role_id = r.id
-            WHERE ur.user_id = ?
-        ''', (user_id,))
-        roles = [row[0] for row in cursor.fetchall()]
-
-    token = jwt.encode({
-        'email': email,
-        'user_id': user_id,
-        'roles': roles,
-        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
-    }, app.config['SECRET_KEY'], algorithm="HS256")
-    response = make_response(jsonify({'message': 'Signup successful!'}))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
-    return response
 
 # GET /login
 @app.route('/login', methods=['GET'])
@@ -562,11 +597,15 @@ def login():
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT id, password FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT id, password, verified FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
 
     if not user or not check_password_hash(user[1], password):
         return jsonify({'message': 'Invalid credentials'}), 401
+    
+    if not user[2]:  # verified == 0
+        return jsonify({'message': 'Please verify your email before logging in.'}), 403
+
 
     user_id = user[0]
 
@@ -590,6 +629,24 @@ def login():
     response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
     return response
 
+@app.route('/verify-email/<token>', methods=['GET'])
+def verify_email(token):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT email FROM verification_tokens WHERE token = ? AND expires_at > ?', (token, datetime.now()))
+        result = cursor.fetchone()
+
+        if not result:
+            return 'Invalid or expired verification link.', 400
+
+        email = result[0]
+        cursor.execute('UPDATE users SET verified = 1 WHERE email = ?', (email,))
+        cursor.execute('DELETE FROM verification_tokens WHERE token = ?', (token,))
+        conn.commit()
+
+    return 'Email verified successfully! You may now log in.', 200
+
+
 # GET /protected (Example of a protected route)
 @app.route('/protected', methods=['GET'])
 @token_required
@@ -603,6 +660,72 @@ def refresh_token():
     new_token = jwt.encode({'email': request.user_email, 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=1)},
                            app.config['SECRET_KEY'], algorithm="HS256")
     return jsonify({'token': new_token})
+
+# Resend Reset Link Endpoint
+@app.route('/resend-verification', methods=['POST'])
+def resend_verification():
+    email = request.json.get('email')
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, verified FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+
+    if not user:
+        return jsonify({'message': 'If your email exists, a new verification will be sent.'}), 200
+
+    if user[1]:  # Already verified
+        return jsonify({'message': 'Account already verified.'}), 200
+
+    # Generate verification token
+    import secrets
+    token = secrets.token_urlsafe(32)
+    expiration = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO verification_tokens (email, token, expires_at)
+            VALUES (?, ?, ?)
+        ''', (email, token, expiration))
+        conn.commit()
+
+    send_verification_email(email, token)
+
+    return jsonify({'message': 'Verification email sent if account exists.'})
+
+
+
+# Resend Password Reset Link
+@app.route('/resend-reset-link', methods=['POST'])
+def resend_reset_link():
+    email = request.json.get('email')
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+
+    if not user:
+        return jsonify({'message': 'If your email exists, a reset link will be sent.'}), 200
+
+    # Generate new reset token
+    import secrets
+    token = secrets.token_urlsafe(32)
+    expiration = datetime.now(timezone.utc) + timedelta(hours=1)
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO password_resets (email, token, expiration)
+            VALUES (?, ?, ?)
+        ''', (email, token, expiration))
+        conn.commit()
+
+    send_password_reset_email(email, token)
+
+    return jsonify({'message': 'Reset link sent if account exists.'})
+
 
 # app.py - calculation_page route
 @app.route('/calculation', methods=['GET'])
