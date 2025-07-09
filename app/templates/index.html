@@ -29,13 +29,27 @@
           <li><a href="{{ url_for('main.projects') }}">PROJECTS</a></li>
           <li><a href="{{ url_for('main.contact') }}">CONTACT</a></li>
           {% if current_user.is_authenticated %}
-            <li><a href="{{ url_for('auth_routes.logout') }}">LOGOUT</a></li>
+            <li class="user-dropdown-container">
+              <button class="user-dropdown-trigger" id="userTrigger">
+                <img src="{{ url_for('static', filename='uploads/user-avatar.jpg') }}" alt="User Avatar" class="avatar">
+                <span class="user-name">{{ current_user.full_name.split()[0] }}</span>
+                <svg class="arrow-down" xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24">
+                  <path d="M7 10l5 5 5-5z"/>
+                </svg>
+              </button>
+
+              <ul class="user-dropdown-menu" id="userDropdown">
+                <li><a href="{{ url_for('main.dashboard') }}">Dashboard</a></li>
+                <li><a href="{{ url_for('auth_routes.logout') }}">Logout</a></li>
+              </ul>
+            </li>
           {% else %}
             <li><a href="#" onclick="openModal('login-modal')">LOGIN</a></li>
             <li><a href="#" onclick="openModal('signup-modal')">SIGN UP</a></li>
           {% endif %}
         </ul>
       </div>
+
     </nav>
 
     <!-- Login Modal -->

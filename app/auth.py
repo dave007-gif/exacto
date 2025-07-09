@@ -10,14 +10,15 @@ from uuid import uuid4
 # Handles /auth/ routes
 auth_bp = Blueprint('auth', __name__)
 
-# 🔐 Google OAuth Setup – no redirect_url override
 google_bp = make_google_blueprint(
     client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID"),
     client_secret=os.getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
-    scope=["profile", "email"]
+    scope=["profile", "email"],
+    redirect_url="/login/google/authorized"
 )
 
-# ✅ Google redirects here: http://127.0.0.1:5000/auth/google/authorized
+
+# Google redirects here: http://127.0.0.1:5000/auth/google/authorized
 @auth_bp.route('/google/authorized')
 def google_authorized():
     if not google.authorized:

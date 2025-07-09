@@ -1,7 +1,7 @@
 # app/routes.py
 
-from flask import Blueprint, render_template, request, jsonify
-from flask_login import login_required
+from flask import Blueprint, render_template, request, url_for, jsonify
+from flask_login import login_required, current_user
 
 main = Blueprint('main', __name__)
 
@@ -16,6 +16,11 @@ def about():
 @main.route('/contact')
 def contact():
     return render_template('contact.html')
+
+@main.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template('dashboard.html', user=current_user)
 
 @main.route('/estimate')
 @login_required

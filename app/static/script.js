@@ -120,3 +120,16 @@ document.addEventListener("DOMContentLoaded", () => {
     openModal("signup-modal");
   }
 });
+
+document.addEventListener('DOMContentLoaded', () => {
+    const trigger = document.getElementById('userTrigger');
+    const container = trigger.closest('.user-dropdown-container');
+
+    document.addEventListener('click', (e) => {
+      if (container.contains(e.target)) {
+        container.classList.toggle('show');
+      } else {
+        container.classList.remove('show');
+      }
+    });
+  });

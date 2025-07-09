@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exacto Dashboard</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/dashboard.css') }}">
+  <script defer src="{{ url_for('static', filename='dashboard/dashboard.js') }}"></script>
+</head>
+<body>
+  <div class="dashboard">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h2>Exacto</h2>
+      <nav>
+        <ul>
+          <li><a href="/dashboard">🏠 Dashboard</a></li>
+          <li><a href="/projects">📁 Projects</a></li>
+          <li><a href="/estimates">📐 Estimates</a></li>
+          <li><a href="/materials">🧱 Materials</a></li>
+          <li><a href="/clients">👥 Clients</a></li>
+          <li><a href="/settings">⚙️ Settings</a></li>
+          <li><a href="/logout">🚪 Logout</a></li>
+        </ul>
+      </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="topbar">
+        <h3>Welcome, {{ user.full_name }} 👋</h3>
+        <div class="stats">
+          <div class="card">
+            <p>Projects</p>
+            <strong id="total-projects">--</strong>
+          </div>
+          <div class="card">
+            <p>Estimates</p>
+            <strong id="total-estimates">--</strong>
+          </div>
+          <div class="card">
+            <p>Materials</p>
+            <strong id="total-materials">--</strong>
+          </div>
+          <div class="card">
+            <p>Total Cost</p>
+            <strong id="total-cost">₵ --</strong>
+          </div>
+        </div>
+      </header>
+
+      <!-- Recent Activity -->
+      <section class="recent">
+        <h4>Recent Estimates</h4>
+        <table id="recent-estimates">
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Method</th>
+              <th>Cost</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <!-- Rows injected via JS -->
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

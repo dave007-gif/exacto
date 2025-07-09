@@ -32,7 +32,7 @@ def create_app():
     app.register_blueprint(main)
     app.register_blueprint(auth_routes, url_prefix="/auth")
     app.register_blueprint(auth_bp, url_prefix="/auth")  
-    app.register_blueprint(google_bp, url_prefix="/auth/google")
+    app.register_blueprint(google_bp, url_prefix="/login")
 
     return app
 
