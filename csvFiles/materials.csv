@@ -1,0 +1,12 @@
+material,unit_cost,valid_from,valid_to,source,region
+cement,95.00,2025-07-01,2025-12-31,Ghacem Ltd,Greater Accra
+sand,40.00,2025-07-01,2025-12-31,Local Supplier,Greater Accra
+aggregate,65.00,2025-07-01,2025-12-31,Accra Aggregates,Greater Accra
+cement,98.00,2025-07-01,2025-12-31,Eastern Concrete Co,Eastern
+sand,35.00,2025-07-01,2025-12-31,Volta Sand & Gravel,Volta
+blocks,5.80,2025-07-01,2025-12-31,Koforidua Blocks,Eastern
+cement,97.00,2025-07-01,2025-12-31,NatBuild Supplies,National
+sand,38.00,2025-07-01,2025-12-31,NatBuild Supplies,National
+aggregate,62.00,2025-07-01,2025-12-31,NatBuild Supplies,National
+mortar,42.00,2025-07-01,2025-12-31,Local Supplier,Greater Accra
+water,12.00,2025-07-01,2025-12-31,Local Supplier,Greater Accra

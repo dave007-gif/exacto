@@ -9,6 +9,9 @@ from flask_cors import CORS
 import requests
 from dotenv import load_dotenv
 import json
+import csv
+import io
+
 
 # Load environment variables from .env file
 load_dotenv()
@@ -249,10 +252,10 @@ def populate_initial_data():
         (local_supplier_id, 'mortar', 40.00, '2023-01-01', '2023-12-31'),
         (local_supplier_id, 'water', 10.00, '2023-01-01', '2023-12-31')  # <-- Add this line
     ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO MaterialPrices (source_id, material, unit_cost, valid_from, valid_to)
-        VALUES (?, ?, ?, ?, ?)
-    ''', materials)
+    #cursor.executemany('''
+     #   INSERT OR IGNORE INTO MaterialPrices (source_id, material, unit_cost, valid_from, valid_to)
+     #   VALUES (?, ?, ?, ?, ?)
+    #''', materials)
 
     # Populate LaborRates table
     labor_rates = [
@@ -264,10 +267,10 @@ def populate_initial_data():
         (local_supplier_id, 'bricklaying', 25.00, '2023-01-01', '2023-12-31'),
         (local_supplier_id, 'concreting', 30.00, '2023-01-01', '2023-12-31'),
     ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO LaborRates (source_id, task, rate, valid_from, valid_to)
-        VALUES (?, ?, ?, ?, ?)
-    ''', labor_rates)
+    #cursor.executemany('''
+     #   INSERT OR IGNORE INTO LaborRates (source_id, task, rate, valid_from, valid_to)
+     #   VALUES (?, ?, ?, ?, ?)
+    #''', labor_rates)
 
     # Populate Adjustments table
     adjustments = [
@@ -287,10 +290,10 @@ def populate_initial_data():
         ('Excavator', 1200.00, 0.15),# Excavator: GHS 1200/day, 0.15 days per m³
         ('Tipper Truck', 800.00, 0.1) # Tipper Truck: GHS 800/day, 0.1 days per m³
     ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO Plants (equipment, daily_rate, duration_per_unit)
-        VALUES (?, ?, ?)
-    ''', plants)
+    #cursor.executemany('''
+     #   INSERT OR IGNORE INTO Plants (equipment, daily_rate, duration_per_unit)
+      #  VALUES (?, ?, ?)
+    #''', plants)
 
     # Populate Locations table
     locations = [
@@ -378,6 +381,26 @@ def role_required(*required_roles):
         return wrapped
     return decorator
 
+
+def admin_required(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        token = request.cookies.get('authToken')
+        if not token:
+            return "Unauthorized", 401
+        try:
+            payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            roles = payload.get('roles', [])
+            if 'admin' not in roles:
+                return "Forbidden: Admins only", 403
+        except jwt.ExpiredSignatureError:
+            return "Session expired", 401
+        except jwt.InvalidTokenError:
+            return "Invalid token", 401
+        return f(*args, **kwargs)
+    return wrapper
+
+
 # Helper function to validate tokens
 def token_required(f):
     @wraps(f)
@@ -411,6 +434,173 @@ def log_activity(description):
             return result
         return wrapper
     return decorator
+
+def handle_material_upload(rows):
+    required = {'material', 'unit_cost', 'valid_from', 'valid_to', 'source'}
+    inserted, skipped, errors = 0, 0, []
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+
+        for i, row in enumerate(rows, 1):
+            if not required.issubset(row.keys()):
+                errors.append(f"Row {i} missing required fields")
+                skipped += 1
+                continue
+
+            try:
+                material = row['material'].strip()
+                unit_cost = float(row['unit_cost'])
+                valid_from = row['valid_from']
+                valid_to = row['valid_to']
+                source_name = row['source'].strip()
+
+                if unit_cost <= 0:
+                    errors.append(f"Row {i}: unit_cost must be positive")
+                    skipped += 1
+                    continue
+
+                # Get or create source
+                cursor.execute('SELECT id FROM Sources WHERE name = ?', (source_name,))
+                src = cursor.fetchone()
+                if not src:
+                    cursor.execute('INSERT INTO Sources (name, type, region) VALUES (?, ?, ?)',
+                                   (source_name, 'supplier', 'unknown'))
+                    source_id = cursor.lastrowid
+                else:
+                    source_id = src[0]
+
+                # Avoid duplicates
+                cursor.execute('''
+                    SELECT 1 FROM MaterialPrices WHERE material=? AND source_id=? AND valid_from=?
+                ''', (material, source_id, valid_from))
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
+
+                cursor.execute('''
+                    INSERT INTO MaterialPrices (source_id, material, unit_cost, valid_from, valid_to)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (source_id, material, unit_cost, valid_from, valid_to))
+                inserted += 1
+
+            except Exception as e:
+                errors.append(f"Row {i}: {str(e)}")
+                skipped += 1
+
+        conn.commit()
+    return inserted, skipped, errors
+
+
+def handle_labor_upload(rows):
+    required = {'task', 'rate', 'valid_from', 'valid_to', 'source'}
+    inserted, skipped, errors = 0, 0, []
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+
+        for i, row in enumerate(rows, 1):
+            if not required.issubset(row.keys()):
+                errors.append(f"Row {i} missing required fields")
+                skipped += 1
+                continue
+
+            try:
+                task = row['task'].strip()
+                rate = float(row['rate'])
+                valid_from = row['valid_from']
+                valid_to = row['valid_to']
+                source_name = row['source'].strip()
+
+                if rate <= 0:
+                    errors.append(f"Row {i}: rate must be positive")
+                    skipped += 1
+                    continue
+
+                # Get or create source
+                cursor.execute('SELECT id FROM Sources WHERE name = ?', (source_name,))
+                src = cursor.fetchone()
+                if not src:
+                    cursor.execute('INSERT INTO Sources (name, type, region) VALUES (?, ?, ?)',
+                                   (source_name, 'supplier', 'unknown'))
+                    source_id = cursor.lastrowid
+                else:
+                    source_id = src[0]
+
+                # Avoid duplicates
+                cursor.execute('''
+                    SELECT 1 FROM LaborRates WHERE task=? AND source_id=? AND valid_from=?
+                ''', (task, source_id, valid_from))
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
+
+                cursor.execute('''
+                    INSERT INTO LaborRates (source_id, task, rate, valid_from, valid_to)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (source_id, task, rate, valid_from, valid_to))
+                inserted += 1
+
+            except Exception as e:
+                errors.append(f"Row {i}: {str(e)}")
+                skipped += 1
+
+        conn.commit()
+    return inserted, skipped, errors
+
+def handle_plant_upload(rows):
+    required = {'equipment', 'daily_rate', 'duration_per_unit'}
+    inserted, skipped, errors = 0, 0, []
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+
+        for i, row in enumerate(rows, 1):
+            if not required.issubset(row.keys()):
+                errors.append(f"Row {i} missing required fields")
+                skipped += 1
+                continue
+
+            try:
+                equipment = row['equipment'].strip()
+                daily_rate = float(row['daily_rate'])
+                duration_per_unit = float(row['duration_per_unit'])
+
+                if daily_rate <= 0 or duration_per_unit <= 0:
+                    errors.append(f"Row {i}: daily_rate and duration_per_unit must be positive")
+                    skipped += 1
+                    continue
+
+                # Avoid duplicates
+                cursor.execute('''
+                    SELECT 1 FROM Plants WHERE equipment=?
+                ''', (equipment,))
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
+
+                cursor.execute('''
+                    INSERT INTO Plants (equipment, daily_rate, duration_per_unit)
+                    VALUES (?, ?, ?)
+                ''', (equipment, daily_rate, duration_per_unit))
+                inserted += 1
+
+            except Exception as e:
+                errors.append(f"Row {i}: {str(e)}")
+                skipped += 1
+
+        conn.commit()
+    return inserted, skipped, errors
+
+def log_admin_upload(admin_id, category, filename):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO user_activity (user_id, activity_type, description)
+            VALUES (?, ?, ?)
+        ''', (admin_id, 'upload_csv', f'Uploaded {category} file: {filename}'))
+        conn.commit()
+
 
 # Password Reset Routes
 @app.route('/forgot-password', methods=['GET'])
@@ -602,10 +792,9 @@ def login():
 
     if not user or not check_password_hash(user[1], password):
         return jsonify({'message': 'Invalid credentials'}), 401
-    
-    if not user[2]:  # verified == 0
-        return jsonify({'message': 'Please verify your email before logging in.'}), 403
 
+    if not user[2]:  # not verified
+        return jsonify({'message': 'Please verify your email before logging in.'}), 403
 
     user_id = user[0]
 
@@ -619,15 +808,27 @@ def login():
         ''', (user_id,))
         roles = [row[0] for row in cursor.fetchall()]
 
+    # Encode token with roles
     token = jwt.encode({
         'email': email,
         'user_id': user_id,
         'roles': roles,
         'exp': datetime.now(timezone.utc) + timedelta(hours=1)
     }, app.config['SECRET_KEY'], algorithm="HS256")
-    response = make_response(jsonify({'message': 'Login successful!', 'redirect': '/dashboard'}))
+
+    # 🔁 Redirect based on role
+    if 'admin' in roles:
+        redirect_url = '/admin_upload'
+    else:
+        redirect_url = '/dashboard'
+
+    response = make_response(jsonify({
+        'message': 'Login successful!',
+        'redirect': redirect_url
+    }))
     response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
     return response
+
 
 @app.route('/verify-email/<token>', methods=['GET'])
 def verify_email(token):
@@ -725,6 +926,86 @@ def resend_reset_link():
     send_password_reset_email(email, token)
 
     return jsonify({'message': 'Reset link sent if account exists.'})
+
+@app.route('/api/upload-prices/<category>', methods=['POST'])
+@role_required('admin')
+def upload_price_csv(category):
+    if 'file' not in request.files:
+        return jsonify({'message': 'No file part'}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({'message': 'No selected file'}), 400
+
+    if not file.filename.endswith('.csv'):
+        return jsonify({'message': 'File must be a CSV'}), 400
+
+    # Read CSV rows
+    stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
+    csv_data = list(csv.DictReader(stream))
+
+    # Validate & insert based on category
+    if category == 'materials':
+        inserted, skipped, errors = handle_material_upload(csv_data)
+    elif category == 'labor':
+        inserted, skipped, errors = handle_labor_upload(csv_data)
+    elif category == 'plants':
+        inserted, skipped, errors = handle_plant_upload(csv_data)
+    else:
+        return jsonify({'message': f'Unknown category: {category}'}), 400
+
+    # Log admin activity
+    log_admin_upload(request.user_id, category, file.filename)
+
+    return jsonify({
+        'message': f'{category.title()} prices uploaded',
+        'inserted': inserted,
+        'skipped': skipped,
+        'errors': errors
+    })
+
+@app.route('/setup-admin')
+def setup_admin():
+    import sqlite3
+    from werkzeug.security import generate_password_hash
+
+    email = 'admin@gmail.com'
+    raw_password = '1234'  # Set it safely here
+    hashed_password = generate_password_hash(raw_password)
+
+    try:
+        with sqlite3.connect('users.db') as conn:
+            cursor = conn.cursor()
+
+            # Step 1: Insert admin user
+            cursor.execute('''
+                INSERT OR IGNORE INTO users (email, password, verified)
+                VALUES (?, ?, 1)
+            ''', (email, hashed_password))
+
+            # Step 2: Insert admin role if missing
+            cursor.execute('''
+                INSERT OR IGNORE INTO roles (name, description)
+                VALUES ('admin', 'Superuser with upload access')
+            ''')
+
+            # Step 3: Assign admin role to user
+            cursor.execute('''
+                INSERT OR IGNORE INTO user_roles (user_id, role_id)
+                SELECT u.id, r.id FROM users u, roles r
+                WHERE u.email = ? AND r.name = 'admin'
+            ''', (email,))
+
+            conn.commit()
+        return '✅ Admin user setup complete.'
+    except Exception as e:
+        return f'❌ Error: {e}', 500
+
+
+@app.route("/admin_upload", methods=["GET"])
+@admin_required
+def admin_upload_page():
+    return render_template("admin_upload.html")
 
 
 # app.py - calculation_page route
@@ -965,36 +1246,58 @@ def get_labor_rates():
 @app.route('/api/pricing-bundle', methods=['GET'])
 @token_required
 def get_pricing_bundle():
-    region = request.args.get('region', 'default')
-    
-    with sqlite3.connect('users.db') as conn:
-        # Materials
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT material, unit_cost 
-            FROM MaterialPrices
-            WHERE source_id IN (
-                SELECT id FROM Sources WHERE region = ?
-            )
-        ''', (region,))
-        materials = {row[0]: row[1] for row in cursor.fetchall()}
-        
-        # Labor
-        cursor.execute('''
-            SELECT task, rate 
-            FROM LaborRates
-            WHERE source_id IN (
-                SELECT id FROM Sources WHERE region = ?
-            )
-        ''', (region,))
-        labor = {row[0]: row[1] for row in cursor.fetchall()}
-        
-    return jsonify({
+    region = request.args.get('region', 'default').lower()
+    fallback_applied = False
+
+    def fetch_data(region_option):
+        with sqlite3.connect('users.db') as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                SELECT material, unit_cost FROM MaterialPrices
+                WHERE source_id IN (SELECT id FROM Sources WHERE region = ?)
+            ''', (region_option,))
+            materials = {row[0]: row[1] for row in cursor.fetchall()}
+
+            cursor.execute('''
+                SELECT task, rate FROM LaborRates
+                WHERE source_id IN (SELECT id FROM Sources WHERE region = ?)
+            ''', (region_option,))
+            labor = {row[0]: row[1] for row in cursor.fetchall()}
+
+        return materials, labor
+
+    # Try original region
+    materials, labor = fetch_data(region)
+
+    if not materials or not labor:
+        # Try neighboring regions
+        for neighbor in get_neighboring_regions(region):
+            m, l = fetch_data(neighbor)
+            if not materials: materials = m
+            if not labor: labor = l
+            if materials or labor:
+                fallback_applied = True
+                break
+
+    if not materials or not labor:
+        # Try national fallback
+        m, l = fetch_data('national')
+        if not materials: materials = m
+        if not labor: labor = l
+        fallback_applied = True
+
+    response = {
         'materials': materials,
         'labor': labor,
         'region': region,
         'timestamp': datetime.now().isoformat()
-    })
+    }
+    if fallback_applied:
+        response['warning'] = 'Fallback applied'
+
+    return jsonify(response)
+
 
 @app.route('/smm-rules', methods=['GET'])
 @token_required
@@ -1009,42 +1312,129 @@ def get_smm_rules():
 @app.route('/api/prices/<material>', methods=['GET'])
 @token_required
 def get_material_price(material):
+    region = request.args.get('region', '').title()
+    fallback_used = None
+
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT unit_cost, valid_from, valid_to FROM MaterialPrices WHERE material = ?', (material,))
+
+        # 1. Try exact region
+        cursor.execute('''
+            SELECT unit_cost, valid_from, valid_to, s.region
+            FROM MaterialPrices m
+            JOIN Sources s ON m.source_id = s.id
+            WHERE m.material = ? AND s.region = ?
+            ORDER BY valid_from DESC
+            LIMIT 1
+        ''', (material, region))
         result = cursor.fetchone()
+
+        # 2. Try neighboring regions
+        if not result:
+            for neighbor in get_neighboring_regions(region):
+                cursor.execute('''
+                    SELECT unit_cost, valid_from, valid_to, s.region
+                    FROM MaterialPrices m
+                    JOIN Sources s ON m.source_id = s.id
+                    WHERE m.material = ? AND s.region = ?
+                    ORDER BY valid_from DESC
+                    LIMIT 1
+                ''', (material, neighbor))
+                result = cursor.fetchone()
+                if result:
+                    fallback_used = neighbor
+                    break
+
+        # 3. National average
+        if not result:
+            cursor.execute('''
+                SELECT AVG(unit_cost), MIN(valid_from), MAX(valid_to)
+                FROM MaterialPrices
+                WHERE material = ?
+            ''', (material,))
+            avg_result = cursor.fetchone()
+            if avg_result and avg_result[0] is not None:
+                result = (*avg_result, 'National Average')
+                fallback_used = 'national'
 
     if not result:
         return jsonify({'message': f'Price for material "{material}" not found'}), 404
 
-    unit_cost, valid_from, valid_to = result
+    unit_cost, valid_from, valid_to, source_region = result
+
     return jsonify({
         'material': material,
-        'unit_cost': unit_cost,
+        'unit_cost': round(unit_cost, 2),
         'valid_from': valid_from,
-        'valid_to': valid_to
+        'valid_to': valid_to,
+        'region': source_region,
+        'fallback': fallback_used or None  # null if exact match
     })
+
 
 # GET /api/labor/:trade
 @app.route('/api/labor/<trade>', methods=['GET'])
 @token_required
 def get_labor_rate(trade):
+    region = request.args.get('region', '').title()
+    fallback_used = None
+
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        # Use the correct column name 'task' instead of 'trade'
-        cursor.execute('SELECT rate, valid_from, valid_to FROM LaborRates WHERE task = ?', (trade,))
+
+        # 1. Exact region
+        cursor.execute('''
+            SELECT rate, valid_from, valid_to, s.region
+            FROM LaborRates l
+            JOIN Sources s ON l.source_id = s.id
+            WHERE l.task = ? AND s.region = ?
+            ORDER BY valid_from DESC
+            LIMIT 1
+        ''', (trade, region))
         result = cursor.fetchone()
+
+        # 2. Neighboring regions
+        if not result:
+            for neighbor in get_neighboring_regions(region):
+                cursor.execute('''
+                    SELECT rate, valid_from, valid_to, s.region
+                    FROM LaborRates l
+                    JOIN Sources s ON l.source_id = s.id
+                    WHERE l.task = ? AND s.region = ?
+                    ORDER BY valid_from DESC
+                    LIMIT 1
+                ''', (trade, neighbor))
+                result = cursor.fetchone()
+                if result:
+                    fallback_used = neighbor
+                    break
+
+        # 3. National average
+        if not result:
+            cursor.execute('''
+                SELECT AVG(rate), MIN(valid_from), MAX(valid_to)
+                FROM LaborRates
+                WHERE task = ?
+            ''', (trade,))
+            avg_result = cursor.fetchone()
+            if avg_result and avg_result[0] is not None:
+                result = (*avg_result, 'National Average')
+                fallback_used = 'national'
 
     if not result:
         return jsonify({'message': f'Labor rate for task "{trade}" not found'}), 404
 
-    rate, valid_from, valid_to = result
+    rate, valid_from, valid_to, source_region = result
+
     return jsonify({
         'trade': trade,
-        'rate': rate,
+        'rate': round(rate, 2),
         'valid_from': valid_from,
-        'valid_to': valid_to
+        'valid_to': valid_to,
+        'region': source_region,
+        'fallback': fallback_used or None
     })
+
 
 @app.route('/api/plants', methods=['GET'])
 @token_required

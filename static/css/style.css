@@ -257,3 +257,9 @@
   font-size: 0.85em;
   font-weight: bold;
 }
+
+.fallback-message {
+    font-size: 14px;
+    line-height: 1.4;
+    border-radius: 4px;
+}

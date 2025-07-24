@@ -52,6 +52,7 @@ let currentFormulaVersion = null;
 let projectFormulaVersion = null;
 let autoSaveTimer = null;
 let lastSavedData = null;
+let suppressFallbackUI = true;
 
 // --- Project Details Banner/Editing Logic ---
 function updateProjectDetailsUI() {
@@ -232,6 +233,55 @@ async function fetchCurrentFormulaVersion() {
     return data.version;
 }
 
+function showFallbackWarning(taskOrMaterial, fallbackRegion) {
+    const fallbackDiv = document.getElementById('fallback-warning');
+    if (!fallbackDiv) return;
+
+    // Ensure the container is visible
+    fallbackDiv.style.display = 'block';
+
+    // Create a unique ID to avoid duplicates
+    const id = `warn-${taskOrMaterial.replace(/\s+/g, '-').toLowerCase()}`;
+    if (document.getElementById(id)) return;
+
+    // Create message box
+    const message = document.createElement('div');
+    message.id = id;
+    message.className = 'fallback-message';
+    message.style.marginBottom = '8px';
+    message.style.padding = '10px';
+    message.style.borderLeft = '4px solid #f0ad4e';
+    message.style.backgroundColor = '#fcf8e3';
+    message.style.color = '#8a6d3b';
+    message.style.position = 'relative';
+    message.innerHTML = `
+        ⚠️ <strong>${taskOrMaterial}</strong> is using fallback rate from <strong>${fallbackRegion}</strong>.
+    `;
+
+    // Dismiss button
+    const closeBtn = document.createElement('button');
+    closeBtn.textContent = '✖';
+    closeBtn.style.position = 'absolute';
+    closeBtn.style.top = '5px';
+    closeBtn.style.right = '10px';
+    closeBtn.style.background = 'none';
+    closeBtn.style.border = 'none';
+    closeBtn.style.cursor = 'pointer';
+    closeBtn.style.fontWeight = 'bold';
+    closeBtn.style.color = '#8a6d3b';
+
+    closeBtn.addEventListener('click', () => {
+        fallbackDiv.removeChild(message);
+        if (fallbackDiv.children.length === 0) {
+            fallbackDiv.style.display = 'none';
+        }
+    });
+
+    message.appendChild(closeBtn);
+    fallbackDiv.appendChild(message);
+}
+
+
 /*function gatherCalculationData() {
     const data = {};
     // Save global inputs (if any)
@@ -309,7 +359,20 @@ async function calculateComponentFromData(componentType, inputs) {
     const quantity = formula(processedInputs, adjustments.concrete_waste_factor || 1);
 
     // Fetch prices
-    const prices = await fetchPricesForComponent(formulaKey);
+    // Clear previous fallback messages
+    const fallbackNotice = document.getElementById('fallback-warning');
+    if (fallbackNotice) {
+        fallbackNotice.innerHTML = '';
+        fallbackNotice.style.display = 'none';
+    }
+
+    // Un-suppress fallback UI so warnings can be shown
+    suppressFallbackUI = false;
+
+    const region = getSelectedRegionFromSupplier();
+
+    const prices = await fetchPricesForComponent(formulaKey, region);
+
     if (!prices) return null;
     const { materialPrices, laborRates } = prices;
 
@@ -1648,8 +1711,10 @@ async function loadLocations() {
                 locations.forEach(loc => {
                     const option = document.createElement('option');
                     option.value = loc.zone;
+                    option.setAttribute('data-region', loc.region); // 👈 add region for JS use
                     option.textContent = `${loc.zone} (${loc.region})`;
                     select.appendChild(option);
+
                 });
                 select.addEventListener('change', updateHaulage);
                 console.log(`Populated location select for ${selectId}`);
@@ -1678,7 +1743,7 @@ async function checkFormulaVersion() {
     }
 }
 
-async function fetchInitialRates() {
+/*async function fetchInitialRates() {
     try {
         const materials = ['cement', 'sand', 'aggregate', 'blocks', 'mortar'];
         for (const mat of materials) {
@@ -1702,7 +1767,49 @@ async function fetchInitialRates() {
     } catch (error) {
         console.error('Error fetching initial rates:', error);
     }
+}*/
+
+async function fetchInitialRates() {
+    try {
+        // Get selected region from supplier dropdown
+        const region = getSelectedRegionFromSupplier();
+
+        const materials = ['cement', 'sand', 'aggregate', 'blocks', 'mortar'];
+        for (const mat of materials) {
+            const data = await fetchMaterialRate(mat, region);
+            if (data) {
+                console.log(`${mat} rate: ${data.unit_cost} GHS (${data.region})`);
+                if (data.fallback) {
+                    console.warn(`⚠️ Fallback used for ${mat}: ${data.fallback}`);
+                    //showFallbackWarning(mat, data.fallback);
+                }
+            }
+        }
+
+        const laborTasks = [
+            'bricklaying',
+            'concreting',
+            'site clearance',
+            'excavation',
+            'tree cutting 600-1500',
+            'tree cutting 1500-3000',
+            'tree cutting over 3000'
+        ];
+        for (const task of laborTasks) {
+            const data = await fetchLaborRate(task, region);
+            if (data) {
+                console.log(`${task} rate: ${data.rate} GHS (${data.region})`);
+                if (data.fallback) {
+                    console.warn(`⚠️ Fallback used for ${task}: ${data.fallback}`);
+                    //showFallbackWarning(task, data.fallback);
+                }
+            }
+        }
+    } catch (error) {
+        console.error('Error fetching initial rates:', error);
+    }
 }
+
 
 function setupInputValidation() {
     console.log("Setting up input validation");
@@ -1828,7 +1935,7 @@ function setupComponentDropdown() {
 
 // Special labor fetch handlers for scalable special-case logic
 const SPECIAL_LABOR_FETCH_HANDLERS = {
-    'tree cutting': async (component) => {
+    'tree cutting': async (component, region) => {
         const girthTasks = [
             'tree cutting 600-1500',
             'tree cutting 1500-3000',
@@ -1836,9 +1943,16 @@ const SPECIAL_LABOR_FETCH_HANDLERS = {
         ];
         const laborRates = {};
         for (const task of girthTasks) {
-            const laborData = await fetchLaborRate(task);
+            const laborData = await fetchLaborRate(task, getSelectedRegionFromSupplier());
             if (laborData) {
                 laborRates[task] = laborData.rate;
+
+                // 👇 Optional fallback warning display
+                if (laborData.warning) {
+                    const fallbackNotice = document.getElementById('fallback-warning');
+                    fallbackNotice.textContent = `Fallback for "${task}" from ${laborData.region || 'unknown region'}: ${laborData.warning}`;
+                    fallbackNotice.style.display = 'block';
+                }
             }
         }
         return laborRates;
@@ -1846,8 +1960,9 @@ const SPECIAL_LABOR_FETCH_HANDLERS = {
     // Add more special cases here as needed
 };
 
+
 // Scalable price fetcher
-async function fetchPricesForComponent(componentKey) {
+/*async function fetchPricesForComponent(componentKey) {
     const component = SMM7_2023[componentKey];
     if (!component) {
         console.error(`Unknown component type: ${componentKey}`);
@@ -1879,7 +1994,56 @@ async function fetchPricesForComponent(componentKey) {
     console.log(`Labor Rates for ${componentKey}:`, laborRates);
 
     return { materialPrices, laborRates };
+}*/
+
+async function fetchPricesForComponent(componentKey) {
+    const component = SMM7_2023[componentKey];
+    if (!component) {
+        console.error(`Unknown component type: ${componentKey}`);
+        return null;
+    }
+
+    const region = getSelectedRegionFromSupplier();
+    const materialPrices = {};
+
+    for (const material of component.materials || []) {
+        const materialData = await fetchMaterialRate(material, getSelectedRegionFromSupplier());
+        if (materialData) {
+            materialPrices[material] = materialData.unit_cost;
+
+            if (materialData.warning) {
+                const fallbackNotice = document.getElementById('fallback-warning');
+                fallbackNotice.textContent = `Fallback for "${material}" from ${materialData.region || 'unknown region'}: ${materialData.warning}`;
+                fallbackNotice.style.display = 'block';
+            }
+        }
+
+    }
+    console.log(`Material Prices for ${componentKey} in ${region}:`, materialPrices);
+
+    let laborRates = {};
+    if (SPECIAL_LABOR_FETCH_HANDLERS[componentKey]) {
+        laborRates = await SPECIAL_LABOR_FETCH_HANDLERS[componentKey](component, region);
+    } else {
+        for (const task of component.laborTasks || []) {
+            const laborData = await fetchLaborRate(task, getSelectedRegionFromSupplier());
+            if (laborData) {
+                laborRates[task] = laborData.rate;
+
+                if (laborData.warning) {
+                    const fallbackNotice = document.getElementById('fallback-warning');
+                    fallbackNotice.textContent = `Fallback for "${task}" from ${laborData.region || 'unknown region'}: ${laborData.warning}`;
+                    fallbackNotice.style.display = 'block';
+                }
+            }
+
+        }
+    }
+    console.log(`Labor Rates for ${componentKey} in ${region}:`, laborRates);
+
+    return { materialPrices, laborRates };
 }
+
 
 function setupCalculateButtons() {
     console.log("Setting up calculate buttons");
@@ -2018,7 +2182,20 @@ function setupCalculateButtons() {
             }
             // --- end block ---
 
-            const prices = await fetchPricesForComponent(formulaKey);
+            // Clear previous fallback messages
+            const fallbackNotice = document.getElementById('fallback-warning');
+            if (fallbackNotice) {
+                fallbackNotice.innerHTML = '';
+                fallbackNotice.style.display = 'none';
+            }
+
+            // Un-suppress fallback UI so warnings can be shown
+            suppressFallbackUI = false;
+
+            const region = getSelectedRegionFromSupplier();
+
+            const prices = await fetchPricesForComponent(formulaKey, region);
+
             if (!prices) {
                 alert(`Failed to fetch prices for ${componentType}. Please try again.`);
                 return;
@@ -2257,6 +2434,14 @@ function setupLogoutButton() {
     });
 }
 
+function getSelectedRegionFromSupplier() {
+    const supplierSelect = document.getElementById('supplier-location');
+    const selectedOption = supplierSelect?.options[supplierSelect.selectedIndex];
+    return selectedOption?.getAttribute("data-region") || 'default';
+}
+
+
+
 // Validation functions
 function validateInput(input) {
     const errorSpan = input.parentElement.querySelector('.error-message');
@@ -2343,7 +2528,7 @@ if (version !== storedVersion) {
 }
 
 // Fetch dynamic adjustments
-const region = 'greater-accra'; // Example region
+const region = getSelectedRegionFromSupplier(); // Example region
 const adjustmentsResponse = await fetch(`/api/adjustments?region=${region}`);
 const adjustments = await adjustmentsResponse.json();
 console.log("Adjustments:", adjustments);
@@ -2412,14 +2597,12 @@ componentSelect.addEventListener("change", function () {
 displayProjects();
 
 // Fetch material rate for a specific material
-async function fetchMaterialRate(material) {
-    const response = await fetch(`/api/prices/${material}?region=greater-accra`, {
+async function fetchMaterialRate(material, region) {
+    const response = await fetch(`/api/prices/${encodeURIComponent(material)}?region=${encodeURIComponent(region)}`, {
         credentials: 'include'
-    });/*{
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });*/
+    });
 
-    console.log("Response for fetchMaterialRate:", response);
+    console.log(`Response for fetchMaterialRate (${material}, region=${region}):`, response);
 
     if (!response.ok) {
         console.error(`Failed to fetch material rate for ${material}:`, response.statusText);
@@ -2428,23 +2611,28 @@ async function fetchMaterialRate(material) {
 
     try {
         const data = await response.json();
-        console.log(`Material Rate for ${material}:`, data);
-        return data; // Example: { material: 'cement', unit_cost: 85.00, valid_from: '2023-04-01', valid_to: '2023-10-01' }
+        if (data.fallback) {
+            console.warn(`⚠️ Fallback used for ${material}: ${data.fallback}`);
+            if (!suppressFallbackUI) {
+                showFallbackWarning(`${material} (material)`, data.fallback);
+            };
+        }
+        return data;
     } catch (error) {
         console.error("Error parsing JSON in fetchMaterialRate:", error);
         return null;
     }
 }
 
-// Fetch labor rate for a specific trade
-async function fetchLaborRate(trade) {
-    const response = await fetch(`/api/labor/${trade}`, {
-        credentials: 'include'
-    });/*{
-        headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-    });*/
 
-    console.log("Response for fetchLaborRate:", response);
+
+// Fetch labor rate for a specific trade
+async function fetchLaborRate(trade, region) {
+    const response = await fetch(`/api/labor/${encodeURIComponent(trade)}?region=${encodeURIComponent(region)}`, {
+        credentials: 'include'
+    });
+
+    console.log(`Response for fetchLaborRate (${trade}, region=${region}):`, response);
 
     if (!response.ok) {
         console.error(`Failed to fetch labor rate for ${trade}:`, response.statusText);
@@ -2453,13 +2641,20 @@ async function fetchLaborRate(trade) {
 
     try {
         const data = await response.json();
-        console.log(`Labor Rate for ${trade}:`, data);
-        return data; // Example: { trade: 'bricklaying', rate: 25.00, valid_from: '2023-04-01', valid_to: '2023-10-01' }
+        if (data.fallback) {
+            console.warn(`⚠️ Fallback used for ${trade}: ${data.fallback}`);
+            if (!suppressFallbackUI) {
+                showFallbackWarning(`${trade} (labor)`, data.fallback);
+            };
+        }
+        return data;
     } catch (error) {
         console.error("Error parsing JSON in fetchLaborRate:", error);
         return null;
     }
 }
+
+
 
 // Clear invalid projects from local storage
 function clearInvalidProjects() {
@@ -2557,7 +2752,7 @@ async function saveProjectState() {
 }
 
 // --- Update calculateCompositeRate to use inputs for special-case logic
-async function calculateCompositeRate(componentType, quantity, inputs = {}) {
+/*async function calculateCompositeRate(componentType, quantity, inputs = {}) {
     if (!componentType || !quantity || quantity <= 0) {
         console.error('Invalid input:', { componentType, quantity });
         return null;
@@ -2655,7 +2850,118 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
         console.error(`Composite rate error for ${componentType}:`, error);
         return null;
     }
+}*/
+
+async function calculateCompositeRate(componentType, quantity, inputs = {}) {
+    if (!componentType || !quantity || quantity <= 0) {
+        console.error('Invalid input:', { componentType, quantity });
+        return null;
+    }
+
+    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
+    if (!formulaKey) {
+        console.warn(`No mapping for component: ${componentType}`);
+        return null;
+    }
+
+    const formulaConfig = SMM7_2023[formulaKey];
+    if (!formulaConfig) {
+        console.warn(`No formula config for key: ${formulaKey}`);
+        return null;
+    }
+
+    try {
+        // ✅ Get supplier region from dropdown
+        const region = getSelectedRegionFromSupplier();
+
+        // ✅ Fetch pricing bundle based on region
+        const pricingResponse = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(region)}`, {
+            credentials: 'include'
+        });
+
+        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
+        const { materials, labor, warning } = await pricingResponse.json();
+
+        if (warning) {
+            console.warn(`⚠️ Fallback applied in pricing-bundle: ${warning}`);
+            const notice = document.getElementById('fallback-warning');
+            if (notice) {
+                notice.textContent = warning;
+                notice.style.display = 'block';
+            }
+        }
+
+        console.log('Pricing bundle materials:', materials);
+        console.log('Pricing bundle labor:', labor);
+
+        // ✅ Material cost
+        let materialCost = 0;
+        if (typeof formulaConfig.calculateMaterialCost === 'function') {
+            materialCost = formulaConfig.calculateMaterialCost(quantity, materials, inputs);
+        } else {
+            materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
+        }
+
+        // ✅ Labor cost
+        let laborCost = 0;
+        if (typeof formulaConfig.calculateLaborCost === 'function') {
+            laborCost = formulaConfig.calculateLaborCost(inputs, labor).laborCost;
+        } else {
+            const laborTask = formulaConfig.laborTasks?.[0];
+            const dailyRate = laborTask ? labor[laborTask] || 0 : 0;
+            const laborCalc = SMM7_2023.calculateLaborCost(
+                quantity,
+                8,
+                1.0,
+                8,
+                dailyRate,
+                laborTask
+            );
+            laborCost = laborCalc?.laborCost || 0;
+        }
+
+        // ✅ Plant cost
+        let plantCost = 0;
+        const equipmentList = formulaConfig.equipment || [];
+        if (equipmentList.length > 0) {
+            try {
+                const plantData = await fetchPlantData();
+                const availablePlants = plantData.filter(p =>
+                    equipmentList.includes(p.equipment)
+                );
+                if (availablePlants.length > 0) {
+                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
+                } else {
+                    console.warn(`No available plants found for ${componentType}`);
+                }
+            } catch (plantError) {
+                console.error(`Plant data error for ${componentType}:`, plantError);
+            }
+        } else {
+            console.log(`No equipment required for ${componentType}`);
+        }
+
+        // ✅ Financials
+        const baseCost = materialCost + laborCost + plantCost;
+        const overheads = (baseCost * 0.15) || 0;
+        const profit = ((baseCost + overheads) * 0.10) || 0;
+
+        const result = {
+            materialCost: Number(materialCost.toFixed(2)),
+            laborCost: Number(laborCost.toFixed(2)),
+            plantCost: Number(plantCost.toFixed(2)),
+            overheads: Number(overheads.toFixed(2)),
+            profit: Number(profit.toFixed(2)),
+            totalCost: Number((baseCost + overheads + profit).toFixed(2))
+        };
+        console.log('Composite rate result:', result);
+        return result;
+    } catch (error) {
+        console.error(`Composite rate error for ${componentType}:`, error);
+        return null;
+    }
 }
+
 
 // In generateSMM7BOQ, pass inputs to calculateCompositeRate:
 async function generateSMM7BOQ() {

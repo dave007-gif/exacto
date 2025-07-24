@@ -74,6 +74,11 @@
       </button>
     </div>
 
+    <div
+      id="fallback-warning"
+      style="display: none; color: orange; font-weight: bold; margin-top: 10px"
+    ></div>
+
     <!-- Currency Selector: Only for professionals/firms -->
     {% if 'professional' in current_user.roles or 'firm' in current_user.roles
     %}

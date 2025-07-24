@@ -38,7 +38,7 @@ Certainly. Below is a structured and professional `README.md` file for your **Ta
 - 🌍 **Region-Specific Pricing**
   - Material, labor, and plant rates fetched based on supplier region
 - 📍 **Haulage Distance Adjustment**
-  - Cost modifiers applied using predefined haulage bands
+p[]  - Cost modifiers applied using predefined haulage bands
 - 🔒 **Role-Based Access Control**
   - Students: learn and calculate (no PDF export)
   - Professionals/Firms: full access + exportable BOQ
