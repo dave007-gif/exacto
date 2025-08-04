@@ -7,33 +7,51 @@ import os
 from datetime import datetime, timedelta, timezone
 from flask_cors import CORS
 import requests
-from dotenv import load_dotenv
 import json
 import csv
 import io
+from dynaconf import FlaskDynaconf
+import re
+from flask import current_app as app
 
 
-# Load environment variables from .env file
-load_dotenv()
+from flask_admin import Admin  # <-- Moved outside conditionally
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'your_secret_key')  # Load from environment variable
+FlaskDynaconf(app, extensions_list="EXTENSIONS")
+
+# Load extensions except those manually handled (like flask_admin)
+if hasattr(app.config, "load_extensions"):
+    app.config.load_extensions()
+
+# Always register Flask-Admin manually to avoid duplicate blueprint issues
+admin = Admin(app)
+
+# Manually setup flask_debugtoolbar if in development mode
+if app.config.get("DEBUG"):
+    from flask_debugtoolbar import DebugToolbarExtension
+    toolbar = DebugToolbarExtension()
+    toolbar.init_app(app)
+
+# Enable CORS
 CORS(app, supports_credentials=True)
 
-# Add this region adjacency configuration at the top level of app.py
-REGION_NEIGHBORS = {
-    'Greater Accra': ['Eastern', 'Volta'],
-    'Ashanti': ['Eastern', 'Western', 'Central', 'Bono'],
-    'Western': ['Central', 'Ashanti'],
-    'Volta': ['Greater Accra', 'Eastern', 'Oti'],
-    'Eastern': ['Greater Accra', 'Ashanti', 'Volta', 'Bono East'],
-    'Central': ['Western', 'Ashanti', 'Greater Accra'],
-    # Add other regions as needed
-}
+# Secret key and API configs
+secret_key = app.config.SECRET_KEY
+SENDGRID_KEY = app.config.get("SENDGRID_API_KEY", None)
 
+
+# Add this region adjacency configuration at the top level of app.py
+
+# Remove old REGION_NEIGHBORS dict
+# Use this instead
 def get_neighboring_regions(region):
-    """Return list of adjacent regions for a given region"""
-    return REGION_NEIGHBORS.get(region, [])
+    neighbors = app.config.get("REGION_NEIGHBORS", {})
+    return neighbors.get(region, [])
+
+import os, certifi
+os.environ['SSL_CERT_FILE'] = certifi.where()
+
 
 # Initialize SQLite database
 def init_db():
@@ -102,26 +120,34 @@ def init_db():
         )
     ''')
 
-    # Projects table
+    # Projects table (refactored)
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS Projects (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
+            supplier_id INTEGER,  -- ✅ NEW: Preferred supplier (FK to Sources.id)
+
             project_name TEXT NOT NULL,
             project_location TEXT,
             supplier_location TEXT,
+
             total_cost REAL DEFAULT 0,
             formula_version TEXT DEFAULT '2023.1',
             rates_timestamp TEXT,
-            calculation_data TEXT, -- JSON blob of all components/inputs/results
-            calculation_snapshot TEXT, -- NEW: JSON blob of calculated outputs, prices, etc.
+
+            calculation_data TEXT,         -- JSON of user inputs + breakdowns
+            calculation_snapshot TEXT,     -- JSON of computed results + unit prices
             component_data TEXT,
             project_details TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP, -- NEW
+
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
+
             starred INTEGER DEFAULT 0,
             archived INTEGER DEFAULT 0,
-            FOREIGN KEY (user_id) REFERENCES users(id)
+
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (supplier_id) REFERENCES Sources(id) -- ✅ enforce supplier link
         )
     ''')
 
@@ -228,29 +254,29 @@ def populate_initial_data():
     cursor = conn.cursor()
 
     # Populate Sources table
-    cursor.execute('''
-        INSERT OR IGNORE INTO Sources (name, type, region, contact)
-        VALUES ('Ghacem Ltd', 'supplier', 'greater-accra', '123-456-789'),
-               ('Local Supplier', 'supplier', 'greater-accra', '987-654-321'),
-               ('Block Factory', 'supplier', 'greater-accra', '555-555-555')
-    ''')
+    #cursor.execute('''
+     #   INSERT OR IGNORE INTO Sources (name, type, region, contact)
+      #  VALUES ('Ghacem Ltd', 'supplier', 'greater-accra', '123-456-789'),
+       #        ('Local Supplier', 'supplier', 'greater-accra', '987-654-321'),
+        #       ('Block Factory', 'supplier', 'greater-accra', '555-555-555')
+    #''')
 
     # Get source IDs
-    cursor.execute('SELECT id FROM Sources WHERE name = "Ghacem Ltd"')
-    ghacem_id = cursor.fetchone()[0]
-    cursor.execute('SELECT id FROM Sources WHERE name = "Local Supplier"')
-    local_supplier_id = cursor.fetchone()[0]
-    cursor.execute('SELECT id FROM Sources WHERE name = "Block Factory"')
-    block_factory_id = cursor.fetchone()[0]
+    #cursor.execute('SELECT id FROM Sources WHERE name = "Ghacem Ltd"')
+    #ghacem_id = cursor.fetchone()[0]
+    #cursor.execute('SELECT id FROM Sources WHERE name = "Local Supplier"')
+    #local_supplier_id = cursor.fetchone()[0]
+    #cursor.execute('SELECT id FROM Sources WHERE name = "Block Factory"')
+    #block_factory_id = cursor.fetchone()[0]
 
     # Populate MaterialPrices table
     materials = [
-        (ghacem_id, 'cement', 85.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'sand', 30.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'aggregate', 60.00, '2023-01-01', '2023-12-31'),
-        (block_factory_id, 'blocks', 5.50, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'mortar', 40.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'water', 10.00, '2023-01-01', '2023-12-31')  # <-- Add this line
+        #(ghacem_id, 'cement', 85.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'sand', 30.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'aggregate', 60.00, '2023-01-01', '2023-12-31'),
+        #(block_factory_id, 'blocks', 5.50, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'mortar', 40.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'water', 10.00, '2023-01-01', '2023-12-31')  # <-- Add this line
     ]
     #cursor.executemany('''
      #   INSERT OR IGNORE INTO MaterialPrices (source_id, material, unit_cost, valid_from, valid_to)
@@ -259,13 +285,13 @@ def populate_initial_data():
 
     # Populate LaborRates table
     labor_rates = [
-        (local_supplier_id, 'tree cutting 600-1500', 20.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'tree cutting 1500-3000', 35.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'tree cutting over 3000', 60.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'site clearance', 2.50, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'excavation', 15.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'bricklaying', 25.00, '2023-01-01', '2023-12-31'),
-        (local_supplier_id, 'concreting', 30.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'tree cutting 600-1500', 20.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'tree cutting 1500-3000', 35.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'tree cutting over 3000', 60.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'site clearance', 2.50, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'excavation', 15.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'bricklaying', 25.00, '2023-01-01', '2023-12-31'),
+        #(local_supplier_id, 'concreting', 30.00, '2023-01-01', '2023-12-31'),
     ]
     #cursor.executemany('''
      #   INSERT OR IGNORE INTO LaborRates (source_id, task, rate, valid_from, valid_to)
@@ -274,14 +300,14 @@ def populate_initial_data():
 
     # Populate Adjustments table
     adjustments = [
-        ('default', 1.05, 1.0, 0.2),  # Default region
-        ('greater-accra', 1.07, 0.92, 0.25),  # Greater Accra region
-        ('ashanti', 1.06, 0.95, 0.22)  # Example for another region
+        #('default', 1.05, 1.0, 0.2),  # Default region
+        #('greater-accra', 1.07, 0.92, 0.25),  # Greater Accra region
+        #('ashanti', 1.06, 0.95, 0.22)  # Example for another region
     ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO Adjustments (region, concrete_waste_factor, labor_efficiency, thickness)
-        VALUES (?, ?, ?, ?)
-    ''', adjustments)
+    #cursor.executemany('''
+        #INSERT OR IGNORE INTO Adjustments (region, concrete_waste_factor, labor_efficiency, thickness)
+        #VALUES (?, ?, ?, ?)
+    #''', adjustments)
 
     # Populate Plants table
     plants = [
@@ -435,47 +461,61 @@ def log_activity(description):
         return wrapper
     return decorator
 
-def handle_material_upload(rows):
-    required = {'material', 'unit_cost', 'valid_from', 'valid_to', 'source'}
+# Refactored handle_*_upload() functions with detailed row-level error messages and Dynaconf-safe config access
+
+def handle_material_upload(csv_data):
+    config = app.config
+    required_fields = config.get("REQUIRED_MATERIAL_FIELDS", [])
+    valid_regions = config.get("VALID_REGIONS", [])
+    date_pattern = re.compile(config.get("REGEX_PATTERNS.date", r"^\d{4}-\d{2}-\d{2}$"))
+    material_pattern = re.compile(config.get("REGEX_PATTERNS.material_name", r".+"))
+    min_cost = config.get("MIN_UNIT_COST", 1)
+    max_cost = config.get("MAX_UNIT_COST", 1000)
+
     inserted, skipped, errors = 0, 0, []
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-
-        for i, row in enumerate(rows, 1):
-            if not required.issubset(row.keys()):
-                errors.append(f"Row {i} missing required fields")
+        for i, row in enumerate(csv_data, 1):
+            if not all(field in row and row[field].strip() for field in required_fields):
                 skipped += 1
+                errors.append(f"Row {i}: Missing required fields")
                 continue
 
             try:
-                material = row['material'].strip()
-                unit_cost = float(row['unit_cost'])
-                valid_from = row['valid_from']
-                valid_to = row['valid_to']
-                source_name = row['source'].strip()
+                material = row["material"].strip()
+                unit_cost = float(row["unit_cost"])
+                valid_from = row["valid_from"].strip()
+                valid_to = row["valid_to"].strip()
+                region = row["region"].strip()
+                source_name = row.get("source", "unknown").strip()
 
-                if unit_cost <= 0:
-                    errors.append(f"Row {i}: unit_cost must be positive")
-                    skipped += 1
-                    continue
+                if not material_pattern.match(material):
+                    raise ValueError("Invalid material name format")
 
-                # Get or create source
-                cursor.execute('SELECT id FROM Sources WHERE name = ?', (source_name,))
+                if not date_pattern.match(valid_from) or not date_pattern.match(valid_to):
+                    raise ValueError("Invalid date format (yyyy-mm-dd expected)")
+
+                if not (min_cost <= unit_cost <= max_cost):
+                    raise ValueError(f"unit_cost {unit_cost} must be between {min_cost} and {max_cost}")
+
+                if region not in valid_regions:
+                    errors.append(f"Row {i}: Unknown region '{region}' — fallback may apply")
+
+                cursor.execute('SELECT id FROM Sources WHERE name = ? AND region = ?', (source_name, region))
                 src = cursor.fetchone()
                 if not src:
                     cursor.execute('INSERT INTO Sources (name, type, region) VALUES (?, ?, ?)',
-                                   (source_name, 'supplier', 'unknown'))
+                                   (source_name, 'supplier', region))
                     source_id = cursor.lastrowid
                 else:
                     source_id = src[0]
 
-                # Avoid duplicates
-                cursor.execute('''
-                    SELECT 1 FROM MaterialPrices WHERE material=? AND source_id=? AND valid_from=?
-                ''', (material, source_id, valid_from))
+                cursor.execute('SELECT 1 FROM MaterialPrices WHERE material=? AND source_id=? AND valid_from=?',
+                               (material, source_id, valid_from))
                 if cursor.fetchone():
                     skipped += 1
+                    errors.append(f"Row {i}: Material '{material}' already exists for this source and date — skipped")
                     continue
 
                 cursor.execute('''
@@ -485,15 +525,20 @@ def handle_material_upload(rows):
                 inserted += 1
 
             except Exception as e:
-                errors.append(f"Row {i}: {str(e)}")
                 skipped += 1
+                errors.append(f"Row {i}: {str(e)}")
 
         conn.commit()
     return inserted, skipped, errors
 
-
 def handle_labor_upload(rows):
-    required = {'task', 'rate', 'valid_from', 'valid_to', 'source'}
+    config = app.config
+    required = set(config.get("REQUIRED_LABOR_FIELDS", []))
+    valid_regions = config.get("VALID_REGIONS", [])
+    regex = config.get("REGEX_PATTERNS", {})
+    thresholds = config.get("LABOR_THRESHOLDS", {})
+    date_pattern = re.compile(regex.get("date", r"^\d{4}-\d{2}-\d{2}$"))
+
     inserted, skipped, errors = 0, 0, []
 
     with sqlite3.connect('users.db') as conn:
@@ -501,38 +546,41 @@ def handle_labor_upload(rows):
 
         for i, row in enumerate(rows, 1):
             if not required.issubset(row.keys()):
-                errors.append(f"Row {i} missing required fields")
+                errors.append(f"Row {i}: Missing required fields")
                 skipped += 1
                 continue
 
             try:
-                task = row['task'].strip()
-                rate = float(row['rate'])
-                valid_from = row['valid_from']
-                valid_to = row['valid_to']
-                source_name = row['source'].strip()
+                task = row["task"].strip()
+                rate = float(row["rate"])
+                region = row["region"].strip()
+                valid_from = row["valid_from"].strip()
+                valid_to = row["valid_to"].strip()
+                source = row.get("source", "unknown").strip()
 
-                if rate <= 0:
-                    errors.append(f"Row {i}: rate must be positive")
-                    skipped += 1
-                    continue
+                if not date_pattern.match(valid_from) or not date_pattern.match(valid_to):
+                    raise ValueError("Invalid date format")
 
-                # Get or create source
-                cursor.execute('SELECT id FROM Sources WHERE name = ?', (source_name,))
+                if region not in valid_regions:
+                    errors.append(f"Row {i}: Unknown region '{region}' — fallback may apply")
+
+                if not (thresholds.get("min_rate", 0) <= rate <= thresholds.get("max_rate", 1000)):
+                    raise ValueError(f"Rate {rate} out of range")
+
+                cursor.execute('SELECT id FROM Sources WHERE name = ? AND region = ?', (source, region))
                 src = cursor.fetchone()
                 if not src:
                     cursor.execute('INSERT INTO Sources (name, type, region) VALUES (?, ?, ?)',
-                                   (source_name, 'supplier', 'unknown'))
+                                   (source, 'supplier', region))
                     source_id = cursor.lastrowid
                 else:
                     source_id = src[0]
 
-                # Avoid duplicates
-                cursor.execute('''
-                    SELECT 1 FROM LaborRates WHERE task=? AND source_id=? AND valid_from=?
-                ''', (task, source_id, valid_from))
+                cursor.execute('SELECT 1 FROM LaborRates WHERE task=? AND source_id=? AND valid_from=?',
+                               (task, source_id, valid_from))
                 if cursor.fetchone():
                     skipped += 1
+                    errors.append(f"Row {i}: Task '{task}' already exists for this source and date — skipped")
                     continue
 
                 cursor.execute('''
@@ -548,8 +596,12 @@ def handle_labor_upload(rows):
         conn.commit()
     return inserted, skipped, errors
 
+
 def handle_plant_upload(rows):
-    required = {'equipment', 'daily_rate', 'duration_per_unit'}
+    config = app.config
+    required = set(config.get("REQUIRED_PLANT_FIELDS", []))
+    thresholds = config.get("PLANT_THRESHOLDS", {})
+
     inserted, skipped, errors = 0, 0, []
 
     with sqlite3.connect('users.db') as conn:
@@ -557,32 +609,31 @@ def handle_plant_upload(rows):
 
         for i, row in enumerate(rows, 1):
             if not required.issubset(row.keys()):
-                errors.append(f"Row {i} missing required fields")
+                errors.append(f"Row {i}: Missing required fields")
                 skipped += 1
                 continue
 
             try:
                 equipment = row['equipment'].strip()
                 daily_rate = float(row['daily_rate'])
-                duration_per_unit = float(row['duration_per_unit'])
+                duration = float(row['duration_per_unit'])
 
-                if daily_rate <= 0 or duration_per_unit <= 0:
-                    errors.append(f"Row {i}: daily_rate and duration_per_unit must be positive")
-                    skipped += 1
-                    continue
+                if not (thresholds.get("min_rate", 0) <= daily_rate <= thresholds.get("max_rate", 10000)):
+                    raise ValueError(f"Invalid daily rate {daily_rate}")
 
-                # Avoid duplicates
-                cursor.execute('''
-                    SELECT 1 FROM Plants WHERE equipment=?
-                ''', (equipment,))
+                if not (0.01 <= duration <= 100):
+                    raise ValueError(f"Invalid duration per unit {duration}")
+
+                cursor.execute('SELECT 1 FROM Plants WHERE equipment=?', (equipment,))
                 if cursor.fetchone():
                     skipped += 1
+                    errors.append(f"Row {i}: Equipment '{equipment}' already exists — skipped")
                     continue
 
                 cursor.execute('''
                     INSERT INTO Plants (equipment, daily_rate, duration_per_unit)
                     VALUES (?, ?, ?)
-                ''', (equipment, daily_rate, duration_per_unit))
+                ''', (equipment, daily_rate, duration))
                 inserted += 1
 
             except Exception as e:
@@ -592,14 +643,124 @@ def handle_plant_upload(rows):
         conn.commit()
     return inserted, skipped, errors
 
-def log_admin_upload(admin_id, category, filename):
+def handle_adjustment_upload(rows):
+    config = app.config
+    required = set(config.get("REQUIRED_ADJUSTMENT_FIELDS", []))
+    thresholds = config.get("ADJUSTMENT_THRESHOLDS", {})
+
+    inserted, skipped, errors = 0, 0, []
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        for i, row in enumerate(rows, 1):
+            if not required.issubset(row.keys()):
+                errors.append(f"Row {i}: Missing required fields")
+                skipped += 1
+                continue
+
+            try:
+                region = row["region"].strip().lower()
+                cwf = float(row["concrete_waste_factor"])
+                eff = float(row["labor_efficiency"])
+                thick = float(row["thickness"])
+
+                if not (thresholds.get("min_factor", 0.5) <= cwf <= thresholds.get("max_factor", 2.0)):
+                    raise ValueError("concrete_waste_factor out of range")
+
+                if not (thresholds.get("min_factor", 0.5) <= eff <= thresholds.get("max_factor", 2.0)):
+                    raise ValueError("labor_efficiency out of range")
+
+                if not (thresholds.get("min_thickness", 0.01) <= thick <= thresholds.get("max_thickness", 1.0)):
+                    raise ValueError("thickness out of range")
+
+                cursor.execute('SELECT 1 FROM Adjustments WHERE region = ?', (region,))
+                if cursor.fetchone():
+                    cursor.execute('''
+                        UPDATE Adjustments
+                        SET concrete_waste_factor = ?, labor_efficiency = ?, thickness = ?
+                        WHERE region = ?
+                    ''', (cwf, eff, thick, region))
+                else:
+                    cursor.execute('''
+                        INSERT INTO Adjustments (region, concrete_waste_factor, labor_efficiency, thickness)
+                        VALUES (?, ?, ?, ?)
+                    ''', (region, cwf, eff, thick))
+
+                inserted += 1
+
+            except Exception as e:
+                errors.append(f"Row {i}: {str(e)}")
+                skipped += 1
+
+        conn.commit()
+    return inserted, skipped, errors
+
+def handle_source_upload(rows):
+    config = app.config
+    required = set(config.get("REQUIRED_SOURCES_FIELDS", []))
+    name_pattern = re.compile(config.get("REGEX_PATTERNS.supplier_name", r".+"))
+    phone_pattern = re.compile(config.get("REGEX_PATTERNS.phone_number", r".+"))
+
+    inserted, skipped, errors = 0, 0, []
+
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+
+        for i, row in enumerate(rows, 1):
+            if not required.issubset(row.keys()):
+                skipped += 1
+                errors.append(f"Row {i}: Missing required fields")
+                continue
+
+            try:
+                name = row["name"].strip()
+                type_ = row["type"].strip().lower()
+                region = row["region"].strip()
+                contact = row["contact"].strip()
+
+                if type_ not in {"supplier", "manufacturer"}:
+                    raise ValueError("Invalid source type")
+
+                if not name_pattern.match(name):
+                    raise ValueError("Invalid supplier name format")
+
+                if not phone_pattern.match(contact):
+                    raise ValueError("Invalid contact format")
+
+                cursor.execute('SELECT id FROM Sources WHERE name = ? AND region = ?', (name, region))
+                existing = cursor.fetchone()
+                if existing:
+                    cursor.execute('''
+                        UPDATE Sources
+                        SET type = ?, contact = ?
+                        WHERE id = ?
+                    ''', (type_, contact, existing[0]))
+                    errors.append(f"Row {i}: Supplier '{name}' updated in region '{region}'")
+                else:
+                    cursor.execute('''
+                        INSERT INTO Sources (name, type, region, contact)
+                        VALUES (?, ?, ?, ?)
+                    ''', (name, type_, region, contact))
+                    inserted += 1
+
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {str(e)}")
+
+        conn.commit()
+
+    return inserted, skipped, errors
+
+def log_admin_upload(admin_id, category, filename, inserted, skipped):
+    description = f'Uploaded {category} file: {filename} (inserted={inserted}, skipped={skipped})'
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO user_activity (user_id, activity_type, description)
             VALUES (?, ?, ?)
-        ''', (admin_id, 'upload_csv', f'Uploaded {category} file: {filename}'))
+        ''', (admin_id, 'upload_csv', description))
         conn.commit()
+
 
 
 # Password Reset Routes
@@ -621,7 +782,7 @@ def forgot_password():
     # Generate reset token (use secrets in production)
     import secrets
     token = secrets.token_urlsafe(32)
-    expiration = datetime.now(timezone.utc) + timedelta(hours=1)
+    expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('PASSWORD_RESET_EXPIRATION_HOURS', 1))
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
@@ -677,52 +838,65 @@ def get_formula_version():
 @token_required
 def get_adjustments():
     region = request.args.get('region', 'default').lower()
+
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT concrete_waste_factor, labor_efficiency, thickness FROM Adjustments WHERE region = ?', (region,))
+        cursor.execute('''
+            SELECT concrete_waste_factor, labor_efficiency, thickness
+            FROM Adjustments
+            WHERE region = ?
+        ''', (region,))
         result = cursor.fetchone()
 
-    if not result:
-        return jsonify({'message': f'Adjustments for region "{region}" not found'}), 404
+    if result:
+        concrete_waste_factor, labor_efficiency, thickness = result
+    else:
+        # 🟡 Fall back to Dynaconf defaults if not found in DB
+        concrete_waste_factor = app.config.get("DEFAULT_CONCRETE_WASTE_FACTOR", 1.05)
+        labor_efficiency = app.config.get("DEFAULT_LABOR_EFFICIENCY", 1.0)
+        thickness = app.config.get("DEFAULT_THICKNESS", 0.2)
 
-    concrete_waste_factor, labor_efficiency, thickness = result
     return jsonify({
+        'region': region,
         'concrete_waste_factor': concrete_waste_factor,
         'labor_efficiency': labor_efficiency,
-        'thickness': thickness
+        'thickness': thickness,
+        'source': 'database' if result else 'default_config'
     })
 
+
+from dynaconf import settings
 from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
 def send_verification_email(to_email, token):
-    verify_link = f'http://127.0.0.1:5000/verify-email/{token}'
-    # Replace with domain for production
+    verify_link = f"{settings.BASE_URL}/verify-email/{token}"
     message = Mail(
-        from_email='middle_child13555@protonmail.com',  # Use a verified sender email
+        from_email=settings.SENDER_EMAIL,
         to_emails=to_email,
         subject='Verify Your Account',
         html_content=f'<p>Click <a href="{verify_link}">here</a> to verify your account.</p>'
     )
     try:
-        sg = SendGridAPIClient(os.environ.get('SENDGRID_API_KEY'))
+        sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
         sg.send(message)
     except Exception as e:
-        print(f"Error sending verification email: {e}")
+        print(f"❌ Error sending verification email: {e}")
+
 
 def send_password_reset_email(to_email, token):
-    reset_link = f'http://127.0.0.1:5000/reset-password/{token}'  # Replace with domain for production
+    reset_link = f"{settings.BASE_URL}/reset-password/{token}"
     message = Mail(
-        from_email='middle_child13555@protonmail.com',  # Use a verified sender email
+        from_email=settings.SENDER_EMAIL,
         to_emails=to_email,
         subject='Password Reset Request',
         html_content=f'<p>Click <a href="{reset_link}">here</a> to reset your password.</p>'
     )
     try:
-        sg = SendGridAPIClient(os.environ.get('SENDGRID_API_KEY'))
+        sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
         sg.send(message)
     except Exception as e:
-        print(f"Error sending reset email: {e}")
+        print(f"❌ Error sending reset email: {e}")
 
 
 # GET /signup
@@ -813,7 +987,7 @@ def login():
         'email': email,
         'user_id': user_id,
         'roles': roles,
-        'exp': datetime.now(timezone.utc) + timedelta(hours=1)
+        'exp': datetime.now(timezone.utc) + timedelta(hours=app.config.get('JWT_EXPIRATION_HOURS', 1))
     }, app.config['SECRET_KEY'], algorithm="HS256")
 
     # 🔁 Redirect based on role
@@ -881,7 +1055,7 @@ def resend_verification():
     # Generate verification token
     import secrets
     token = secrets.token_urlsafe(32)
-    expiration = datetime.now(timezone.utc) + timedelta(hours=1)
+    expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('EMAIL_VERIFICATION_EXPIRATION_HOURS', 24))
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
@@ -913,7 +1087,7 @@ def resend_reset_link():
     # Generate new reset token
     import secrets
     token = secrets.token_urlsafe(32)
-    expiration = datetime.now(timezone.utc) + timedelta(hours=1)
+    expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('PASSWORD_RESET_EXPIRATION_HOURS', 1))
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
@@ -940,25 +1114,28 @@ def upload_price_csv(category):
     if not file.filename.endswith('.csv'):
         return jsonify({'message': 'File must be a CSV'}), 400
 
-    # Read CSV rows
     stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
     csv_data = list(csv.DictReader(stream))
 
-    # Validate & insert based on category
     if category == 'materials':
         inserted, skipped, errors = handle_material_upload(csv_data)
     elif category == 'labor':
         inserted, skipped, errors = handle_labor_upload(csv_data)
     elif category == 'plants':
         inserted, skipped, errors = handle_plant_upload(csv_data)
+    elif category == 'adjustments':
+        inserted, skipped, errors = handle_adjustment_upload(csv_data)
+    elif category == 'sources':
+        inserted, skipped, errors = handle_source_upload(csv_data)
     else:
         return jsonify({'message': f'Unknown category: {category}'}), 400
 
-    # Log admin activity
-    log_admin_upload(request.user_id, category, file.filename)
+    # ✅ Log upload
+    log_admin_upload(request.user_id, category, file.filename, inserted, skipped)
 
     return jsonify({
-        'message': f'{category.title()} prices uploaded',
+        'message': f'{category.title()} data uploaded',
+        'category': category,
         'inserted': inserted,
         'skipped': skipped,
         'errors': errors
@@ -969,8 +1146,8 @@ def setup_admin():
     import sqlite3
     from werkzeug.security import generate_password_hash
 
-    email = 'admin@gmail.com'
-    raw_password = '1234'  # Set it safely here
+    email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
+    raw_password = app.config.get('ADMIN_PASSWORD', '1234')  # Set it safely here
     hashed_password = generate_password_hash(raw_password)
 
     try:
@@ -1124,12 +1301,14 @@ def legacy_create_project():
 @log_activity("Created new project")
 def api_create_project():
     data = request.json
-    project_name = data.get('project_name')
+    project_name = data.get('name') or data.get('project_name')  # Allow either field
     project_loc = data.get('project_location')
     supplier_loc = data.get('supplier_location')
+    supplier_id = data.get('supplier_id')  # ✅ Accept supplier_id
     formula_version = data.get('formula_version', '2023.1')
     rates_timestamp = data.get('rates_timestamp')
-    calculation_data = data.get('calculation_data', '{}')  # JSON string
+    calculation_data = data.get('calculation_data', '{}')
+    total_cost = data.get('total_cost', 0)
 
     if not project_name:
         return jsonify({'message': 'Project name required'}), 400
@@ -1139,17 +1318,20 @@ def api_create_project():
         cursor.execute('''
             INSERT INTO Projects (
                 user_id, project_name, project_location, supplier_location,
-                formula_version, rates_timestamp, calculation_data, total_cost
+                formula_version, rates_timestamp, calculation_data, total_cost,
+                supplier_id  -- ✅ New column
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             request.user_id, project_name, project_loc, supplier_loc,
-            formula_version, rates_timestamp, calculation_data, data.get('total_cost', 0)
+            formula_version, rates_timestamp, calculation_data, total_cost,
+            supplier_id  # ✅ Store it
         ))
         project_id = cursor.lastrowid
         conn.commit()
 
     return jsonify({'message': 'Project created', 'project_id': project_id}), 201
+
 
 @app.route('/api/projects/<int:project_id>', methods=['GET'])
 @token_required
@@ -1157,23 +1339,34 @@ def api_get_project(project_id):
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
         cursor.execute('''
-            SELECT id, project_name, project_location, supplier_location,
-                   total_cost, formula_version, rates_timestamp, calculation_data, last_modified, project_details
-            FROM Projects
-            WHERE id = ? AND user_id = ?
+            SELECT P.id, P.project_name, P.project_location, P.supplier_location,
+                   P.total_cost, P.formula_version, P.rates_timestamp,
+                   P.calculation_data, P.last_modified, P.project_details,
+                   S.name as supplier_name, S.region as supplier_region, S.contact as supplier_contact
+            FROM Projects P
+            LEFT JOIN Sources S ON P.supplier_id = S.id
+            WHERE P.id = ? AND P.user_id = ?
         ''', (project_id, request.user_id))
         row = cursor.fetchone()
+
     if not row:
         return jsonify({'message': 'Project not found'}), 404
-    keys = ['id', 'project_name', 'project_location', 'supplier_location',
-            'total_cost', 'formula_version', 'rates_timestamp', 'calculation_data', 'last_modified', 'project_details']
+
+    keys = [
+        'id', 'project_name', 'project_location', 'supplier_location',
+        'total_cost', 'formula_version', 'rates_timestamp',
+        'calculation_data', 'last_modified', 'project_details',
+        'supplier_name', 'supplier_region', 'supplier_contact'
+    ]
     project = dict(zip(keys, row))
+
     # Parse project_details JSON if present
     if project.get('project_details'):
         try:
             project['project_details'] = json.loads(project['project_details'])
         except Exception:
             project['project_details'] = None
+
     return jsonify(project)
 
 @app.route('/api/projects/<int:project_id>', methods=['PUT'])
@@ -1206,23 +1399,64 @@ def api_update_project(project_id):
 
     return jsonify({'message': 'Project updated'})
 
-# Supplier Management Endpoints
+
+
+# --- Supplier Management Endpoints ---
+
+@app.route('/suppliers')
+@role_required('professional', 'firm')
+def supplier_page():
+    return render_template('suppliers.html')
+
+
+@app.route('/api/suppliers', methods=['GET'])
+@token_required
+def list_suppliers():
+    with sqlite3.connect('users.db') as conn:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT id, name, region, contact FROM Sources WHERE type = "supplier"')
+        suppliers = [dict(row) for row in cursor.fetchall()]
+
+    return jsonify(suppliers)
+
+
 @app.route('/api/suppliers', methods=['POST'])
 @role_required('professional', 'firm')
 def add_supplier():
-    data = request.json
-    name = data.get('name')
-    region = data.get('region')
+    data = request.json or {}
+    name = data.get('name', '').strip()
+    region = data.get('region', '').strip()
+    contact = data.get('contact', '').strip()
+
+    if not name or not region:
+        return jsonify({'message': 'Name and region are required'}), 400
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
+
+        # Check for existing supplier with same name and region
+        cursor.execute('SELECT id FROM Sources WHERE name = ? AND region = ? AND type = "supplier"', (name, region))
+        existing = cursor.fetchone()
+        if existing:
+            return jsonify({'message': f"Supplier '{name}' in region '{region}' already exists."}), 409
+
         cursor.execute('''
-            INSERT INTO Sources (name, type, region)
-            VALUES (?, 'supplier', ?)
-        ''', (name, region))
+            INSERT INTO Sources (name, type, region, contact)
+            VALUES (?, 'supplier', ?, ?)
+        ''', (name, region, contact or None))
+        supplier_id = cursor.lastrowid
         conn.commit()
 
-    return jsonify({'message': 'Supplier added'}), 201
+    return jsonify({
+        'message': 'Supplier added',
+        'supplier': {
+            'id': supplier_id,
+            'name': name,
+            'region': region,
+            'contact': contact or ''
+        }
+    }), 201
 
 @app.route('/materials', methods=['GET'])
 @token_required
@@ -1247,7 +1481,10 @@ def get_labor_rates():
 @token_required
 def get_pricing_bundle():
     region = request.args.get('region', 'default').lower()
-    fallback_applied = False
+    fallback_enabled = app.config.get("FALLBACK_ENABLED", True)
+    fallback_order = app.config.get("FALLBACK_ORDER", ["neighbor", "national"])
+    max_depth = app.config.get("MAX_FALLBACK_DEPTH", 2)
+    fallback_applied = None
 
     def fetch_data(region_option):
         with sqlite3.connect('users.db') as conn:
@@ -1267,25 +1504,32 @@ def get_pricing_bundle():
 
         return materials, labor
 
-    # Try original region
     materials, labor = fetch_data(region)
+    fallback_depth = 0
 
-    if not materials or not labor:
-        # Try neighboring regions
-        for neighbor in get_neighboring_regions(region):
-            m, l = fetch_data(neighbor)
-            if not materials: materials = m
-            if not labor: labor = l
-            if materials or labor:
-                fallback_applied = True
+    if fallback_enabled:
+        for method in fallback_order:
+            if (materials and labor) or fallback_depth >= max_depth:
                 break
 
-    if not materials or not labor:
-        # Try national fallback
-        m, l = fetch_data('national')
-        if not materials: materials = m
-        if not labor: labor = l
-        fallback_applied = True
+            if method == "neighbor":
+                for neighbor in get_neighboring_regions(region):
+                    m, l = fetch_data(neighbor)
+                    if not materials: materials = m
+                    if not labor: labor = l
+                    if materials or labor:
+                        fallback_applied = f"neighbor ({neighbor})"
+                        break
+
+            elif method == "national":
+                m, l = fetch_data("national")
+                if not materials: materials = m
+                if not labor: labor = l
+                if materials or labor:
+                    fallback_applied = "national"
+                    break
+
+            fallback_depth += 1
 
     response = {
         'materials': materials,
@@ -1294,9 +1538,10 @@ def get_pricing_bundle():
         'timestamp': datetime.now().isoformat()
     }
     if fallback_applied:
-        response['warning'] = 'Fallback applied'
+        response['warning'] = f"Fallback used: {fallback_applied}"
 
     return jsonify(response)
+
 
 
 @app.route('/smm-rules', methods=['GET'])
@@ -1318,58 +1563,59 @@ def get_material_price(material):
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
 
-        # 1. Try exact region
-        cursor.execute('''
-            SELECT unit_cost, valid_from, valid_to, s.region
-            FROM MaterialPrices m
-            JOIN Sources s ON m.source_id = s.id
-            WHERE m.material = ? AND s.region = ?
-            ORDER BY valid_from DESC
-            LIMIT 1
-        ''', (material, region))
-        result = cursor.fetchone()
+        fallback_enabled = app.config.get("FALLBACK_ENABLED", True)
+        fallback_order = app.config.get("FALLBACK_ORDER", ["neighbor", "national"])
+        max_depth = app.config.get("MAX_FALLBACK_DEPTH", 2)
+        fallback_depth = 0
 
-        # 2. Try neighboring regions
-        if not result:
-            for neighbor in get_neighboring_regions(region):
-                cursor.execute('''
-                    SELECT unit_cost, valid_from, valid_to, s.region
-                    FROM MaterialPrices m
-                    JOIN Sources s ON m.source_id = s.id
-                    WHERE m.material = ? AND s.region = ?
-                    ORDER BY valid_from DESC
-                    LIMIT 1
-                ''', (material, neighbor))
-                result = cursor.fetchone()
-                if result:
-                    fallback_used = neighbor
-                    break
-
-        # 3. National average
-        if not result:
+        def query(region_name):
             cursor.execute('''
-                SELECT AVG(unit_cost), MIN(valid_from), MAX(valid_to)
-                FROM MaterialPrices
-                WHERE material = ?
-            ''', (material,))
-            avg_result = cursor.fetchone()
-            if avg_result and avg_result[0] is not None:
-                result = (*avg_result, 'National Average')
-                fallback_used = 'national'
+                SELECT unit_cost, valid_from, valid_to, s.region
+                FROM MaterialPrices m
+                JOIN Sources s ON m.source_id = s.id
+                WHERE m.material = ? AND s.region = ?
+                ORDER BY valid_from DESC
+                LIMIT 1
+            ''', (material, region_name))
+            return cursor.fetchone()
+
+        result = query(region)
+
+        if not result and fallback_enabled:
+            for method in fallback_order:
+                if result or fallback_depth >= max_depth:
+                    break
+                if method == "neighbor":
+                    for neighbor in get_neighboring_regions(region):
+                        result = query(neighbor)
+                        if result:
+                            fallback_used = neighbor
+                            break
+                elif method == "national":
+                    cursor.execute('''
+                        SELECT AVG(unit_cost), MIN(valid_from), MAX(valid_to)
+                        FROM MaterialPrices
+                        WHERE material = ?
+                    ''', (material,))
+                    avg_result = cursor.fetchone()
+                    if avg_result and avg_result[0] is not None:
+                        result = (*avg_result, 'National Average')
+                        fallback_used = "national"
+                fallback_depth += 1
 
     if not result:
         return jsonify({'message': f'Price for material "{material}" not found'}), 404
 
     unit_cost, valid_from, valid_to, source_region = result
-
     return jsonify({
         'material': material,
         'unit_cost': round(unit_cost, 2),
         'valid_from': valid_from,
         'valid_to': valid_to,
         'region': source_region,
-        'fallback': fallback_used or None  # null if exact match
+        'fallback': fallback_used or None
     })
+
 
 
 # GET /api/labor/:trade
@@ -1382,50 +1628,50 @@ def get_labor_rate(trade):
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
 
-        # 1. Exact region
-        cursor.execute('''
-            SELECT rate, valid_from, valid_to, s.region
-            FROM LaborRates l
-            JOIN Sources s ON l.source_id = s.id
-            WHERE l.task = ? AND s.region = ?
-            ORDER BY valid_from DESC
-            LIMIT 1
-        ''', (trade, region))
-        result = cursor.fetchone()
+        fallback_enabled = app.config.get("FALLBACK_ENABLED", True)
+        fallback_order = app.config.get("FALLBACK_ORDER", ["neighbor", "national"])
+        max_depth = app.config.get("MAX_FALLBACK_DEPTH", 2)
+        fallback_depth = 0
 
-        # 2. Neighboring regions
-        if not result:
-            for neighbor in get_neighboring_regions(region):
-                cursor.execute('''
-                    SELECT rate, valid_from, valid_to, s.region
-                    FROM LaborRates l
-                    JOIN Sources s ON l.source_id = s.id
-                    WHERE l.task = ? AND s.region = ?
-                    ORDER BY valid_from DESC
-                    LIMIT 1
-                ''', (trade, neighbor))
-                result = cursor.fetchone()
-                if result:
-                    fallback_used = neighbor
-                    break
-
-        # 3. National average
-        if not result:
+        def query(region_name):
             cursor.execute('''
-                SELECT AVG(rate), MIN(valid_from), MAX(valid_to)
-                FROM LaborRates
-                WHERE task = ?
-            ''', (trade,))
-            avg_result = cursor.fetchone()
-            if avg_result and avg_result[0] is not None:
-                result = (*avg_result, 'National Average')
-                fallback_used = 'national'
+                SELECT rate, valid_from, valid_to, s.region
+                FROM LaborRates l
+                JOIN Sources s ON l.source_id = s.id
+                WHERE l.task = ? AND s.region = ?
+                ORDER BY valid_from DESC
+                LIMIT 1
+            ''', (trade, region_name))
+            return cursor.fetchone()
+
+        result = query(region)
+
+        if not result and fallback_enabled:
+            for method in fallback_order:
+                if result or fallback_depth >= max_depth:
+                    break
+                if method == "neighbor":
+                    for neighbor in get_neighboring_regions(region):
+                        result = query(neighbor)
+                        if result:
+                            fallback_used = neighbor
+                            break
+                elif method == "national":
+                    cursor.execute('''
+                        SELECT AVG(rate), MIN(valid_from), MAX(valid_to)
+                        FROM LaborRates
+                        WHERE task = ?
+                    ''', (trade,))
+                    avg_result = cursor.fetchone()
+                    if avg_result and avg_result[0] is not None:
+                        result = (*avg_result, 'National Average')
+                        fallback_used = "national"
+                fallback_depth += 1
 
     if not result:
         return jsonify({'message': f'Labor rate for task "{trade}" not found'}), 404
 
     rate, valid_from, valid_to, source_region = result
-
     return jsonify({
         'trade': trade,
         'rate': round(rate, 2),
@@ -1521,7 +1767,7 @@ def logout():
 
 @app.route('/api/fx-rates', methods=['GET'])
 def get_fx_rates():
-    API_KEY = os.getenv('EXCHANGERATE_API_KEY')
+    API_KEY = app.config.get('EXCHANGERATE_API_KEY')
     if not API_KEY:
         return jsonify({'error': 'FX API key not set'}), 500
     BASE_CURRENCY = request.args.get('base', 'GHS')

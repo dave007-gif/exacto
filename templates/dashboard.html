@@ -20,6 +20,12 @@
         <p>Role(s): {{ current_user.roles | join(', ') }}</p>
         <p>Verified: {% if current_user.verified %}✅{% else %}❌{% endif %}</p>
         <p>Active Projects: {{ project_count }}</p>
+
+        <!-- ✅ Preferred Supplier Display -->
+        <p>
+          Preferred Supplier:
+          <span id="preferred-supplier-name">None selected</span>
+        </p>
       </div>
 
       <!-- Role-Specific Sections -->

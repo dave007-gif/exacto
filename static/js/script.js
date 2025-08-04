@@ -54,6 +54,20 @@ let autoSaveTimer = null;
 let lastSavedData = null;
 let suppressFallbackUI = true;
 
+function getEffectiveRegion() {
+    const supplier = JSON.parse(localStorage.getItem('preferred_supplier'));
+    if (supplier && supplier.region) {
+        return supplier.region;
+    }
+    return getSelectedRegionFromSupplier();  // fallback to dropdown
+}
+
+function getSelectedRegionFromSupplier() {
+    const supplierSelect = document.getElementById('supplier-location');
+    const selectedOption = supplierSelect?.options[supplierSelect.selectedIndex];
+    return selectedOption?.getAttribute("data-region") || 'default';
+}
+
 // --- Project Details Banner/Editing Logic ---
 function updateProjectDetailsUI() {
     const details = boqData.projectDetails;
@@ -369,7 +383,7 @@ async function calculateComponentFromData(componentType, inputs) {
     // Un-suppress fallback UI so warnings can be shown
     suppressFallbackUI = false;
 
-    const region = getSelectedRegionFromSupplier();
+    const region = getEffectiveRegion();
 
     const prices = await fetchPricesForComponent(formulaKey, region);
 
@@ -1772,7 +1786,7 @@ async function checkFormulaVersion() {
 async function fetchInitialRates() {
     try {
         // Get selected region from supplier dropdown
-        const region = getSelectedRegionFromSupplier();
+        const region = getEffectiveRegion();
 
         const materials = ['cement', 'sand', 'aggregate', 'blocks', 'mortar'];
         for (const mat of materials) {
@@ -1943,7 +1957,7 @@ const SPECIAL_LABOR_FETCH_HANDLERS = {
         ];
         const laborRates = {};
         for (const task of girthTasks) {
-            const laborData = await fetchLaborRate(task, getSelectedRegionFromSupplier());
+            const laborData = await fetchLaborRate(task, getEffectiveRegion());
             if (laborData) {
                 laborRates[task] = laborData.rate;
 
@@ -2003,44 +2017,46 @@ async function fetchPricesForComponent(componentKey) {
         return null;
     }
 
-    const region = getSelectedRegionFromSupplier();
+    const region = getEffectiveRegion();  // uses hybrid logic
     const materialPrices = {};
+    const fallbackNotice = document.getElementById('fallback-warning');
+    fallbackNotice.innerHTML = '';  // Clear old warnings
+    fallbackNotice.style.display = 'none';
 
     for (const material of component.materials || []) {
-        const materialData = await fetchMaterialRate(material, getSelectedRegionFromSupplier());
+        const materialData = await fetchMaterialRate(material, region);
         if (materialData) {
             materialPrices[material] = materialData.unit_cost;
 
-            if (materialData.warning) {
-                const fallbackNotice = document.getElementById('fallback-warning');
-                fallbackNotice.textContent = `Fallback for "${material}" from ${materialData.region || 'unknown region'}: ${materialData.warning}`;
+            if (materialData.fallback) {
+                fallbackNotice.innerHTML += `
+                    ⚠️ Material <strong>${material}</strong> used fallback region: <em>${materialData.region}</em><br>
+                `;
                 fallbackNotice.style.display = 'block';
             }
         }
-
     }
-    console.log(`Material Prices for ${componentKey} in ${region}:`, materialPrices);
 
     let laborRates = {};
     if (SPECIAL_LABOR_FETCH_HANDLERS[componentKey]) {
         laborRates = await SPECIAL_LABOR_FETCH_HANDLERS[componentKey](component, region);
     } else {
         for (const task of component.laborTasks || []) {
-            const laborData = await fetchLaborRate(task, getSelectedRegionFromSupplier());
+            const laborData = await fetchLaborRate(task, region);
             if (laborData) {
                 laborRates[task] = laborData.rate;
 
-                if (laborData.warning) {
-                    const fallbackNotice = document.getElementById('fallback-warning');
-                    fallbackNotice.textContent = `Fallback for "${task}" from ${laborData.region || 'unknown region'}: ${laborData.warning}`;
+                if (laborData.fallback) {
+                    fallbackNotice.innerHTML += `
+                        ⚠️ Labor task <strong>${task}</strong> used fallback region: <em>${laborData.region}</em><br>
+                    `;
                     fallbackNotice.style.display = 'block';
                 }
             }
-
         }
     }
-    console.log(`Labor Rates for ${componentKey} in ${region}:`, laborRates);
 
+    console.log(`Fetched material + labor for "${componentKey}" from region: ${region}`);
     return { materialPrices, laborRates };
 }
 
@@ -2192,7 +2208,7 @@ function setupCalculateButtons() {
             // Un-suppress fallback UI so warnings can be shown
             suppressFallbackUI = false;
 
-            const region = getSelectedRegionFromSupplier();
+            const region = getEffectiveRegion();
 
             const prices = await fetchPricesForComponent(formulaKey, region);
 
@@ -2434,14 +2450,6 @@ function setupLogoutButton() {
     });
 }
 
-function getSelectedRegionFromSupplier() {
-    const supplierSelect = document.getElementById('supplier-location');
-    const selectedOption = supplierSelect?.options[supplierSelect.selectedIndex];
-    return selectedOption?.getAttribute("data-region") || 'default';
-}
-
-
-
 // Validation functions
 function validateInput(input) {
     const errorSpan = input.parentElement.querySelector('.error-message');
@@ -2528,7 +2536,7 @@ if (version !== storedVersion) {
 }
 
 // Fetch dynamic adjustments
-const region = getSelectedRegionFromSupplier(); // Example region
+const region = getEffectiveRegion(); // Example region
 const adjustmentsResponse = await fetch(`/api/adjustments?region=${region}`);
 const adjustments = await adjustmentsResponse.json();
 console.log("Adjustments:", adjustments);
@@ -2872,7 +2880,7 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
 
     try {
         // ✅ Get supplier region from dropdown
-        const region = getSelectedRegionFromSupplier();
+        const region = getEffectiveRegion();
 
         // ✅ Fetch pricing bundle based on region
         const pricingResponse = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(region)}`, {

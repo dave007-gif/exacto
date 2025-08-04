@@ -3,24 +3,68 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Upload Prices csvFile</title>
+    <title>Upload Prices CSV</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 700px;
+        margin: auto;
+        padding: 2rem;
+      }
+
+      h2 {
+        color: #333;
+      }
+
+      #upload-result {
+        margin-top: 1rem;
+        border-top: 1px solid #ccc;
+        padding-top: 1rem;
+        font-size: 0.95rem;
+      }
+
+      #upload-result details summary {
+        cursor: pointer;
+        font-weight: bold;
+        margin-top: 0.5rem;
+      }
+
+      #upload-result ul {
+        padding-left: 1.5rem;
+      }
+
+      #upload-result li {
+        color: crimson;
+        margin-bottom: 0.3rem;
+      }
+
+      label {
+        font-weight: bold;
+      }
+
+      select,
+      input[type="file"],
+      button {
+        margin-top: 0.3rem;
+      }
+    </style>
   </head>
   <body>
-    <!-- admin_upload.html -->
     <h2>Upload Price Data (Admin Only)</h2>
 
     <form id="upload-form">
-      <label for="category">Select Category:</label>
-      <select id="category" required>
-        <option value="">--Choose--</option>
+      <label for="upload-category">Select Category:</label><br />
+      <select name="category" id="upload-category" required>
         <option value="materials">Materials</option>
         <option value="labor">Labor</option>
         <option value="plants">Plants</option>
+        <option value="adjustments">Adjustments</option>
+        <option value="sources">Sources</option>
       </select>
 
       <br /><br />
 
-      <label for="csvFile">Select CSV file:</label>
+      <label for="csvFile">Select CSV file:</label><br />
       <input type="file" id="csvFile" accept=".csv" required />
 
       <br /><br />
@@ -29,19 +73,20 @@
     </form>
 
     <div id="upload-result"></div>
+
     <script>
       document
         .getElementById("upload-form")
         .addEventListener("submit", async function (e) {
           e.preventDefault();
 
-          const category = document.getElementById("category").value;
+          const category = document.getElementById("upload-category").value;
           const fileInput = document.getElementById("csvFile");
           const resultDiv = document.getElementById("upload-result");
-          resultDiv.innerText = ""; // ✅ Clear old message
+          resultDiv.innerHTML = ""; // Clear previous
 
           if (!category || fileInput.files.length === 0) {
-            resultDiv.innerText = "Please select a category and CSV file.";
+            resultDiv.innerText = "❗ Please select a category and CSV file.";
             return;
           }
 
@@ -55,17 +100,39 @@
               credentials: "include",
             });
 
-            const result = await response.json();
+            let result;
+            try {
+              result = await response.json();
+            } catch (err) {
+              resultDiv.innerHTML = `❌ Server returned an invalid response.`;
+              return;
+            }
 
             if (response.ok) {
-              resultDiv.innerHTML = `
-            ✅ <strong>${result.message}</strong><br>
-            ✔️ Inserted: ${result.inserted}<br>
-            ⚠️ Skipped: ${result.skipped}<br>
-            🗂️ Category: ${result.category}
+              const errors = result.errors || [];
+              let html = `
+              ✅ <strong>${result.message}</strong><br>
+              ✔️ Inserted: ${result.inserted}<br>
+              ⚠️ Skipped: ${result.skipped}<br>
+              🗂️ Category: ${result.category}<br>
             `;
+
+              if (errors.length > 0) {
+                html += `
+                <details>
+                  <summary>🔍 View ${
+                    errors.length
+                  } skipped rows with issues</summary>
+                  <ul>
+                    ${errors.map((e) => `<li>${e}</li>`).join("")}
+                  </ul>
+                </details>
+              `;
+              }
+
+              resultDiv.innerHTML = html;
             } else {
-              resultDiv.innerText = `❌ Error: ${
+              resultDiv.innerHTML = `❌ Upload failed: ${
                 result.message || response.statusText
               }`;
             }
