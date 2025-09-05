@@ -25,7 +25,7 @@
         <ul class="menu-links" id="menu-links">
           <li><a href="{{ url_for('main.index') }}">HOME</a></li>
           <li><a href="{{ url_for('main.about') }}">ABOUT</a></li>
-          <li><a href="{{ url_for('main.estimate') }}">SERVICES</a></li>
+          <li><a href="{{ url_for('main.dashboard') }}">SERVICES</a></li>
           <li><a href="{{ url_for('main.projects') }}">PROJECTS</a></li>
           <li><a href="{{ url_for('main.contact') }}">CONTACT</a></li>
           {% if current_user.is_authenticated %}
@@ -39,7 +39,6 @@
               </button>
 
               <ul class="user-dropdown-menu" id="userDropdown">
-                <li><a href="{{ url_for('main.dashboard') }}">Dashboard</a></li>
                 <li><a href="{{ url_for('auth_routes.logout') }}">Logout</a></li>
               </ul>
             </li>
@@ -49,8 +48,8 @@
           {% endif %}
         </ul>
       </div>
-
     </nav>
+
 
     <!-- Login Modal -->
     <div id="login-modal" class="modal">

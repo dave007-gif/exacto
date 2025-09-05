@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>User Profile</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/profile.css') }}">
+</head>
+<body>
+  <div class="profile-container">
+    <!-- Profile Header -->
+    <div class="profile-header">
+      <img src="{{ url_for('static', filename='uploads/user-avatar.jpg') }}" alt="User Image" class="profile-pic">
+      <h2 class="username">John Doe</h2>
+      <p class="user-email">johndoe@example.com</p>
+      <button class="edit-btn">Edit Profile</button>
+    </div>
+
+    <!-- Profile Info -->
+    <div class="profile-details">
+      <h3>Personal Information</h3>
+      <p><strong>Full Name:</strong> John Doe</p>
+      <p><strong>Email:</strong> johndoe@example.com</p>
+      <p><strong>Phone:</strong> +233 555 123 456</p>
+      <p><strong>Location:</strong> Accra, Ghana</p>
+    </div>
+
+    <!-- Security Settings -->
+    <div class="profile-details">
+      <h3>Security Settings</h3>
+      <button class="change-pass-btn">Change Password</button>
+      <button class="logout-btn">Logout</button>
+    </div>
+  </div>
+</body>
+</html>

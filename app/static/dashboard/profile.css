@@ -1,0 +1,62 @@
+body {
+  font-family: Arial, sans-serif;
+  background: #f0f0f0;
+  margin: 0;
+  padding: 20px;
+}
+
+.profile-container {
+  max-width: 600px;
+  margin: auto;
+  background: #fff;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+
+.profile-header {
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+.profile-pic {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.username {
+  margin: 10px 0 5px;
+}
+
+.user-email {
+  color: gray;
+  font-size: 0.9em;
+}
+
+.edit-btn,
+.change-pass-btn,
+.logout-btn {
+  margin-top: 10px;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.edit-btn {
+  background: #3498db;
+  color: white;
+}
+
+.change-pass-btn {
+  background: #f39c12;
+  color: white;
+}
+
+.logout-btn {
+  background: #e74c3c;
+  color: white;
+}

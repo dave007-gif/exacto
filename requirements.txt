@@ -1,0 +1,25 @@
+# Core web framework
+Flask==2.2.5           # 2.3.x breaks flask-debugtoolbar
+
+# Flask extensions
+flask-admin==1.6.1
+flask-cors==3.0.10
+flask-debugtoolbar==0.11.0  # compatible with Werkzeug <2.3
+
+# Configuration
+dynaconf==3.2.4        # stable latest that works with Flask 2.2
+
+# Security & JWT
+PyJWT==2.8.0
+itsdangerous==2.1.2    # secure serializer used by Flask internals
+
+# Environment loading (optional if using Dynaconf only)
+python-dotenv==1.0.0
+
+# HTTP requests
+requests==2.31.0
+sendgrid==6.11.0
+
+# Dependency for flask-debugtoolbar
+Werkzeug==2.2.3        # do not use >=2.3, breaks url_quote_plus
+Jinja2==3.0.3

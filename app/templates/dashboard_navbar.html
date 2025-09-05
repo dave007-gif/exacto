@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>EXACTO Dashboard</title>
+        <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/dashboard.css') }}">
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.6.0/css/all.min.css">
+    </head>
+    <body>
+        <!-- Dashboard Navbar -->
+        <nav class="dashboard-topbar">
+            <div class="topbar-left">
+                <div class="logo">EXACTO</div>
+                <a href="{{ url_for('main.index') }}" class="home-link">Home</a>
+            </div>
+
+            <div class="topbar-right">
+                <a href="#" class="topbar-icon" title="Notifications">
+                    <i class="fas fa-bell"></i>
+                    <span class="badge">3</span>
+                </a>
+                <a href="#" class="topbar-icon" title="Uploads">
+                    <i class="fas fa-upload"></i>
+                </a>
+                <div class="user-menu">
+                    <img src="{{ url_for('static', filename='uploads/user-avatar.jpg') }}" alt="User" class="user-avatar">
+                    <div class="dropdown">
+                        <a href="{{ url_for('main.profile') }}">Profile</a>
+                        <a href="{{ url_for('main.settings') }}">Settings</a>
+                        <a href="{{ url_for('auth_routes.logout') }}">Logout</a>
+                    </div>
+                </div>
+            </div>
+        </nav>
+    </body>
+</html>

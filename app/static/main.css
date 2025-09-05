@@ -553,7 +553,7 @@ body.dark .google-btn {
   position: absolute;
   top: 110%;
   right: 0;
-  background: #fff;
+  background: #61a7a76b;
   border-radius: 10px;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.1);
   min-width: 160px;
@@ -573,7 +573,7 @@ body.dark .google-btn {
 }
 
 .user-dropdown-menu a:hover {
-  background-color: #f5f5f5;
+  background-color: #8c8a8a;
 }
 
 /* Show menu */

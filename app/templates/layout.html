@@ -1,0 +1,22 @@
+<!-- templates/layout.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>{% block title %}Exacto{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/dashboard.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/estimate.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/materials.css') }}">
+
+</head>
+<body>
+   {% include 'dashboard_navbar.html' %}
+  <div class="main-container">
+    {% block content %}{% endblock %}
+  </div>
+  <script src="{{ url_for('static', filename='dashboard/dashboard.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard/estimate.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard/materials.js') }}"></script>
+
+</body>
+</html>

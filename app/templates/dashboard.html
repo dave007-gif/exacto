@@ -1,72 +1,577 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Exacto Dashboard</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard/dashboard.css') }}">
-  <script defer src="{{ url_for('static', filename='dashboard/dashboard.js') }}"></script>
-</head>
-<body>
-  <div class="dashboard">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <h2>Exacto</h2>
-      <nav>
-        <ul>
-          <li><a href="/dashboard">🏠 Dashboard</a></li>
-          <li><a href="/projects">📁 Projects</a></li>
-          <li><a href="/estimates">📐 Estimates</a></li>
-          <li><a href="/materials">🧱 Materials</a></li>
-          <li><a href="/clients">👥 Clients</a></li>
-          <li><a href="/settings">⚙️ Settings</a></li>
-          <li><a href="/logout">🚪 Logout</a></li>
-        </ul>
-      </nav>
-    </aside>
+<!-- templates/dashboard.html -->
+{% extends "layout.html" %}
 
-    <!-- Main Content -->
-    <main class="main-content">
-      <header class="topbar">
-        <h3>Welcome, {{ user.full_name }} 👋</h3>
-        <div class="stats">
-          <div class="card">
-            <p>Projects</p>
-            <strong id="total-projects">--</strong>
+{% block title %}Dashboard - Exacto{% endblock %}
+
+{% block content %}
+
+<div class="tab-container">
+  <div class="tab-buttons">
+    <button onclick="showTab('estimate')" class="active">Estimate</button>
+    <button onclick="showTab('materials')">Materials</button>
+    <button onclick="showTab('client')">Client</button>
+    <button onclick="showTab('settings')">Settings</button>
+  </div>
+
+  <div class="tab-content" id="estimate">
+    <section class="estimate-panel">
+        <header class="estimate-header">
+          <div>
+            <h2>Estimate — SMM7 (Western Sahara)</h2>
+            <p class="muted">Standard Method of Measurement (SMM7) style breakdown — rates in <strong>USD</strong>.</p>
           </div>
-          <div class="card">
-            <p>Estimates</p>
-            <strong id="total-estimates">--</strong>
+
+          <div class="estimate-actions">
+            <label for="fx-rate">USD → GHS rate</label>
+            <input id="fx-rate" type="number" step="0.01" value="14.0" title="Exchange rate (USD to GHS)">
+            <button id="convert-btn" class="btn secondary">Convert to GHS</button>
+            <button id="save-estimate" class="btn primary">Save Estimate</button>
+            <button id="export-pdf" class="btn outline">Export PDF</button>
           </div>
-          <div class="card">
-            <p>Materials</p>
-            <strong id="total-materials">--</strong>
-          </div>
-          <div class="card">
-            <p>Total Cost</p>
-            <strong id="total-cost">₵ --</strong>
-          </div>
+        </header>
+
+        <div class="estimate-body">
+
+          <!-- accordion of categories -->
+          <div class="accordion">
+
+            <!-- PRELIMINARIES -->
+            <div class="accordion-item" data-cat="prelim">
+              <button class="accordion-toggle">Preliminaries</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Site set up, mobilization, temporary works and permits.</p>
+                <table class="estimate-table" data-cat="prelim">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Site mobilization (lump sum)</td>
+                      <td>LS</td>
+                      <td><input class="qty" type="number" step="1" value="1"></td>
+                      <td><input class="rate" type="number" step="0.01" value="2500"></td>
+                      <td class="amount">2500.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Site security & fencing (perimeter)</td>
+                      <td>m</td>
+                      <td><input class="qty" type="number" step="1" value="100"></td>
+                      <td><input class="rate" type="number" step="0.01" value="5.5"></td>
+                      <td class="amount">550.00</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">3050.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- GROUNDWORK -->
+            <div class="accordion-item" data-cat="ground">
+              <button class="accordion-toggle">Groundwork</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Excavation, bedding, backfill and foundation formation.</p>
+                <table class="estimate-table" data-cat="ground">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Strip excavation (to formation)</td>
+                      <td>m³</td>
+                      <td><input class="qty" type="number" step="0.01" value="50"></td>
+                      <td><input class="rate" type="number" step="0.01" value="6.0"></td>
+                      <td class="amount">300.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Hardcore filling (compacted)</td>
+                      <td>m³</td>
+                      <td><input class="qty" type="number" step="0.01" value="20"></td>
+                      <td><input class="rate" type="number" step="0.01" value="12.0"></td>
+                      <td class="amount">240.00</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">540.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- CONCRETE -->
+            <div class="accordion-item" data-cat="concrete">
+              <button class="accordion-toggle">Concrete Work</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Reinforced concrete for foundations, columns and slabs.</p>
+                <table class="estimate-table" data-cat="concrete">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Plain concrete C20 (foundations)</td>
+                      <td>m³</td>
+                      <td><input class="qty" type="number" step="0.01" value="10"></td>
+                      <td><input class="rate" type="number" step="0.01" value="85.00"></td>
+                      <td class="amount">850.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Reinforced concrete C25 (beams/slabs)</td>
+                      <td>m³</td>
+                      <td><input class="qty" type="number" step="0.01" value="8"></td>
+                      <td><input class="rate" type="number" step="0.01" value="110.00"></td>
+                      <td class="amount">880.00</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">1730.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- MASONRY -->
+            <div class="accordion-item" data-cat="masonry">
+              <button class="accordion-toggle">Masonry / Blockwork</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Blockwork, bonding, pointing and movement joints.</p>
+                <table class="estimate-table" data-cat="masonry">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Blockwork 9in (with mortar)</td>
+                      <td>m²</td>
+                      <td><input class="qty" type="number" step="0.01" value="120"></td>
+                      <td><input class="rate" type="number" step="0.01" value="12.00"></td>
+                      <td class="amount">1440.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Plastering (two coats)</td>
+                      <td>m²</td>
+                      <td><input class="qty" type="number" step="0.01" value="220"></td>
+                      <td><input class="rate" type="number" step="0.01" value="4.00"></td>
+                      <td class="amount">880.00</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">2320.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- ROOFING -->
+            <div class="accordion-item" data-cat="roofing">
+              <button class="accordion-toggle">Roofing</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Timber or steel trusses, sheeting, insulation and gutters.</p>
+                <table class="estimate-table" data-cat="roofing">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Roof sheeting (corrugated)</td>
+                      <td>m²</td>
+                      <td><input class="qty" type="number" step="0.01" value="200"></td>
+                      <td><input class="rate" type="number" step="0.01" value="9.50"></td>
+                      <td class="amount">1900.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">1900.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- FINISHES -->
+            <div class="accordion-item" data-cat="finishes">
+              <button class="accordion-toggle">Finishes</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Floor finishes, painting, joinery finishes.</p>
+                <table class="estimate-table" data-cat="finishes">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Floor tiling (ceramic)</td>
+                      <td>m²</td>
+                      <td><input class="qty" type="number" step="0.01" value="150"></td>
+                      <td><input class="rate" type="number" step="0.01" value="12.00"></td>
+                      <td class="amount">1800.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Painting (two coats)</td>
+                      <td>m²</td>
+                      <td><input class="qty" type="number" step="0.01" value="400"></td>
+                      <td><input class="rate" type="number" step="0.01" value="1.8"></td>
+                      <td class="amount">720.00</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">2520.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- SERVICES -->
+            <div class="accordion-item" data-cat="services">
+              <button class="accordion-toggle">Services</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Plumbing, electrical and mechanical installations.</p>
+                <table class="estimate-table" data-cat="services">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Basic plumbing installation</td>
+                      <td>LS</td>
+                      <td><input class="qty" type="number" step="1" value="1"></td>
+                      <td><input class="rate" type="number" step="0.01" value="2200"></td>
+                      <td class="amount">2200.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Electrical wiring (per 100m²)</td>
+                      <td>LS</td>
+                      <td><input class="qty" type="number" step="1" value="1"></td>
+                      <td><input class="rate" type="number" step="0.01" value="1800"></td>
+                      <td class="amount">1800.00</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">4000.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- EXTERNAL WORKS -->
+            <div class="accordion-item" data-cat="external">
+              <button class="accordion-toggle">External Works</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Paving, drainage, landscaping, boundary walls.</p>
+                <table class="estimate-table" data-cat="external">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Paving (concrete)</td>
+                      <td>m²</td>
+                      <td><input class="qty" type="number" step="0.01" value="120"></td>
+                      <td><input class="rate" type="number" step="0.01" value="10.00"></td>
+                      <td class="amount">1200.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">1200.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <!-- PROVISIONAL/CONTINGENCIES -->
+            <div class="accordion-item" data-cat="provisional">
+              <button class="accordion-toggle">Provisional Sums & Contingencies</button>
+              <div class="accordion-panel">
+                <p class="cat-desc">Allowances and contingency percentages.</p>
+                <table class="estimate-table" data-cat="provisional">
+                  <thead><tr><th>#</th><th>Description</th><th>Unit</th><th>Qty</th><th>Rate (USD)</th><th>Amount (USD)</th><th></th></tr></thead>
+                  <tbody>
+                    <tr>
+                      <td>1</td>
+                      <td>Provisional sum (allowance)</td>
+                      <td>LS</td>
+                      <td><input class="qty" type="number" step="1" value="1"></td>
+                      <td><input class="rate" type="number" step="0.01" value="3000"></td>
+                      <td class="amount">3000.00</td>
+                      <td><button class="row-add">+</button></td>
+                    </tr>
+                    <tr>
+                      <td>2</td>
+                      <td>Contingency (%)</td>
+                      <td>%</td>
+                      <td><input class="qty" type="number" step="0.1" value="5"></td>
+                      <td><input class="rate" type="number" step="0.01" value="0"></td>
+                      <td class="amount">0.00</td>
+                      <td></td>
+                    </tr>
+                  </tbody>
+                  <tfoot>
+                    <tr><td colspan="5" class="text-right">Subtotal (USD)</td><td class="cat-subtotal">3000.00</td><td></td></tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+          </div> <!-- end accordion -->
+
+          <!-- floating summary panel -->
+          <aside class="estimate-summary" id="estimate-summary">
+            <h3>Summary</h3>
+            <div class="summary-list" id="summary-list">
+              <!-- Filled by JS: category subtotals -->
+            </div>
+            <div class="grand-total">
+              <div>Grand total (USD)</div>
+              <div id="grand-total-usd" class="big">0.00</div>
+            </div>
+            <div class="grand-total-converted" id="grand-total-ghs" style="display:none;">
+              <div>Grand total (GHS)</div>
+              <div id="grand-total-ghs-val" class="big">0.00</div>
+            </div>
+          </aside>
+
+        </div> <!-- end estimate-body -->
+    </section>
+  </div>
+
+  <div class="tab-content" id="materials">
+   <!-- templates/sections/materials.html -->
+    <div class="materials-panel">
+      <header class="materials-header">
+        <div>
+          <h3>Materials Price Book</h3>
+          <p class="muted">Master price list (USD). Edit cells, add rows, then Save to persist.</p>
+        </div>
+
+        <div class="materials-actions">
+          <input id="materials-search" placeholder="Search materials or category..." />
+          <button id="add-material" class="btn small">+ Add Material</button>
+          <button id="save-materials" class="btn primary small">Save</button>
+          <button id="export-materials" class="btn outline small">Export CSV</button>
         </div>
       </header>
 
-      <!-- Recent Activity -->
-      <section class="recent">
-        <h4>Recent Estimates</h4>
-        <table id="recent-estimates">
+      <div class="materials-body">
+        <table id="materials-table" class="materials-table">
           <thead>
             <tr>
-              <th>Project</th>
-              <th>Method</th>
-              <th>Cost</th>
-              <th>Status</th>
+              <th>#</th>
+              <th>Material</th>
+              <th>Unit</th>
+              <th>Price (USD)</th>
+              <th>Category</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
-            <!-- Rows injected via JS -->
+            <!-- rows rendered by JS -->
           </tbody>
         </table>
-      </section>
-    </main>
+      </div>
+    </div>
   </div>
-</body>
-</html>
+
+  <div class="tab-content" id="client">
+    <h2 class="tab-title">Client Details</h2>
+
+    <form id="client-form" class="form-layout">
+      <!-- Personal Info -->
+      <fieldset>
+        <legend>Personal Information</legend>
+        <div class="form-group">
+          <label for="client-name">Full Name</label>
+          <input type="text" id="client-name" name="client_name" placeholder="John Doe" required>
+        </div>
+
+        <div class="form-group">
+          <label for="client-phone">Phone Number</label>
+          <input type="text" id="client-phone" name="client_phone" placeholder="+233 20 000 0000" required>
+        </div>
+
+        <div class="form-group">
+          <label for="client-email">Email</label>
+          <input type="email" id="client-email" name="client_email" placeholder="email@example.com" required>
+        </div>
+      </fieldset>
+
+      <!-- Project Info -->
+      <fieldset>
+        <legend>Project Information</legend>
+        <div class="form-group">
+          <label for="client-company">Company (Optional)</label>
+          <input type="text" id="client-company" name="client_company" placeholder="Company Ltd.">
+        </div>
+
+        <div class="form-group">
+          <label for="client-address">Address / Location</label>
+          <textarea id="client-address" name="client_address" rows="3" placeholder="Enter project location"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label for="currency">Preferred Currency</label>
+          <select id="currency" name="currency">
+            <option value="USD">USD - US Dollar</option>
+            <option value="GHS">GHS - Ghanaian Cedi</option>
+            <option value="EUR">EUR - Euro</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="project-ref">Project Reference Code</label>
+          <input type="text" id="project-ref" name="project_ref" value="PRJ-001">
+        </div>
+      </fieldset>
+
+      <!-- Notes -->
+      <fieldset>
+        <legend>Additional Notes</legend>
+        <div class="form-group">
+          <textarea id="client-notes" name="client_notes" rows="4" placeholder="Any specific requirements?"></textarea>
+        </div>
+      </fieldset>
+
+      <!-- Submit -->
+      <div class="form-actions">
+        <button type="submit" class="btn-primary">💾 Save Client Details</button>
+      </div>
+    </form>
+  </div>
+
+
+  <div class="tab-content" id="settings">
+    <h2>Settings</h2>
+      <!-- General Preferences -->
+      <div class="settings-card">
+        <h3>General</h3>
+        <label>
+          Default Currency
+          <select>
+            <option>USD - US Dollar</option>
+            <option selected>GHS - Ghanaian Cedi</option>
+            <option>EUR - Euro</option>
+          </select>
+        </label>
+
+        <label>
+          Measurement Unit
+          <select>
+            <option>Meters (m)</option>
+            <option>Feet (ft)</option>
+            <option>Millimeters (mm)</option>
+          </select>
+        </label>
+
+        <label>
+          Tax / VAT Rate (%)
+          <input type="number" value="15" step="0.01">
+        </label>
+      </div>
+
+      <!-- Company Info -->
+      <div class="settings-card">
+        <h3>Company</h3>
+        <label>
+          Company Name
+          <input type="text" placeholder="Exacto Ltd.">
+        </label>
+
+        <label>
+          Company Logo
+          <input type="file" accept="image/*">
+        </label>
+      </div>
+
+      <!-- Calculations -->
+      <div class="settings-card">
+        <h3>Calculations</h3>
+        <label>
+          Material Wastage (%)
+          <input type="number" value="5" step="0.01">
+        </label>
+
+        <label>
+          Labor Productivity
+          <input type="number" value="1.0" step="0.01">
+        </label>
+
+        <label>
+          Contingency (%)
+          <input type="number" value="10" step="0.01">
+        </label>
+      </div>
+
+      <!-- Appearance -->
+      <div class="settings-card">
+        <h3>Appearance</h3>
+        <label>
+          Theme
+          <select>
+            <option>Light</option>
+            <option>Dark</option>
+          </select>
+        </label>
+
+        <label>
+          Accent Color
+          <input type="color" value="#007bff">
+        </label>
+      </div>
+
+      <!-- Data -->
+      <div class="settings-card">
+        <h3>Data</h3>
+        <button class="btn-secondary">Export Data</button>
+        <button class="btn-secondary">Import Data</button>
+        <button class="btn-danger">Clear All Data</button>
+      </div>
+
+      <!-- Account -->
+      <div class="settings-card">
+        <h3>Account</h3>
+        <label>
+          Email
+          <input type="email" value="{{ current_user.email }}">
+        </label>
+
+        <label>
+          Change Password
+          <input type="password" placeholder="New Password">
+        </label>
+      </div>
+
+      <!-- Security -->
+      <div class="settings-card">
+        <h3>Security</h3>
+        <label>
+          <input type="checkbox"> Enable Two-Factor Authentication
+        </label>
+        <button class="btn-secondary">View Login Activity</button>
+        <button class="btn-secondary">Logout All Sessions</button>
+      </div>
+
+      <!-- Danger Zone -->
+      <div class="settings-card danger-zone">
+        <h3>Danger Zone</h3>
+        <p style="color:#b91c1c;">Deleting your account is irreversible.</p>
+        <button class="btn-danger">Delete Account</button>
+      </div>
+
+    </div>
+
+    <div class="settings-actions">
+      <button class="btn-primary">Save Settings</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
