@@ -1,9 +1,10 @@
+# app.py
+
 from flask import Flask, request, jsonify, render_template, redirect, make_response
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import jwt
 import sqlite3
-import os
 from datetime import datetime, timedelta, timezone
 from flask_cors import CORS
 import requests
@@ -11,27 +12,45 @@ import json
 import csv
 import io
 from dynaconf import FlaskDynaconf
+from dynaconf import settings
 import re
-from flask import current_app as app
+from flask_admin import Admin
 
+# Local helpers
+from geo_utils import get_anchor_city, get_distance_km, validate_plant_geo_config as validate_geo_config
+from pricing_utils import calculate_haulage_cost
 
-from flask_admin import Admin  # <-- Moved outside conditionally
+import os
 
+# --- Flask app setup ---
 app = Flask(__name__)
-FlaskDynaconf(app, extensions_list="EXTENSIONS")
 
-# Load extensions except those manually handled (like flask_admin)
-if hasattr(app.config, "load_extensions"):
-    app.config.load_extensions()
+# Attach Dynaconf config
+#FlaskDynaconf(app, extensions_list="EXTENSIONS")
+#FlaskDynaconf(app)   # no extensions_list.
 
-# Always register Flask-Admin manually to avoid duplicate blueprint issues
+FlaskDynaconf(app, settings_files=['settings.toml', '.secrets.toml'])
+
+# After initializing FlaskDynaconf, add this debug code
+print("🔍 Checking if settings are loaded correctly:")
+print(f"LOCATIONS config: {app.config.get('LOCATIONS')}")
+print(f"HAULAGE_BANDS config: {app.config.get('HAULAGE_BANDS')}")
+
+#print("settings.BASE_URL:", settings.get("BASE_URL"))
+
+#print("Loaded config keys:", list(app.config.keys()))
+#print("BASE_URL:", app.config.get("BASE_URL"))
+
+# Always register Flask-Admin manually
 admin = Admin(app)
 
-# Manually setup flask_debugtoolbar if in development mode
+# Debug toolbar only in development
 if app.config.get("DEBUG"):
-    from flask_debugtoolbar import DebugToolbarExtension
-    toolbar = DebugToolbarExtension()
-    toolbar.init_app(app)
+    try:
+        from flask_debugtoolbar import DebugToolbarExtension
+        toolbar = DebugToolbarExtension(app)
+    except ImportError:
+        print("⚠️ flask_debugtoolbar not installed, skipping")
 
 # Enable CORS
 CORS(app, supports_credentials=True)
@@ -40,336 +59,440 @@ CORS(app, supports_credentials=True)
 secret_key = app.config.SECRET_KEY
 SENDGRID_KEY = app.config.get("SENDGRID_API_KEY", None)
 
+# --- Geo config validation on startup ---
+with app.app_context():
+    try:
+        validate_geo_config()
+    except ValueError as e:
+        print(f"⚠️ Geo config validation error: {e}")
 
-# Add this region adjacency configuration at the top level of app.py
-
-# Remove old REGION_NEIGHBORS dict
-# Use this instead
+# Region helpers
 def get_neighboring_regions(region):
+    """Fetch neighbors from Dynaconf config (via Flask runtime config)."""
     neighbors = app.config.get("REGION_NEIGHBORS", {})
     return neighbors.get(region, [])
 
-import os, certifi
+def normalize_region(region: str) -> str:
+    return (region or "").strip().lower()
+
+# Ensure SSL certs work (Windows fix)
+import certifi
 os.environ['SSL_CERT_FILE'] = certifi.where()
 
 
 # Initialize SQLite database
 def init_db():
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
+    try:
+        conn = sqlite3.connect('users.db')
+        cursor = conn.cursor()
 
-    # Users table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            email TEXT UNIQUE NOT NULL,
-            password TEXT NOT NULL,
-            verified BOOLEAN DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+        # Users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                verified BOOLEAN DEFAULT 0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
 
-    # Roles table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS roles (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            description TEXT
-        )
-    ''')
+        # Roles table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                description TEXT
+            )
+        ''')
 
-    # User-Roles junction table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_roles (
-            user_id INTEGER NOT NULL,
-            role_id INTEGER NOT NULL,
-            PRIMARY KEY (user_id, role_id),
-            FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (role_id) REFERENCES roles(id)
-        )
-    ''')
+        # User-Roles junction table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_roles (
+                user_id INTEGER NOT NULL,
+                role_id INTEGER NOT NULL,
+                PRIMARY KEY (user_id, role_id),
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (role_id) REFERENCES roles(id)
+            )
+        ''')
 
-    #verification_tokens table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS verification_tokens (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT NOT NULL,
-        token TEXT NOT NULL UNIQUE,
-        expires_at DATETIME NOT NULL
-    )
-''')
-
-
-    # Locations table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS locations (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            zone TEXT UNIQUE NOT NULL,
-            region TEXT NOT NULL
-        )
-    ''')
-
-    # HaulageBands table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS HaulageBands (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            label TEXT NOT NULL,
-            min_km REAL NOT NULL,
-            max_km REAL NOT NULL,
-            multiplier REAL NOT NULL
-        )
-    ''')
-
-    # Projects table (refactored)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Projects (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            supplier_id INTEGER,  -- ✅ NEW: Preferred supplier (FK to Sources.id)
-
-            project_name TEXT NOT NULL,
-            project_location TEXT,
-            supplier_location TEXT,
-
-            total_cost REAL DEFAULT 0,
-            formula_version TEXT DEFAULT '2023.1',
-            rates_timestamp TEXT,
-
-            calculation_data TEXT,         -- JSON of user inputs + breakdowns
-            calculation_snapshot TEXT,     -- JSON of computed results + unit prices
-            component_data TEXT,
-            project_details TEXT,
-
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
-
-            starred INTEGER DEFAULT 0,
-            archived INTEGER DEFAULT 0,
-
-            FOREIGN KEY (user_id) REFERENCES users(id),
-            FOREIGN KEY (supplier_id) REFERENCES Sources(id) -- ✅ enforce supplier link
-        )
-    ''')
-
-
-    # Sources table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Sources (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            type TEXT NOT NULL,
-            region TEXT NOT NULL,
-            contact TEXT
-        )
-    ''')
-
-    # Material Prices table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS MaterialPrices (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_id INTEGER NOT NULL,
-            material TEXT NOT NULL,
-            unit_cost REAL NOT NULL,
-            valid_from DATE NOT NULL,
-            valid_to DATE NOT NULL,
-            FOREIGN KEY (source_id) REFERENCES Sources(id)
-        )
-    ''')
-
-    # Labor Rates table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS LaborRates (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            source_id INTEGER NOT NULL,
-            task TEXT NOT NULL,
-            rate REAL NOT NULL,
-            valid_from DATE NOT NULL,
-            valid_to DATE NOT NULL, 
-            FOREIGN KEY (source_id) REFERENCES Sources(id)
-        )
-    ''')
-
-    # Adjustments table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Adjustments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            region TEXT UNIQUE NOT NULL,
-            concrete_waste_factor REAL NOT NULL,
-            labor_efficiency REAL NOT NULL,
-            thickness REAL NOT NULL
-        )
-    ''')
-
-    # Plants table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS Plants (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            equipment TEXT NOT NULL,
-            daily_rate REAL NOT NULL,
-            duration_per_unit REAL NOT NULL -- Days per unit (e.g., m³)
-        )
-    ''')
-
-    # Add password_resets table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS password_resets (
+        #verification_tokens table
+        cursor.execute('''
+        CREATE TABLE IF NOT EXISTS verification_tokens (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             email TEXT NOT NULL,
             token TEXT NOT NULL UNIQUE,
-            expiration DATETIME NOT NULL
+            expires_at DATETIME NOT NULL
         )
     ''')
 
-    # Add to init_db()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS user_activity (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            activity_type TEXT NOT NULL,
-            description TEXT NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-    ''')
 
-    # Subscriptions table
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS subscriptions (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            plan_name TEXT NOT NULL,
-            start_date DATETIME NOT NULL,
-            end_date DATETIME NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users(id)
-        )
-    ''')
+        # Locations table - FIXED table name to match usage
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Locations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                zone TEXT UNIQUE NOT NULL,
+                region TEXT NOT NULL
+            )
+        ''')
 
-    conn.commit()
-    conn.close()
+        # HaulageBands table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS HaulageBands (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                label TEXT UNIQUE NOT NULL,
+                min_km REAL NOT NULL,
+                max_km REAL NOT NULL,
+                multiplier REAL NOT NULL
+            )
+        ''')
 
-init_db()
+        # Projects table (refactored)
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                supplier_id INTEGER,
+                project_name TEXT NOT NULL,
+                project_location TEXT,
+                supplier_location TEXT,
+                total_cost REAL DEFAULT 0,
+                formula_version TEXT DEFAULT '2023.1',
+                rates_timestamp TEXT,
 
+                calculation_data TEXT,         -- JSON of user inputs + breakdowns
+                calculation_snapshot TEXT,     -- JSON of computed results + unit prices
+                component_data TEXT,
+                project_details TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_modified DATETIME DEFAULT CURRENT_TIMESTAMP,
+                starred INTEGER DEFAULT 0,
+                archived INTEGER DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (supplier_id) REFERENCES Sources(id) -- ✅ enforce supplier link
+            )
+        ''')
+
+
+        # Sources table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Sources (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                region TEXT NOT NULL,
+                contact TEXT
+            )
+        ''')
+
+        # Material Prices table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS MaterialPrices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                material TEXT NOT NULL,
+                unit_cost REAL NOT NULL,
+                valid_from DATE NOT NULL,
+                valid_to DATE NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES Sources(id)
+            )
+        ''')
+
+        # Labor Rates table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS LaborRates (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                task TEXT NOT NULL,
+                rate REAL NOT NULL,
+                valid_from DATE NOT NULL,
+                valid_to DATE NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES Sources(id)
+            )
+        ''')
+
+        # Adjustments table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Adjustments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                region TEXT UNIQUE NOT NULL,
+                concrete_waste_factor REAL NOT NULL,
+                labor_efficiency REAL NOT NULL,
+                thickness REAL NOT NULL
+            )
+        ''')
+
+        # Plants table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS Plants (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_id INTEGER NOT NULL,
+                equipment TEXT NOT NULL,
+                daily_rate REAL NOT NULL,
+                duration_per_unit REAL NOT NULL,
+                region TEXT NOT NULL,
+                valid_from DATE NOT NULL,
+                valid_to DATE NOT NULL,
+                FOREIGN KEY (source_id) REFERENCES Sources(id)
+            )
+        ''')
+
+        # Add password_resets table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS password_resets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                expiration DATETIME NOT NULL
+            )
+        ''')
+
+        # Add to init_db()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_activity (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                activity_type TEXT NOT NULL,
+                description TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+
+        # Subscriptions table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                plan_name TEXT NOT NULL,
+                start_date DATETIME NOT NULL,
+                end_date DATETIME NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+
+        # --- NEW: Upload staging + approval log for admin pipeline ---
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS UploadStaging (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uploader_id INTEGER,
+                category TEXT NOT NULL,
+                filename TEXT,
+                raw_csv TEXT NOT NULL,
+                rows_count INTEGER,
+                status TEXT NOT NULL DEFAULT 'pending', -- pending, validated, approved, rejected, failed
+                validation_messages TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                processed_at DATETIME,
+                processed_by INTEGER
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ApprovalLog (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                staging_id INTEGER NOT NULL,
+                action TEXT NOT NULL, -- validated | approved | rejected | failed
+                actor_id INTEGER,
+                message TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (staging_id) REFERENCES UploadStaging(id)
+            )
+        ''')
+
+        conn.commit()
+        conn.close()
+        print("✅ Database initialized successfully")
+    except sqlite3.Error as e:
+        print(f"❌ Database initialization failed: {e}")
+        raise
+
+
+
+# Database population with proper Dynaconf config access
 def populate_initial_data():
-    conn = sqlite3.connect('users.db')
-    cursor = conn.cursor()
+    try:
+        conn = sqlite3.connect('users.db')
+        cursor = conn.cursor()
 
-    # Populate Sources table
-    #cursor.execute('''
-     #   INSERT OR IGNORE INTO Sources (name, type, region, contact)
-      #  VALUES ('Ghacem Ltd', 'supplier', 'greater-accra', '123-456-789'),
-       #        ('Local Supplier', 'supplier', 'greater-accra', '987-654-321'),
-        #       ('Block Factory', 'supplier', 'greater-accra', '555-555-555')
-    #''')
+        # --- Add this block to ensure roles exist ---
+        roles = [
+            ('professional', 'Professional user'),
+            ('firm', 'Firm user'),
+            ('student', 'Student user'),
+            ('uploader', 'Can upload data files'),
+            ('admin', 'Administrator with full access')
+        ]
+        cursor.executemany('''
+            INSERT OR IGNORE INTO roles (name, description)
+            VALUES (?, ?)
+        ''', roles)
 
-    # Get source IDs
-    #cursor.execute('SELECT id FROM Sources WHERE name = "Ghacem Ltd"')
-    #ghacem_id = cursor.fetchone()[0]
-    #cursor.execute('SELECT id FROM Sources WHERE name = "Local Supplier"')
-    #local_supplier_id = cursor.fetchone()[0]
-    #cursor.execute('SELECT id FROM Sources WHERE name = "Block Factory"')
-    #block_factory_id = cursor.fetchone()[0]
+        # --- Create admin user with hashed password ---
+        admin_email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
+        admin_password = app.config.get('ADMIN_PASSWORD', '1234')
+        hashed_password = generate_password_hash(admin_password)
+        
+        # Insert or update admin user
+        cursor.execute('''
+            INSERT OR REPLACE INTO users (email, password, verified)
+            VALUES (?, ?, 1)
+        ''', (admin_email, hashed_password))
+        
+        # Assign admin role
+        cursor.execute('''
+            INSERT OR REPLACE INTO user_roles (user_id, role_id)
+            SELECT u.id, r.id FROM users u, roles r
+            WHERE u.email = ? AND r.name = 'admin'
+        ''', (admin_email,))
 
-    # Populate MaterialPrices table
-    materials = [
-        #(ghacem_id, 'cement', 85.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'sand', 30.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'aggregate', 60.00, '2023-01-01', '2023-12-31'),
-        #(block_factory_id, 'blocks', 5.50, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'mortar', 40.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'water', 10.00, '2023-01-01', '2023-12-31')  # <-- Add this line
-    ]
-    #cursor.executemany('''
-     #   INSERT OR IGNORE INTO MaterialPrices (source_id, material, unit_cost, valid_from, valid_to)
-     #   VALUES (?, ?, ?, ?, ?)
-    #''', materials)
+    
+        # Populate Locations table
+        locations = [
+            ('Accra Central', 'Greater Accra'),
+            ('Tema', 'Greater Accra'),
+            ('Kumasi', 'Ashanti'),
+            ('Takoradi', 'Western'),
+            ('Ho', 'Volta'),
+            ('Koforidua', 'Eastern'),
+            ('Cape Coast', 'Central'),
+            # Add more as needed
+        ]
+        cursor.executemany('''
+            INSERT OR IGNORE INTO locations (zone, region)
+            VALUES (?, ?)
+        ''', locations)
 
-    # Populate LaborRates table
-    labor_rates = [
-        #(local_supplier_id, 'tree cutting 600-1500', 20.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'tree cutting 1500-3000', 35.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'tree cutting over 3000', 60.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'site clearance', 2.50, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'excavation', 15.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'bricklaying', 25.00, '2023-01-01', '2023-12-31'),
-        #(local_supplier_id, 'concreting', 30.00, '2023-01-01', '2023-12-31'),
-    ]
-    #cursor.executemany('''
-     #   INSERT OR IGNORE INTO LaborRates (source_id, task, rate, valid_from, valid_to)
-     #   VALUES (?, ?, ?, ?, ?)
-    #''', labor_rates)
 
-    # Populate Adjustments table
-    adjustments = [
-        #('default', 1.05, 1.0, 0.2),  # Default region
-        #('greater-accra', 1.07, 0.92, 0.25),  # Greater Accra region
-        #('ashanti', 1.06, 0.95, 0.22)  # Example for another region
-    ]
-    #cursor.executemany('''
-        #INSERT OR IGNORE INTO Adjustments (region, concrete_waste_factor, labor_efficiency, thickness)
-        #VALUES (?, ?, ?, ?)
-    #''', adjustments)
+        # Populate HaulageBands table
+        haulage_bands = [
+            ('Band 1', 0, 5, 1.0),
+            ('Band 2', 5, 15, 1.2),
+            ('Band 3', 15, 1000, 1.5)
+        ]
+        cursor.executemany('''
+            INSERT OR IGNORE INTO HaulageBands (label, min_km, max_km, multiplier)
+            VALUES (?, ?, ?, ?)
+        ''', haulage_bands)
 
-    # Populate Plants table
-    plants = [
-        ('Mixer', 400.00, 0.2),      # Mixer: GHS 400/day, 0.2 days per m³
-        ('Crane', 1000.00, 0.1),     # Crane: GHS 1000/day, 0.1 days per m³
-        ('Excavator', 1200.00, 0.15),# Excavator: GHS 1200/day, 0.15 days per m³
-        ('Tipper Truck', 800.00, 0.1) # Tipper Truck: GHS 800/day, 0.1 days per m³
-    ]
-    #cursor.executemany('''
-     #   INSERT OR IGNORE INTO Plants (equipment, daily_rate, duration_per_unit)
-      #  VALUES (?, ?, ?)
-    #''', plants)
+        conn.commit()
+        conn.close()
+        print("✅ Default data populated successfully")
+    except sqlite3.Error as e:
+        print(f"❌ Error populating initial data: {e}")
+        raise
+    
+# Database Population Status Check
+@app.route('/api/status/data-population')
+def data_population_status():
+    try:
+        with sqlite3.connect('users.db') as conn:
+            cursor = conn.cursor()
+            
+            # Check locations
+            cursor.execute('SELECT COUNT(*) FROM Locations')
+            location_count = cursor.fetchone()[0]
+            
+            # Check haulage bands
+            cursor.execute('SELECT COUNT(*) FROM HaulageBands')
+            haulage_count = cursor.fetchone()[0]
+            
+            # Get expected counts from config
+            expected_locations = len(app.config.get("LOCATIONS", {}).get("list", []))
+            expected_haulage = len(app.config.get("HAULAGE_BANDS", {}).get("list", []))
+        
+        return jsonify({
+            'locations': {'actual': location_count, 'expected': expected_locations},
+            'haulage_bands': {'actual': haulage_count, 'expected': expected_haulage},
+            'status': 'complete' if location_count > 0 and haulage_count > 0 else 'incomplete',
+            'database_ok': True
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'database_ok': False,
+            'error': str(e)
+        }), 500
 
-    # Populate Locations table
-    locations = [
-        ('Accra Central', 'Greater Accra'),
-        ('Tema', 'Greater Accra'),
-        ('Kumasi', 'Ashanti'),
-        ('Takoradi', 'Western'),
-        ('Ho', 'Volta'),
-        ('Koforidua', 'Eastern'),
-        ('Cape Coast', 'Central'),
-        # Add more as needed
-    ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO locations (zone, region)
-        VALUES (?, ?)
-    ''', locations)
+# Health check endpoint
+@app.route('/api/health')
+def health_check():
+    try:
+        with sqlite3.connect('users.db') as conn:
+            cursor = conn.cursor()
+            
+            # Check if admin exists
+            cursor.execute('''
+                SELECT u.email, r.name 
+                FROM users u
+                JOIN user_roles ur ON u.id = ur.user_id
+                JOIN roles r ON ur.role_id = r.id
+                WHERE r.name = "admin"
+            ''')
+            admins = cursor.fetchall()
+            
+        return jsonify({
+            'status': 'healthy',
+            'database_ok': True,
+            'admin_users': admins,
+            'total_users': len(admins)
+        })
+    except Exception as e:
+        return jsonify({
+            'status': 'unhealthy',
+            'database_ok': False,
+            'error': str(e)
+        }), 500
 
-    # --- Add this block to ensure roles exist ---
-    roles = [
-        ('professional', 'Professional user'),
-        ('firm', 'Firm user'),
-        ('student', 'Student user')
-    ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO roles (name, description)
-        VALUES (?, ?)
-    ''', roles)
-
-     # Populate HaulageBands table
-    haulage_bands = [
-        ('Band 1', 0, 5, 1.0),
-        ('Band 2', 5, 15, 1.2),
-        ('Band 3', 15, 1000, 1.5)
-    ]
-    cursor.executemany('''
-        INSERT OR IGNORE INTO HaulageBands (label, min_km, max_km, multiplier)
-        VALUES (?, ?, ?, ?)
-    ''', haulage_bands)
-
-    # Example: Add a test subscription for user_id 1
-    cursor.execute('''
-        INSERT OR IGNORE INTO subscriptions (user_id, plan_name, start_date, end_date)
-        VALUES (1, 'Pro', '2024-01-01', '2025-01-01')
-    ''')
-
-    conn.commit()
-    conn.close()
-
-# Call the function to populate the database
-populate_initial_data()
+# Ensure database is populated on startup
+@app.before_first_request
+def initialize_app():
+    try:
+        init_db()
+        populate_initial_data()
+        
+        # Verify admin exists
+        with sqlite3.connect('users.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT COUNT(*) FROM user_roles ur
+                JOIN roles r ON ur.role_id = r.id
+                WHERE r.name = 'admin'
+            ''')
+            admin_count = cursor.fetchone()[0]
+            
+            if admin_count == 0:
+                print("⚠️ No admin users found. Creating default admin...")
+                # Force admin creation
+                email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
+                password = app.config.get('ADMIN_PASSWORD', '1234')
+                hashed_password = generate_password_hash(password)
+                
+                cursor.execute(
+                    'INSERT OR REPLACE INTO users (email, password, verified) VALUES (?, ?, 1)',
+                    (email, hashed_password)
+                )
+                
+                # Get admin role ID
+                cursor.execute('SELECT id FROM roles WHERE name = "admin"')
+                role_id = cursor.fetchone()[0]
+                
+                # Get user ID
+                cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
+                user_id = cursor.fetchone()[0]
+                
+                # Assign admin role
+                cursor.execute(
+                    'INSERT OR REPLACE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+                    (user_id, role_id)
+                )
+                conn.commit()
+                
+        print("✅ Application initialized successfully")
+    except Exception as e:
+        print(f"❌ Application initialization failed: {e}")
+        # Don't raise here to allow the app to start, but log the error
 
 # JWT Helpers
 def get_user_roles(user_id):
@@ -601,6 +724,8 @@ def handle_plant_upload(rows):
     config = app.config
     required = set(config.get("REQUIRED_PLANT_FIELDS", []))
     thresholds = config.get("PLANT_THRESHOLDS", {})
+    valid_regions = set(r.lower() for r in config.get("VALID_REGIONS", []))
+    strict_supplier = config.get("STRICT_SUPPLIER_MATCH", False)
 
     inserted, skipped, errors = 0, 0, []
 
@@ -608,8 +733,11 @@ def handle_plant_upload(rows):
         cursor = conn.cursor()
 
         for i, row in enumerate(rows, 1):
+            # Debug: show available keys per row
+            print(f"[DEBUG] Row {i} keys: {list(row.keys())}")
+
             if not required.issubset(row.keys()):
-                errors.append(f"Row {i}: Missing required fields")
+                errors.append(f"Row {i}: Missing required fields {required - set(row.keys())}")
                 skipped += 1
                 continue
 
@@ -617,6 +745,16 @@ def handle_plant_upload(rows):
                 equipment = row['equipment'].strip()
                 daily_rate = float(row['daily_rate'])
                 duration = float(row['duration_per_unit'])
+                region = normalize_region(row.get('region', 'national'))
+                source_name = row.get('source', '').strip()
+                valid_from = row.get('valid_from', '').strip()
+                valid_to = row.get('valid_to', '').strip()
+
+                if not valid_from or not valid_to:
+                    raise ValueError("Missing valid_from or valid_to")
+
+                if region not in valid_regions:
+                    raise ValueError(f"Invalid region '{region}' (must be one of {', '.join(valid_regions)})")
 
                 if not (thresholds.get("min_rate", 0) <= daily_rate <= thresholds.get("max_rate", 10000)):
                     raise ValueError(f"Invalid daily rate {daily_rate}")
@@ -624,16 +762,27 @@ def handle_plant_upload(rows):
                 if not (0.01 <= duration <= 100):
                     raise ValueError(f"Invalid duration per unit {duration}")
 
-                cursor.execute('SELECT 1 FROM Plants WHERE equipment=?', (equipment,))
-                if cursor.fetchone():
-                    skipped += 1
-                    errors.append(f"Row {i}: Equipment '{equipment}' already exists — skipped")
-                    continue
+                # --- Resolve source_id ---
+                cursor.execute("SELECT id FROM Sources WHERE name = ? AND region = ?", (source_name, region))
+                src = cursor.fetchone()
+                if not src:
+                    if strict_supplier:
+                        raise ValueError(f"Unknown source '{source_name}' in region '{region}'")
+                    else:
+                        cursor.execute(
+                            "INSERT INTO Sources (name, type, region, contact) VALUES (?, ?, ?, ?)",
+                            (source_name, "unknown", region, "")
+                        )
+                        source_id = cursor.lastrowid
+                        errors.append(f"Row {i}: Source '{source_name}' auto-created as 'unknown' in region '{region}'")
+                else:
+                    source_id = src[0]
 
+                # ✅ Include valid_from and valid_to
                 cursor.execute('''
-                    INSERT INTO Plants (equipment, daily_rate, duration_per_unit)
-                    VALUES (?, ?, ?)
-                ''', (equipment, daily_rate, duration))
+                    INSERT INTO Plants (equipment, daily_rate, duration_per_unit, source_id, region, valid_from, valid_to)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (equipment, daily_rate, duration, source_id, region, valid_from, valid_to))
                 inserted += 1
 
             except Exception as e:
@@ -641,6 +790,7 @@ def handle_plant_upload(rows):
                 skipped += 1
 
         conn.commit()
+
     return inserted, skipped, errors
 
 def handle_adjustment_upload(rows):
@@ -751,6 +901,133 @@ def handle_source_upload(rows):
 
     return inserted, skipped, errors
 
+#Refactored location handler with proper validation
+def handle_location_upload(rows, is_admin=False):
+    """
+    Handle CSV upload for Locations.
+    - Enforces required fields dynamically from config.
+    - Uses defaults list from settings for validation.
+    - Applies immediately if ADMIN_AUTO_APPLY = true or uploader is admin.
+    """
+    config = app.config
+    required = config.get("REQUIRED_LOCATION_FIELDS", ["zone", "region"])
+    valid_regions = set(r.lower() for r in config.get("VALID_REGIONS", []))
+    defaults = config.get("LOCATIONS", {}).get("list", [])
+    auto_apply = config.get("ADMIN_AUTO_APPLY", False) or is_admin
+
+    inserted, skipped, errors = 0, 0, []
+
+    with sqlite3.connect("users.db") as conn:
+        cursor = conn.cursor()
+
+        for i, row in enumerate(rows, 1):
+            try:
+                # --- Enforce required fields dynamically ---
+                missing = [f for f in required if not row.get(f, "").strip()]
+                if missing:
+                    raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+                zone = row.get("zone", "").strip()
+                region = row.get("region", "").strip().lower()  # Normalize to lowercase
+
+                # --- Validate region against configured valid regions ---
+                if region not in valid_regions:
+                    # Check if region exists in defaults (Dynaconf)
+                    default_regions = {loc['region'].lower() for loc in defaults}
+                    if region not in default_regions:
+                        errors.append(f"Row {i}: Invalid region '{region}'")
+                        skipped += 1
+                        continue
+
+                # --- Duplicate check ---
+                cursor.execute("SELECT 1 FROM Locations WHERE zone=? AND region=?", (zone, region))
+                if cursor.fetchone():
+                    skipped += 1
+                    errors.append(f"Row {i}: Duplicate '{zone}, {region}' — skipped")
+                    continue
+
+                # --- Insert logic ---
+                if auto_apply:
+                    cursor.execute("INSERT INTO Locations (zone, region) VALUES (?, ?)", (zone, region))
+                    inserted += 1
+                else:
+                    errors.append(f"Row {i}: Upload requires admin approval (ADMIN_AUTO_APPLY=false)")
+                    skipped += 1
+
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {str(e)}")
+
+        conn.commit()
+
+    return inserted, skipped, errors
+
+# Refactored haulage band handler with proper validation
+def handle_haulage_band_upload(rows, is_admin=False):
+    """
+    Handle CSV upload for HaulageBands.
+    - Enforces required fields dynamically from config.
+    - Uses defaults list from settings for validation.
+    - Applies immediately if ADMIN_AUTO_APPLY = true or uploader is admin.
+    """
+    config = app.config
+    required = config.get("REQUIRED_HAULAGE_BAND_FIELDS", ["label", "min_km", "max_km", "multiplier"])
+    defaults = config.get("HAULAGE_BANDS", {}).get("list", [])
+    auto_apply = config.get("ADMIN_AUTO_APPLY", False) or is_admin
+
+    inserted, skipped, errors = 0, 0, []
+
+    with sqlite3.connect("users.db") as conn:
+        cursor = conn.cursor()
+
+        for i, row in enumerate(rows, 1):
+            try:
+                # --- Enforce required fields dynamically ---
+                missing = [f for f in required if not row.get(f, "").strip()]
+                if missing:
+                    raise ValueError(f"Missing required fields: {', '.join(missing)}")
+
+                label = row.get("label", "").strip()
+                min_km = int(row.get("min_km", 0))
+                max_km = int(row.get("max_km", 9999))
+                multiplier = float(row.get("multiplier", 1))
+
+                # --- Validate against default bands ---
+                default_bands = {band["label"] for band in defaults}
+                if label not in default_bands:
+                    errors.append(f"Row {i}: Band '{label}' is not in default configuration")
+
+                if min_km < 0 or max_km <= min_km:
+                    raise ValueError("Invalid km range")
+                if multiplier <= 0:
+                    raise ValueError("Multiplier must be > 0")
+
+                # --- Duplicate check ---
+                cursor.execute("SELECT 1 FROM HaulageBands WHERE label=?", (label,))
+                if cursor.fetchone():
+                    skipped += 1
+                    errors.append(f"Row {i}: Haulage band '{label}' already exists — skipped")
+                    continue
+
+                # --- Insert logic ---
+                if auto_apply:
+                    cursor.execute(
+                        "INSERT INTO HaulageBands (label, min_km, max_km, multiplier) VALUES (?, ?, ?, ?)",
+                        (label, min_km, max_km, multiplier),
+                    )
+                    inserted += 1
+                else:
+                    errors.append(f"Row {i}: Upload requires admin approval (ADMIN_AUTO_APPLY=false)")
+                    skipped += 1
+
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {str(e)}")
+
+        conn.commit()
+
+    return inserted, skipped, errors
+
 def log_admin_upload(admin_id, category, filename, inserted, skipped):
     description = f'Uploaded {category} file: {filename} (inserted={inserted}, skipped={skipped})'
     with sqlite3.connect('users.db') as conn:
@@ -761,6 +1038,176 @@ def log_admin_upload(admin_id, category, filename, inserted, skipped):
         ''', (admin_id, 'upload_csv', description))
         conn.commit()
 
+# --- NEW helper utilities for staging + audit ---
+
+def _create_staging(uploader_id, category, filename, raw_csv, rows_count):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO UploadStaging (uploader_id, category, filename, raw_csv, rows_count, status)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (uploader_id, category, filename, raw_csv, rows_count, 'pending'))
+        conn.commit()
+        return cursor.lastrowid
+
+def _append_approval_log(staging_id, action, actor_id, message=None):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO ApprovalLog (staging_id, action, actor_id, message)
+            VALUES (?, ?, ?, ?)
+        ''', (staging_id, action, actor_id, message or ''))
+        conn.commit()
+
+def _update_staging_status(staging_id, status, validation_messages=None, processed_by=None):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        if validation_messages is not None:
+            cursor.execute('''
+                UPDATE UploadStaging
+                SET status = ?, validation_messages = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ?
+                WHERE id = ?
+            ''', (status, validation_messages, processed_by, staging_id))
+        else:
+            cursor.execute('''
+                UPDATE UploadStaging
+                SET status = ?, processed_at = CURRENT_TIMESTAMP, processed_by = ?
+                WHERE id = ?
+            ''', (status, processed_by, processed_by, staging_id))
+        conn.commit()
+
+# --- NEW: lightweight validator (dry-run) that does NOT write to production ---
+def validate_rows_dryrun(category, rows):
+    cfg = app.config
+    errors = []
+    inserted_est = 0
+    skipped = 0
+
+    if category == 'materials':
+        required = cfg.get("REQUIRED_MATERIAL_FIELDS", [])
+        min_cost = cfg.get("MATERIAL_THRESHOLDS", {}).get("MIN_UNIT_COST", 1)
+        max_cost = cfg.get("MATERIAL_THRESHOLDS", {}).get("MAX_UNIT_COST", 1000)
+        date_re = re.compile(cfg.get("REGEX_PATTERNS", {}).get("date", r"^\d{4}-\d{2}-\d{2}$"))
+        for i, r in enumerate(rows, 1):
+            if not all(field in r and r[field].strip() for field in required):
+                skipped += 1
+                errors.append(f"Row {i}: missing required fields")
+                continue
+            try:
+                unit_cost = float(r.get("unit_cost", 0))
+                if not (min_cost <= unit_cost <= max_cost):
+                    errors.append(f"Row {i}: unit_cost {unit_cost} out of bounds")
+                if not date_re.match(r.get("valid_from","")) or not date_re.match(r.get("valid_to","")):
+                    errors.append(f"Row {i}: invalid date format")
+                inserted_est += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {e}")
+
+    elif category == 'labor':
+        required = cfg.get("REQUIRED_LABOR_FIELDS", [])
+        min_r = cfg.get("LABOR_THRESHOLDS", {}).get("min_rate", 0)
+        max_r = cfg.get("LABOR_THRESHOLDS", {}).get("max_rate", 10000)
+        date_re = re.compile(cfg.get("REGEX_PATTERNS", {}).get("date", r"^\d{4}-\d{2}-\d{2}$"))
+        for i, r in enumerate(rows, 1):
+            if not all(field in r and r[field].strip() for field in required):
+                skipped += 1
+                errors.append(f"Row {i}: missing required fields")
+                continue
+            try:
+                rate = float(r.get("rate", 0))
+                if not (min_r <= rate <= max_r):
+                    errors.append(f"Row {i}: rate {rate} out of bounds")
+                if not date_re.match(r.get("valid_from","")) or not date_re.match(r.get("valid_to","")):
+                    errors.append(f"Row {i}: invalid date")
+                inserted_est += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {e}")
+
+    elif category == 'plants':
+        required = cfg.get("REQUIRED_PLANT_FIELDS", [])
+        min_r = cfg.get("PLANT_THRESHOLDS", {}).get("min_rate", 0)
+        max_r = cfg.get("PLANT_THRESHOLDS", {}).get("max_rate", 999999)
+        for i, r in enumerate(rows, 1):
+            if not all(field in r and r[field].strip() for field in required):
+                skipped += 1
+                errors.append(f"Row {i}: missing required fields")
+                continue
+            try:
+                daily = float(r.get("daily_rate", 0))
+                duration = float(r.get("duration_per_unit", 0))
+                if not (min_r <= daily <= max_r):
+                    errors.append(f"Row {i}: daily_rate {daily} out of bounds")
+                if not (0.01 <= duration <= 1000):
+                    errors.append(f"Row {i}: duration_per_unit {duration} out of bounds")
+                inserted_est += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {e}")
+
+    elif category == 'adjustments':
+        required = cfg.get("REQUIRED_ADJUSTMENT_FIELDS", [])
+        for i, r in enumerate(rows, 1):
+            if not all(field in r and r[field].strip() for field in required):
+                skipped += 1
+                errors.append(f"Row {i}: missing required fields")
+                continue
+            try:
+                float(r.get("concrete_waste_factor", 0))
+                float(r.get("labor_efficiency", 0))
+                float(r.get("thickness", 0))
+                inserted_est += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {e}")
+
+    elif category == 'sources':
+        required = cfg.get("REQUIRED_SOURCES_FIELDS", [])
+        for i, r in enumerate(rows, 1):
+            if not all(field in r and r[field].strip() for field in required):
+                skipped += 1
+                errors.append(f"Row {i}: missing required fields")
+                continue
+            inserted_est += 1
+
+    elif category == 'locations':
+        required = cfg.get("REQUIRED_LOCATION_FIELDS", ["zone", "region"])
+        valid_regions = set(r.lower() for r in cfg.get("VALID_REGIONS", []))
+        for i, r in enumerate(rows, 1):
+            zone = r.get("zone", "").strip()
+            region = r.get("region", "").strip().lower()
+            if not zone or not region:
+                skipped += 1
+                errors.append(f"Row {i}: missing zone or region")
+                continue
+            if region not in valid_regions:
+                errors.append(f"Row {i}: region '{region}' not in VALID_REGIONS")
+            inserted_est += 1
+
+    elif category == 'haulage_bands':
+        required = cfg.get("REQUIRED_HAULAGE_BANDS_FIELDS", ["label", "min_km", "max_km", "multiplier"])
+        for i, r in enumerate(rows, 1):
+            try:
+                label = r.get("label", "").strip()
+                min_km = float(r.get("min_km", 0))
+                max_km = float(r.get("max_km", 0))
+                multiplier = float(r.get("multiplier", 0))
+                if not label:
+                    raise ValueError("missing label")
+                if min_km < 0 or max_km <= min_km:
+                    raise ValueError("invalid km range")
+                if multiplier <= 0:
+                    raise ValueError("multiplier must be > 0")
+                inserted_est += 1
+            except Exception as e:
+                skipped += 1
+                errors.append(f"Row {i}: {e}")
+
+    else:
+        errors.append("Unknown category")
+
+    return inserted_est, skipped, errors
 
 
 # Password Reset Routes
@@ -870,30 +1317,34 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
 def send_verification_email(to_email, token):
-    verify_link = f"{settings.BASE_URL}/verify-email/{token}"
+    base_url = app.config.get('BASE_URL', 'http://127.0.0.1:5000')
+    sender_email = app.config.get('SENDER_EMAIL', 'middle_child13555@protonmail.com')
+    verify_link = f"{base_url}/verify-email/{token}"
     message = Mail(
-        from_email=settings.SENDER_EMAIL,
+        from_email=sender_email,
         to_emails=to_email,
         subject='Verify Your Account',
         html_content=f'<p>Click <a href="{verify_link}">here</a> to verify your account.</p>'
     )
     try:
-        sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
+        sg = SendGridAPIClient(app.config.get("SENDGRID_API_KEY"))
         sg.send(message)
     except Exception as e:
         print(f"❌ Error sending verification email: {e}")
 
 
 def send_password_reset_email(to_email, token):
-    reset_link = f"{settings.BASE_URL}/reset-password/{token}"
+    base_url = app.config.get('BASE_URL', 'http://127.0.0.1:5000')
+    sender_email = app.config.get('SENDER_EMAIL', 'middle_child13555@protonmail.com')
+    reset_link = f"{base_url}/reset-password/{token}"
     message = Mail(
-        from_email=settings.SENDER_EMAIL,
+        from_email=sender_email,
         to_emails=to_email,
         subject='Password Reset Request',
         html_content=f'<p>Click <a href="{reset_link}">here</a> to reset your password.</p>'
     )
     try:
-        sg = SendGridAPIClient(settings.SENDGRID_API_KEY)
+        sg = SendGridAPIClient(app.config.get("SENDGRID_API_KEY"))
         sg.send(message)
     except Exception as e:
         print(f"❌ Error sending reset email: {e}")
@@ -1102,7 +1553,7 @@ def resend_reset_link():
     return jsonify({'message': 'Reset link sent if account exists.'})
 
 @app.route('/api/upload-prices/<category>', methods=['POST'])
-@role_required('admin')
+@role_required('admin', 'professional', 'firm', 'uploader')  # allow trusted roles to upload; non-admins will stage
 def upload_price_csv(category):
     if 'file' not in request.files:
         return jsonify({'message': 'No file part'}), 400
@@ -1111,78 +1562,270 @@ def upload_price_csv(category):
     if file.filename == '':
         return jsonify({'message': 'No selected file'}), 400
 
-    if not file.filename.endswith('.csv'):
+    if not file.filename.lower().endswith('.csv'):
         return jsonify({'message': 'File must be a CSV'}), 400
 
-    stream = io.StringIO(file.stream.read().decode("UTF8"), newline=None)
-    csv_data = list(csv.DictReader(stream))
+    raw = file.stream.read().decode("utf8")
+    rows = list(csv.DictReader(io.StringIO(raw)))
 
-    if category == 'materials':
-        inserted, skipped, errors = handle_material_upload(csv_data)
-    elif category == 'labor':
-        inserted, skipped, errors = handle_labor_upload(csv_data)
-    elif category == 'plants':
-        inserted, skipped, errors = handle_plant_upload(csv_data)
-    elif category == 'adjustments':
-        inserted, skipped, errors = handle_adjustment_upload(csv_data)
-    elif category == 'sources':
-        inserted, skipped, errors = handle_source_upload(csv_data)
-    else:
-        return jsonify({'message': f'Unknown category: {category}'}), 400
+    admin_auto_apply = app.config.get('ADMIN_AUTO_APPLY', False)
+    is_admin = (
+        'admin' in getattr(request, 'user_roles', []) 
+        or 'admin' in get_user_roles(request.user_id)
+    )
 
-    # ✅ Log upload
-    log_admin_upload(request.user_id, category, file.filename, inserted, skipped)
+    # ✅ If admin + fast-path enabled → apply immediately
+    if is_admin and admin_auto_apply:
+        if category == 'materials':
+            inserted, skipped, errors = handle_material_upload(rows)
+        elif category == 'labor':
+            inserted, skipped, errors = handle_labor_upload(rows)
+        elif category == 'plants':
+            inserted, skipped, errors = handle_plant_upload(rows)
+        elif category == 'adjustments':
+            inserted, skipped, errors = handle_adjustment_upload(rows)
+        elif category == 'sources':
+            inserted, skipped, errors = handle_source_upload(rows)
+        elif category == 'locations':
+            inserted, skipped, errors = handle_location_upload(rows)
+        elif category == 'haulage_bands':
+            inserted, skipped, errors = handle_haulage_band_upload(rows)
+        else:
+            return jsonify({'message': f'Unknown category: {category}'}), 400
 
-    return jsonify({
-        'message': f'{category.title()} data uploaded',
-        'category': category,
-        'inserted': inserted,
-        'skipped': skipped,
+        # Log successful admin upload
+        log_admin_upload(request.user_id, category, file.filename, inserted, skipped)
+        _append_approval_log(
+            None, 
+            'auto_applied', 
+            request.user_id, 
+            f"{category} applied directly by admin; file={file.filename}"
+        )
+
+        return jsonify({
+            'message': f'{category.title()} data uploaded (applied)',
+            'category': category,
+            'inserted': inserted,
+            'skipped': skipped,
+            'errors': errors
+        }), 200
+
+    # 🚧 Otherwise, stage for validation + approval
+    staging_id = _create_staging(request.user_id, category, file.filename, raw, len(rows))
+
+    # Run dry-run validation (non-destructive)
+    inserted_est, skipped_est, errors = validate_rows_dryrun(category, rows)
+    validation_payload = json.dumps({
+        'inserted_est': inserted_est,
+        'skipped_est': skipped_est,
         'errors': errors
     })
 
-@app.route('/setup-admin')
-def setup_admin():
-    import sqlite3
-    from werkzeug.security import generate_password_hash
+    _update_staging_status(
+        staging_id, 
+        'validated' if not errors else 'pending', 
+        validation_messages=validation_payload, 
+        processed_by=request.user_id
+    )
 
-    email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
-    raw_password = app.config.get('ADMIN_PASSWORD', '1234')  # Set it safely here
-    hashed_password = generate_password_hash(raw_password)
+    _append_approval_log(
+        staging_id, 
+        'staged', 
+        request.user_id, 
+        f"Staged upload: {file.filename}; validation: {len(errors)} issues"
+    )
+
+    # Always log to activity feed
+    log_admin_upload(request.user_id, category, file.filename, 0, 0)
+
+    return jsonify({
+        'message': 'File staged for validation/approval',
+        'staging_id': staging_id,
+        'validation': {
+            'inserted_est': inserted_est,
+            'skipped_est': skipped_est,
+            'errors_count': len(errors)
+        }
+    }), 202
+
+# --- Admin endpoints to manage staged uploads ---
+
+@app.route('/api/admin/uploads', methods=['GET'])
+@role_required('admin')
+def list_staged_uploads():
+    status = request.args.get('status', None)
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        if status:
+            cursor.execute('SELECT id, uploader_id, category, filename, rows_count, status, validation_messages, created_at FROM UploadStaging WHERE status = ? ORDER BY created_at DESC', (status,))
+        else:
+            cursor.execute('SELECT id, uploader_id, category, filename, rows_count, status, validation_messages, created_at FROM UploadStaging ORDER BY created_at DESC')
+        items = []
+        for row in cursor.fetchall():
+            items.append(dict(zip(('id','uploader_id','category','filename','rows_count','status','validation_messages','created_at'), row)))
+    return jsonify(items), 200
+
+@app.route('/api/admin/uploads/<int:staging_id>/validate', methods=['POST'])
+@role_required('admin')
+def validate_staged_upload(staging_id):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT category, raw_csv FROM UploadStaging WHERE id = ?', (staging_id,))
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({'message': 'Staging not found'}), 404
+        category, raw_csv = row
+
+    rows = list(csv.DictReader(io.StringIO(raw_csv)))
+    inserted_est, skipped_est, errors = validate_rows_dryrun(category, rows)
+    payload = json.dumps({'inserted_est': inserted_est, 'skipped_est': skipped_est, 'errors': errors})
+
+    _update_staging_status(staging_id, 'validated', validation_messages=payload, processed_by=request.user_id)
+    _append_approval_log(staging_id, 'validated', request.user_id, payload)
+    return jsonify({'staging_id': staging_id, 'inserted_est': inserted_est, 'skipped_est': skipped_est, 'errors': errors}), 200
+
+@app.route('/api/admin/uploads/<int:staging_id>/approve', methods=['POST'])
+@role_required('admin')
+def approve_staged_upload(staging_id):
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            'SELECT category, raw_csv, status FROM UploadStaging WHERE id = ?',
+            (staging_id,)
+        )
+        row = cursor.fetchone()
+        if not row:
+            return jsonify({'message': 'Staging not found'}), 404
+        category, raw_csv, status = row
+
+    rows = list(csv.DictReader(io.StringIO(raw_csv)))
 
     try:
+        if category == 'materials':
+            inserted, skipped, errors = handle_material_upload(rows)
+        elif category == 'labor':
+            inserted, skipped, errors = handle_labor_upload(rows)
+        elif category == 'plants':
+            inserted, skipped, errors = handle_plant_upload(rows)
+        elif category == 'adjustments':
+            inserted, skipped, errors = handle_adjustment_upload(rows)
+        elif category == 'sources':
+            inserted, skipped, errors = handle_source_upload(rows)
+        elif category == 'locations':
+            inserted, skipped, errors = handle_location_upload(rows)
+        elif category == 'haulage_bands':
+            inserted, skipped, errors = handle_haulage_band_upload(rows)
+        else:
+            return jsonify({'message': f'Unknown category: {category}'}), 400
+
+    except Exception as e:
+        _update_staging_status(
+            staging_id,
+            'failed',
+            validation_messages=json.dumps({'error': str(e)}),
+            processed_by=request.user_id
+        )
+        _append_approval_log(staging_id, 'failed', request.user_id, str(e))
+        return jsonify({'message': 'Apply failed', 'error': str(e)}), 500
+
+    # ✅ Mark as approved
+    _update_staging_status(
+        staging_id,
+        'approved',
+        validation_messages=json.dumps({
+            'inserted': inserted,
+            'skipped': skipped,
+            'errors': errors
+        }),
+        processed_by=request.user_id
+    )
+    _append_approval_log(
+        staging_id,
+        'approved',
+        request.user_id,
+        json.dumps({'inserted': inserted, 'skipped': skipped, 'errors': errors})
+    )
+
+    log_admin_upload(
+        request.user_id,
+        category,
+        f"approved:{staging_id}",
+        inserted,
+        skipped
+    )
+
+    return jsonify({
+        'message': 'Upload approved and applied',
+        'inserted': inserted,
+        'skipped': skipped,
+        'errors': errors
+    }), 200
+
+@app.route('/api/admin/uploads/<int:staging_id>/reject', methods=['POST'])
+@role_required('admin')
+def reject_staged_upload(staging_id):
+    payload = request.json.get('message', 'Rejected by admin')
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+        cursor.execute('SELECT id FROM UploadStaging WHERE id = ?', (staging_id,))
+        if not cursor.fetchone():
+            return jsonify({'message': 'Staging not found'}), 404
+    _update_staging_status(staging_id, 'rejected', validation_messages=json.dumps({'reason': payload}), processed_by=request.user_id)
+    _append_approval_log(staging_id, 'rejected', request.user_id, payload)
+    return jsonify({'message': 'Staging rejected', 'staging_id': staging_id}), 200
+
+
+# Setup admin endpoint - simplified and improved
+@app.route('/setup-admin')
+def setup_admin():
+    try:
+        email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
+        raw_password = app.config.get('ADMIN_PASSWORD', '1234')
+        hashed_password = generate_password_hash(raw_password)
+
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
 
             # Step 1: Insert admin user
             cursor.execute('''
-                INSERT OR IGNORE INTO users (email, password, verified)
+                INSERT OR REPLACE INTO users (email, password, verified)
                 VALUES (?, ?, 1)
             ''', (email, hashed_password))
 
-            # Step 2: Insert admin role if missing
+            # Step 2: Ensure admin role exists
             cursor.execute('''
                 INSERT OR IGNORE INTO roles (name, description)
-                VALUES ('admin', 'Superuser with upload access')
-            ''')
+                VALUES (?, ?)
+            ''', ('admin', 'Superuser with upload access'))
 
             # Step 3: Assign admin role to user
             cursor.execute('''
-                INSERT OR IGNORE INTO user_roles (user_id, role_id)
+                INSERT OR REPLACE INTO user_roles (user_id, role_id)
                 SELECT u.id, r.id FROM users u, roles r
                 WHERE u.email = ? AND r.name = 'admin'
             ''', (email,))
 
             conn.commit()
-        return '✅ Admin user setup complete.'
+        
+        return jsonify({
+            'message': '✅ Admin user setup complete.',
+            'email': email,
+            'status': 'success'
+        })
     except Exception as e:
-        return f'❌ Error: {e}', 500
-
+        return jsonify({
+            'message': f'❌ Error: {e}',
+            'status': 'error'
+        }), 500
 
 @app.route("/admin_upload", methods=["GET"])
 @admin_required
 def admin_upload_page():
     return render_template("admin_upload.html")
+
+@app.route("/admin_review")
+def admin_review_page():
+    return render_template("admin_review.html")
 
 
 # app.py - calculation_page route
@@ -1224,9 +1867,19 @@ def home():
 def get_locations():
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT zone, region FROM locations')
-        locations = [{'zone': row[0], 'region': row[1]} for row in cursor.fetchall()]
+        cursor.execute('SELECT zone, region FROM Locations')
+        rows = cursor.fetchall()
+
+    if rows:
+        # Admin override from DB
+        locations = [{"zone": row[0], "region": row[1]} for row in rows]
+    else:
+        # Fallback to defaults in settings.toml
+        locations_config = app.config.get("LOCATIONS", {}).get("list", [])
+        locations = [{"zone": loc["zone"], "region": loc["region"]} for loc in locations_config]
+
     return jsonify(locations)
+
 
 @app.route('/api/haulage-cost', methods=['POST'])
 @role_required('professional', 'firm')
@@ -1235,36 +1888,54 @@ def calculate_haulage():
     project_loc = data.get('project_location')
     supplier_loc = data.get('supplier_location')
 
+    # --- Load locations (DB > settings) ---
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        
-        # Get regions for locations
-        cursor.execute('SELECT region FROM locations WHERE zone = ?', (project_loc,))
-        project_region = cursor.fetchone()[0]
-        cursor.execute('SELECT region FROM locations WHERE zone = ?', (supplier_loc,))
-        supplier_region = cursor.fetchone()[0]
-
-    # Calculate approximate distance
-    if project_region == supplier_region:
-        distance = 3  # Same region
-    elif supplier_region in get_neighboring_regions(project_region):
-        distance = 10  # Adjacent regions
+        cursor.execute('SELECT zone, region FROM Locations')
+        rows = cursor.fetchall()
+    if rows:
+        locations = [{"zone": row[0], "region": row[1]} for row in rows]
     else:
-        distance = 20  # Non-adjacent regions
+        locations = settings.LOCATIONS.list
 
-    # Get haulage band
+    # --- Resolve project & supplier regions ---
+    project_region = next((loc["region"].lower() for loc in locations if loc["zone"] == project_loc), None)
+    supplier_region = next((loc["region"].lower() for loc in locations if loc["zone"] == supplier_loc), None)
+
+    if not project_region or not supplier_region:
+        return jsonify({"message": "Invalid project or supplier location"}), 400
+
+    # --- Distance logic ---
+    if project_region == supplier_region:
+        distance = 3
+    elif supplier_region in get_neighboring_regions(project_region):
+        distance = 10
+    else:
+        distance = 20
+
+    # --- Load haulage bands (DB > settings) ---
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT label, multiplier FROM HaulageBands
-            WHERE ? >= min_km AND ? < max_km
-        ''', (distance, distance))
-        band = cursor.fetchone()
+        cursor.execute('SELECT label, min_km, max_km, multiplier FROM HaulageBands')
+        rows = cursor.fetchall()
+    if rows:
+        haulage_bands = [
+            {"label": row[0], "min_km": row[1], "max_km": row[2], "multiplier": row[3]}
+            for row in rows
+        ]
+    else:
+        haulage_bands = settings.HAULAGE_BANDS.list
+
+    # --- Find correct band ---
+    band = next((hb for hb in haulage_bands if hb["min_km"] <= distance < hb["max_km"]), None)
+
+    if not band:
+        return jsonify({"message": f"No haulage band found for {distance} km"}), 404
 
     return jsonify({
-        'band': band[0],
-        'multiplier': band[1],
-        'distance_km': distance
+        "band": band["label"],
+        "multiplier": band["multiplier"],
+        "distance_km": distance
     })
 
 # GET /projects
@@ -1481,15 +2152,17 @@ def get_labor_rates():
 @token_required
 def get_pricing_bundle():
     region = request.args.get('region', 'default').lower()
+    project_location = request.args.get('project_location', region).lower()  # fallback
     fallback_enabled = app.config.get("FALLBACK_ENABLED", True)
-    fallback_order = app.config.get("FALLBACK_ORDER", ["neighbor", "national"])
-    max_depth = app.config.get("MAX_FALLBACK_DEPTH", 2)
+
+    haulage_rate = app.config.get("PLANT_HAULAGE_RATE", 15)  # GHS/km default
+    mobilization_factor = app.config.get("PLANT_HAULAGE_FACTOR", 2)
+
     fallback_applied = None
 
-    def fetch_data(region_option):
+    def fetch_materials_and_labor(region_option):
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
-
             cursor.execute('''
                 SELECT material, unit_cost FROM MaterialPrices
                 WHERE source_id IN (SELECT id FROM Sources WHERE region = ?)
@@ -1504,41 +2177,52 @@ def get_pricing_bundle():
 
         return materials, labor
 
-    materials, labor = fetch_data(region)
-    fallback_depth = 0
+    def fetch_plants(region_option):
+        with sqlite3.connect('users.db') as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT equipment, daily_rate, duration_per_unit
+                FROM Plants
+                WHERE region = ?
+            ''', (region_option,))
+            return [
+                {"equipment": row[0], "dailyRate": row[1], "durationPerUnit": row[2]}
+                for row in cursor.fetchall()
+            ]
 
-    if fallback_enabled:
-        for method in fallback_order:
-            if (materials and labor) or fallback_depth >= max_depth:
-                break
+    materials, labor = fetch_materials_and_labor(region)
+    plants = fetch_plants(region)
 
-            if method == "neighbor":
-                for neighbor in get_neighboring_regions(region):
-                    m, l = fetch_data(neighbor)
-                    if not materials: materials = m
-                    if not labor: labor = l
-                    if materials or labor:
-                        fallback_applied = f"neighbor ({neighbor})"
-                        break
-
-            elif method == "national":
-                m, l = fetch_data("national")
+    # --- Fallbacks ---
+    if fallback_enabled and (not materials or not labor or not plants):
+        anchor_city = get_anchor_city(region)  # implement a mapping rural→city
+        if anchor_city:
+            if not materials or not labor:
+                m, l = fetch_materials_and_labor(anchor_city)
                 if not materials: materials = m
                 if not labor: labor = l
-                if materials or labor:
-                    fallback_applied = "national"
-                    break
+                if m or l:
+                    fallback_applied = f"anchor-city ({anchor_city})"
 
-            fallback_depth += 1
+            if not plants:
+                plants = fetch_plants(anchor_city)
+                if plants:
+                    # Add haulage cost
+                    distance_km = get_distance_km(project_location, anchor_city)
+                    haulage_cost = distance_km * haulage_rate * mobilization_factor
+                    for p in plants:
+                        p["haulage"] = haulage_cost
+                    fallback_applied = f"anchor-city ({anchor_city}) + haulage"
 
     response = {
-        'materials': materials,
-        'labor': labor,
-        'region': region,
-        'timestamp': datetime.now().isoformat()
+        "materials": materials,
+        "labor": labor,
+        "plants": plants,
+        "region": region,
+        "timestamp": datetime.now().isoformat()
     }
     if fallback_applied:
-        response['warning'] = f"Fallback used: {fallback_applied}"
+        response["warning"] = f"Fallback used: {fallback_applied}"
 
     return jsonify(response)
 
@@ -1557,7 +2241,7 @@ def get_smm_rules():
 @app.route('/api/prices/<material>', methods=['GET'])
 @token_required
 def get_material_price(material):
-    region = request.args.get('region', '').title()
+    region = request.args.get('region', '').strip().lower()
     fallback_used = None
 
     with sqlite3.connect('users.db') as conn:
@@ -1569,11 +2253,12 @@ def get_material_price(material):
         fallback_depth = 0
 
         def query(region_name):
+            print(f"[DEBUG] Trying region: {region_name}")  # Optional debug
             cursor.execute('''
                 SELECT unit_cost, valid_from, valid_to, s.region
                 FROM MaterialPrices m
                 JOIN Sources s ON m.source_id = s.id
-                WHERE m.material = ? AND s.region = ?
+                WHERE m.material = ? AND LOWER(s.region) = ?
                 ORDER BY valid_from DESC
                 LIMIT 1
             ''', (material, region_name))
@@ -1617,12 +2302,11 @@ def get_material_price(material):
     })
 
 
-
 # GET /api/labor/:trade
 @app.route('/api/labor/<trade>', methods=['GET'])
 @token_required
 def get_labor_rate(trade):
-    region = request.args.get('region', '').title()
+    region = request.args.get('region', '').strip().lower()
     fallback_used = None
 
     with sqlite3.connect('users.db') as conn:
@@ -1634,11 +2318,12 @@ def get_labor_rate(trade):
         fallback_depth = 0
 
         def query(region_name):
+            print(f"[DEBUG] Trying region: {region_name}")  # Optional debug
             cursor.execute('''
                 SELECT rate, valid_from, valid_to, s.region
                 FROM LaborRates l
                 JOIN Sources s ON l.source_id = s.id
-                WHERE l.task = ? AND s.region = ?
+                WHERE l.task = ? AND LOWER(s.region) = ?
                 ORDER BY valid_from DESC
                 LIMIT 1
             ''', (trade, region_name))
@@ -1685,18 +2370,90 @@ def get_labor_rate(trade):
 @app.route('/api/plants', methods=['GET'])
 @token_required
 def get_plants():
+    requested_region = request.args.get('region', '').lower()
+    if not requested_region:
+        return jsonify({'message': 'Region is required'}), 400
+
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT equipment, daily_rate, duration_per_unit FROM Plants')
-        plants = cursor.fetchall()
 
-    if not plants:
-        return jsonify({'message': 'No plant data found'}), 404
+        # 1. Direct region match
+        cursor.execute('''
+            SELECT equipment, daily_rate, duration_per_unit, region
+            FROM Plants
+            WHERE region = ?
+        ''', (requested_region,))
+        rows = cursor.fetchall()
 
-    return jsonify([
-        {'equipment': plant[0], 'dailyRate': plant[1], 'durationPerUnit': plant[2]}
-        for plant in plants
-    ])
+        results = []
+        if rows:
+            for equipment, daily_rate, duration_per_unit, region in rows:
+                results.append({
+                    "equipment": equipment,
+                    "dailyRate": daily_rate,
+                    "durationPerUnit": duration_per_unit,
+                    "region": region,
+                    "requestedRegion": requested_region,
+                    "anchorCity": None,
+                    "distanceKm": 0,
+                    "haulageCost": 0,
+                    "fallback": None
+                })
+            return jsonify(results), 200
+
+        # 2. Anchor city fallback
+        anchor_city = get_anchor_city(requested_region)
+        if anchor_city:
+            cursor.execute('''
+                SELECT equipment, daily_rate, duration_per_unit, region
+                FROM Plants
+                WHERE region = ?
+            ''', (anchor_city,))
+            rows = cursor.fetchall()
+
+            if rows:
+                distance_km = get_distance_km(requested_region, anchor_city)
+                haulage_cost = calculate_haulage_cost(distance_km)
+
+                for equipment, daily_rate, duration_per_unit, region in rows:
+                    results.append({
+                        "equipment": equipment,
+                        "dailyRate": daily_rate + haulage_cost,
+                        "durationPerUnit": duration_per_unit,
+                        "region": region,
+                        "requestedRegion": requested_region,
+                        "anchorCity": anchor_city,
+                        "distanceKm": distance_km,
+                        "haulageCost": haulage_cost,
+                        "fallback": anchor_city
+                    })
+                return jsonify(results), 200
+
+        # 3. National fallback
+        cursor.execute('''
+            SELECT equipment, daily_rate, duration_per_unit, region
+            FROM Plants
+            WHERE region = ?
+        ''', ('national',))
+        rows = cursor.fetchall()
+
+        if rows:
+            for equipment, daily_rate, duration_per_unit, region in rows:
+                results.append({
+                    "equipment": equipment,
+                    "dailyRate": daily_rate,
+                    "durationPerUnit": duration_per_unit,
+                    "region": region,
+                    "requestedRegion": requested_region,
+                    "anchorCity": None,
+                    "distanceKm": 0,
+                    "haulageCost": 0,
+                    "fallback": "national"
+                })
+            return jsonify(results), 200
+
+        # 4. Not found
+        return jsonify({'message': f'No plant data found for {requested_region}'}), 404
 
 @app.route('/api/verify-auth', methods=['GET'])
 @token_required
@@ -1882,6 +2639,34 @@ def archive_project(project_id):
         conn.commit()
     return jsonify({'message': 'Project archived'})
 
+@app.route('/admin/normalize-regions')
+def normalize_regions():
+    with sqlite3.connect('users.db') as conn:
+        cursor = conn.cursor()
+
+        # Normalize region fields in various tables
+        cursor.execute('UPDATE Sources SET region = LOWER(region)')
+        cursor.execute('UPDATE Locations SET region = LOWER(region)')
+        cursor.execute('UPDATE Adjustments SET region = LOWER(region)')
+
+        # Optional: only if these store region names (not city/zone)
+        cursor.execute('UPDATE Projects SET project_location = LOWER(project_location)')
+        cursor.execute('UPDATE Projects SET supplier_location = LOWER(supplier_location)')
+
+        conn.commit()
+
+    return 'All region fields normalized to lowercase.', 200
+
 
 if __name__ == '__main__':
+    # Initialize the app before running
+    with app.app_context():
+        try:
+            init_db()
+            populate_initial_data()
+        except Exception as e:
+            print(f"Warning: Initialization error - {e}")
+    
+
     app.run(debug=True)
+

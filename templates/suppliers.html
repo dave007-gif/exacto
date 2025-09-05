@@ -34,6 +34,12 @@
     <button id="go-dashboard">Go to Dashboard</button>
 
     <script>
+      // Optional: for display purposes only
+      function getPreferredRegionDisplayName() {
+        const supplier = JSON.parse(localStorage.getItem("preferred_supplier"));
+        return supplier?.region || "Default Region";
+      }
+
       async function loadSuppliers() {
         const res = await fetch("/api/suppliers", { credentials: "include" });
         const suppliers = await res.json();
@@ -46,7 +52,8 @@
           .addEventListener("change", () => {
             const selected = document.getElementById("region-filter").value;
             const filtered = suppliers.filter(
-              (s) => !selected || s.region === selected
+              (s) =>
+                !selected || s.region?.toLowerCase() === selected.toLowerCase()
             );
             renderTable(filtered);
           });
@@ -57,8 +64,8 @@
         const regions = [...new Set(suppliers.map((s) => s.region))].sort();
         for (const region of regions) {
           const opt = document.createElement("option");
-          opt.value = region;
-          opt.textContent = region;
+          opt.value = region.toLowerCase();
+          opt.textContent = region; // or capitalize(region)
           regionFilter.appendChild(opt);
         }
       }
@@ -86,7 +93,9 @@
         const supplier = JSON.parse(json);
         localStorage.setItem("preferred_supplier", JSON.stringify(supplier));
         alert(
-          `✅ Preferred supplier set to: ${supplier.name} (${supplier.region})`
+          `✅ Preferred supplier set to: ${
+            supplier.name
+          } (${getPreferredRegionDisplayName()})`
         );
         document.getElementById("go-dashboard").style.display = "inline-block";
       }

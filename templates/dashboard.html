@@ -10,6 +10,16 @@
     <nav>
       <a href="/dashboard">Dashboard</a>
       <a href="/calculation">Calculator</a>
+
+      <!-- Bulk upload / review -->
+      {% if 'admin' in current_user.roles %}
+      <a href="/admin_upload">Admin Uploads</a>
+      <a href="/admin_review">Staged Uploads</a>
+      {% elif 'professional' in current_user.roles or 'firm' in
+      current_user.roles or 'uploader' in current_user.roles %}
+      <a href="/admin_upload">Request Bulk Upload</a>
+      {% endif %}
+
       <button id="logout-btn">Logout</button>
     </nav>
 
@@ -56,6 +66,21 @@
           <h3>Professional Tools</h3>
           <button onclick="location.href='/suppliers'">Manage Suppliers</button>
           <button id="create-project-btn">Create Project</button>
+          <div style="margin-top: 0.75rem">
+            <!-- Show bulk upload to trusted roles (professional/firm) or to 'uploader' role if you add it -->
+            {% if 'professional' in current_user.roles or 'firm' in
+            current_user.roles or 'uploader' in current_user.roles %}
+            <button onclick="location.href='/admin_upload'">
+              Request Bulk Upload
+            </button>
+            {% endif %}
+            <!-- Admin quick link to review staged uploads -->
+            {% if 'admin' in current_user.roles %}
+            <button onclick="location.href='/admin_review'">
+              Review Staged Uploads
+            </button>
+            {% endif %}
+          </div>
         </div>
         {% endif %} {% if 'firm' in current_user.roles %}
         <div class="firm-dashboard">

@@ -10,6 +10,10 @@ VALID_REGIONS = [
     "National",
 ]
 
+# Require admin to validate + approve uploads (disable fast-path)
+ADMIN_AUTO_APPLY = false
+
+# --- Required fields per upload category ---
 REQUIRED_MATERIAL_FIELDS = [
     "material",
     "unit_cost",
@@ -17,15 +21,83 @@ REQUIRED_MATERIAL_FIELDS = [
     "valid_to",
     "region",
 ]
+
 REQUIRED_LABOR_FIELDS = ["task", "rate", "valid_from", "valid_to", "region"]
-REQUIRED_PLANT_FIELDS = ["equipment", "daily_rate", "duration_per_unit"]
+
+REQUIRED_PLANT_FIELDS = [
+    "equipment",
+    "daily_rate",
+    "duration_per_unit",
+    "region",
+    "source_id",
+    "valid_from",
+    "valid_to",
+]
+
 REQUIRED_ADJUSTMENT_FIELDS = [
     "region",
     "concrete_waste_factor",
     "labor_efficiency",
     "thickness",
 ]
+
+# ✅ New additions
+REQUIRED_LOCATION_FIELDS = ["zone", "region"]
+
+REQUIRED_HAULAGE_BAND_FIELDS = ["label", "min_km", "max_km", "multiplier"]
+
+[PLANT_ANCHOR_CITY_MAP]
+"ashanti" = "kumasi"
+"volta" = "accra"
+"eastern" = "accra"
+"greater accra" = "accra"
+"western" = "takoradi"
+"central" = "takoradi"
+"bono" = "kumasi"
+"national" = "accra"      # fallback for national if needed
+
+[PLANT_DISTANCE_MATRIX]
+"ashanti->kumasi" = 0
+"volta->accra" = 157
+"eastern->accra" = 83
+"greater accra->accra" = 0
+"western->takoradi" = 0
+"central->takoradi" = 87
+"bono->kumasi" = 127
+"national->accra" = 0
+
 REQUIRED_SOURCES_FIELDS = ["name", "type", "region", "contact"]
+
+[ROLES]
+list = [
+    { name = "professional", description = "Professional user" },
+    { name = "firm", description = "Firm user" },
+    { name = "student", description = "Student user" },
+    { name = "uploader", description = "Uploader user" },
+]
+
+[LOCATIONS]
+list = [
+    { zone = "Accra Central", region = "Greater Accra" },
+    { zone = "Tema", region = "Greater Accra" },
+    { zone = "Kumasi", region = "Ashanti" },
+    { zone = "Takoradi", region = "Western" },
+    { zone = "Ho", region = "Volta" },
+    { zone = "Koforidua", region = "Eastern" },
+    { zone = "Cape Coast", region = "Central" },
+]
+
+[HAULAGE_BANDS]
+list = [
+    { label = "Band 1", min_km = 0, max_km = 5, multiplier = 1.0 },
+    { label = "Band 2", min_km = 5, max_km = 15, multiplier = 1.2 },
+    { label = "Band 3", min_km = 15, max_km = 1000, multiplier = 1.5 },
+]
+
+[SUBSCRIPTION_PLANS]
+list = [
+    { user_id = 1, plan_name = "Pro", start_date = "2024-01-01", end_date = "2025-01-01" },
+]
 
 FALLBACK_ENABLED = true
 FALLBACK_ORDER = ["neighbor", "national"]
@@ -44,12 +116,12 @@ DEFAULT_LABOR_EFFICIENCY = 1.0
 DEFAULT_THICKNESS = 0.2
 
 SENDER_EMAIL = "middle_child13555@protonmail.com"
-BASE_URL = "http://127.0.0.1:5000"
 
+# By default no auto-loaded extensions
 EXTENSIONS = []
 
 [REGION_NEIGHBORS]
-"Greater Accra" = ["Eastern", "Volta"]
+"Greater Accra" = ["eastern", "volta"]
 "Ashanti" = ["Eastern", "Western", "Central", "Bono"]
 "Western" = ["Central", "Ashanti"]
 "Volta" = ["Greater Accra", "Eastern", "Oti"]
@@ -67,7 +139,6 @@ phone_number = "^\\d{3}-\\d{3}-\\d{3}$"
 MIN_UNIT_COST = 1
 MAX_UNIT_COST = 1000
 
-
 [LABOR_THRESHOLDS]
 min_rate = 5
 max_rate = 200
@@ -76,14 +147,21 @@ max_rate = 200
 min_rate = 100
 max_rate = 10000
 
+HAULAGE_RATE_PER_KM = 2.0 # GHS/km, configurable
+HAULAGE_BASE_COST = 0     # optional flat surcharge
+
 [ADJUSTMENT_THRESHOLDS]
 min_factor = 0.5
 max_factor = 2.0
 min_thickness = 0.01
 max_thickness = 1.0
 
+# --- Environment overrides ---
+
 [development]
-EXTENSIONS = ["dynaconf_merge"]
+dynaconf_merge = true
+EXTENSIONS = []
 
 [production]
-EXTENSIONS = ["dynaconf_merge"]
+# No debug toolbar in prod
+EXTENSIONS = []

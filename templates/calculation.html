@@ -80,8 +80,8 @@
     ></div>
 
     <!-- Currency Selector: Only for professionals/firms -->
-    {% if 'professional' in current_user.roles or 'firm' in current_user.roles
-    %}
+    {% if 'admin' in current_user.roles or 'professional' in current_user.roles
+    or 'firm' in current_user.roles %}
     <div id="currency-controls">
       <label for="currency-select">Display Currency:</label>
       <select id="currency-select">
@@ -146,7 +146,7 @@
     <!-- Location Selectors -->
     <div
       id="location-fields"
-      data-role="professional,firm"
+      data-role="professional,firm,admin"
       style="display: none"
     >
       <label for="project-location">Project Location:</label>
@@ -913,8 +913,12 @@
 
     <!-- Role-based PDF button -->
     {% if 'professional' in current_user.roles or 'firm' in current_user.roles
-    %}
-    <button id="generate-boq" class="boq-button" data-role="professional,firm">
+    or 'admin' in current_user.roles %}
+    <button
+      id="generate-boq"
+      class="boq-button"
+      data-role="professional,firm,admin"
+    >
       Generate BOQ
     </button>
     <!-- Modal for format selection -->

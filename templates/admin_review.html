@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Admin Review - Staged Uploads</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 1100px;
+        margin: auto;
+        padding: 1rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+      }
+      th,
+      td {
+        padding: 0.5rem;
+        border: 1px solid #ddd;
+        text-align: left;
+        vertical-align: top;
+      }
+      button {
+        margin-right: 0.4rem;
+      }
+      pre {
+        background: #f8f8f8;
+        padding: 0.5rem;
+        max-height: 140px;
+        overflow: auto;
+      }
+    </style>
+  </head>
+  <body>
+    <header
+      style="
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+      "
+    >
+      <h2>Staged Uploads</h2>
+      <nav>
+        <a href="/dashboard">🏠 Go to Dashboard</a> |
+        <a href="/logout">🚪 Logout</a>
+      </nav>
+    </header>
+
+    <p>
+      Validate, approve or reject staged CSV uploads. Click "Validate" to run
+      dry-run checks, "Approve" to apply.
+    </p>
+    ...
+
+    <div>
+      <label
+        >Status:
+        <select id="status-filter">
+          <option value="">All</option>
+          <option value="pending">Pending</option>
+          <option value="validated">Validated</option>
+          <option value="approved">Approved</option>
+          <option value="rejected">Rejected</option>
+        </select>
+      </label>
+      <button id="refresh">Refresh</button>
+    </div>
+
+    <table id="staging-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Uploader</th>
+          <th>Category</th>
+          <th>File</th>
+          <th>Rows</th>
+          <th>Status</th>
+          <th>Validation</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+
+    <script>
+      async function load(status) {
+        const q = status ? `?status=${encodeURIComponent(status)}` : "";
+        const res = await fetch(`/api/admin/uploads${q}`, {
+          credentials: "include",
+        });
+        const items = await res.json();
+        const tbody = document.querySelector("#staging-table tbody");
+        tbody.innerHTML = "";
+        items.forEach((i) => {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${i.id}</td>
+            <td>${i.uploader_id || ""}</td>
+            <td>${i.category}</td>
+            <td>${i.filename || ""}</td>
+            <td>${i.rows_count || 0}</td>
+            <td>${i.status}</td>
+            <td><pre>${i.validation_messages || ""}</pre></td>
+            <td>
+              <button data-id="${i.id}" class="validate">Validate</button>
+              <button data-id="${i.id}" class="approve">Approve</button>
+              <button data-id="${i.id}" class="reject">Reject</button>
+            </td>
+          `;
+          tbody.appendChild(tr);
+        });
+      }
+
+      document
+        .getElementById("refresh")
+        .addEventListener("click", () =>
+          load(document.getElementById("status-filter").value)
+        );
+      document
+        .getElementById("status-filter")
+        .addEventListener("change", () =>
+          load(document.getElementById("status-filter").value)
+        );
+      document
+        .getElementById("staging-table")
+        .addEventListener("click", async (e) => {
+          const id = e.target.getAttribute("data-id");
+          if (!id) return;
+          if (e.target.classList.contains("validate")) {
+            const r = await fetch(`/api/admin/uploads/${id}/validate`, {
+              method: "POST",
+              credentials: "include",
+            });
+            alert("Validation complete (check table).");
+            load(document.getElementById("status-filter").value);
+          }
+          if (e.target.classList.contains("approve")) {
+            if (!confirm("Approve this staged upload?")) return;
+            const r = await fetch(`/api/admin/uploads/${id}/approve`, {
+              method: "POST",
+              credentials: "include",
+            });
+            const j = await r.json();
+            alert(j.message || "Approve finished");
+            load(document.getElementById("status-filter").value);
+          }
+          if (e.target.classList.contains("reject")) {
+            const reason = prompt(
+              "Rejection reason (optional):",
+              "Rejected by admin"
+            );
+            const r = await fetch(`/api/admin/uploads/${id}/reject`, {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ message: reason }),
+            });
+            alert((await r.json()).message || "Rejected");
+            load(document.getElementById("status-filter").value);
+          }
+        });
+
+      // initial load
+      load("");
+    </script>
+  </body>
+</html>

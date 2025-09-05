@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Upload Prices CSV</title>
+    <title>Upload Data CSV</title>
     <style>
       body {
         font-family: Arial, sans-serif;
@@ -50,7 +50,27 @@
     </style>
   </head>
   <body>
-    <h2>Upload Price Data (Admin Only)</h2>
+    <header
+      style="
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+      "
+    >
+      <h2>Upload Admin Data (CSV)</h2>
+      <nav>
+        <a href="/dashboard">🏠 Go to Dashboard</a> |
+        <a href="/logout">🚪 Logout</a>
+      </nav>
+    </header>
+
+    <p style="color: #444">
+      Note: when <code>ADMIN_AUTO_APPLY = false</code>, uploads from non-admin
+      accounts are staged for admin review... Admins may apply immediately.
+      After uploading you'll see a Staging ID. Admins can review at
+      <a href="/admin_review">Staged Uploads</a>.
+    </p>
 
     <form id="upload-form">
       <label for="upload-category">Select Category:</label><br />
@@ -60,6 +80,8 @@
         <option value="plants">Plants</option>
         <option value="adjustments">Adjustments</option>
         <option value="sources">Sources</option>
+        <option value="locations">Locations</option>
+        <option value="haulage_bands">Haulage Bands</option>
       </select>
 
       <br /><br />
@@ -111,23 +133,23 @@
             if (response.ok) {
               const errors = result.errors || [];
               let html = `
-              ✅ <strong>${result.message}</strong><br>
-              ✔️ Inserted: ${result.inserted}<br>
-              ⚠️ Skipped: ${result.skipped}<br>
-              🗂️ Category: ${result.category}<br>
-            `;
+                ✅ <strong>${result.message}</strong><br>
+                ✔️ Inserted: ${result.inserted}<br>
+                ⚠️ Skipped: ${result.skipped}<br>
+                🗂️ Category: ${result.category}<br>
+              `;
 
               if (errors.length > 0) {
                 html += `
-                <details>
-                  <summary>🔍 View ${
-                    errors.length
-                  } skipped rows with issues</summary>
-                  <ul>
-                    ${errors.map((e) => `<li>${e}</li>`).join("")}
-                  </ul>
-                </details>
-              `;
+                  <details>
+                    <summary>🔍 View ${
+                      errors.length
+                    } skipped rows with issues</summary>
+                    <ul>
+                      ${errors.map((e) => `<li>${e}</li>`).join("")}
+                    </ul>
+                  </details>
+                `;
               }
 
               resultDiv.innerHTML = html;
