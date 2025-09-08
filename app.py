@@ -1882,7 +1882,7 @@ def get_locations():
 
 
 @app.route('/api/haulage-cost', methods=['POST'])
-@role_required('professional', 'firm')
+@role_required('professional', 'firm', 'admin')
 def calculate_haulage():
     data = request.json
     project_loc = data.get('project_location')
@@ -1939,50 +1939,47 @@ def calculate_haulage():
     })
 
 # GET /projects
-@app.route('/projects', methods=['GET'])
-@token_required
-def get_projects():
-    with sqlite3.connect('users.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM Projects')
-        projects = cursor.fetchall()
-    return jsonify({'projects': projects})
+#@app.route('/projects', methods=['GET'])
+#@token_required
+#def get_projects():
+#    with sqlite3.connect('users.db') as conn:
+#        cursor = conn.cursor()
+#        cursor.execute('SELECT * FROM Projects')
+#        projects = cursor.fetchall()
+#    return jsonify({'projects': projects})
 
 # POST /projects (legacy, logs activity)
-@app.route('/projects', methods=['POST'])
-@token_required
-@log_activity("Created new project (legacy endpoint)")
-def legacy_create_project():
-    data = request.json
-    project_name = data.get('project_name')
-    total_cost = data.get('total_cost', 0)
+#@app.route('/projects', methods=['POST'])
+#@token_required
+#@log_activity("Created new project (legacy endpoint)")
+#def legacy_create_project():
+#   data = request.json
+#    project_name = data.get('project_name')
+#    total_cost = data.get('total_cost', 0)
 
-    if not project_name:
-        return jsonify({'message': 'Project name is required'}), 400
-
-    with sqlite3.connect('users.db') as conn:
-        cursor = conn.cursor()
-        cursor.execute('INSERT INTO Projects (project_name, total_cost) VALUES (?, ?)', (project_name, total_cost))
-        conn.commit()
-    return jsonify({'message': 'Project created successfully'}), 201
+#    if not project_name:
+#        return jsonify({'message': 'Project name is required'}), 400
+#
+#    with sqlite3.connect('users.db') as conn:
+#        cursor = conn.cursor()
+#        cursor.execute('INSERT INTO Projects (project_name, total_cost) VALUES (?, ?)', (project_name, total_cost))
+#        conn.commit()
+#    return jsonify({'message': 'Project created successfully'}), 201
 
 # Project Management Endpoints (logs activity)
 @app.route('/api/projects', methods=['POST'])
-@role_required('professional', 'firm')
+@role_required('professional', 'firm', 'admin')
 @log_activity("Created new project")
 def api_create_project():
-    data = request.json
-    project_name = data.get('name') or data.get('project_name')  # Allow either field
+    data = request.json or {}
+    project_name = data.get('name') or data.get('project_name') or "Untitled Project"  # ✅ fallback
     project_loc = data.get('project_location')
     supplier_loc = data.get('supplier_location')
-    supplier_id = data.get('supplier_id')  # ✅ Accept supplier_id
+    supplier_id = data.get('supplier_id')  # ✅ can be null
     formula_version = data.get('formula_version', '2023.1')
-    rates_timestamp = data.get('rates_timestamp')
+    rates_timestamp = data.get('rates_timestamp')  # ✅ allow null
     calculation_data = data.get('calculation_data', '{}')
     total_cost = data.get('total_cost', 0)
-
-    if not project_name:
-        return jsonify({'message': 'Project name required'}), 400
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
@@ -1990,13 +1987,13 @@ def api_create_project():
             INSERT INTO Projects (
                 user_id, project_name, project_location, supplier_location,
                 formula_version, rates_timestamp, calculation_data, total_cost,
-                supplier_id  -- ✅ New column
+                supplier_id
             )
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             request.user_id, project_name, project_loc, supplier_loc,
             formula_version, rates_timestamp, calculation_data, total_cost,
-            supplier_id  # ✅ Store it
+            supplier_id
         ))
         project_id = cursor.lastrowid
         conn.commit()
@@ -2041,7 +2038,7 @@ def api_get_project(project_id):
     return jsonify(project)
 
 @app.route('/api/projects/<int:project_id>', methods=['PUT'])
-@role_required('professional', 'firm')
+@role_required('professional', 'firm', 'admin')
 @log_activity("Updated project")
 def api_update_project(project_id):
     data = request.json
@@ -2075,7 +2072,7 @@ def api_update_project(project_id):
 # --- Supplier Management Endpoints ---
 
 @app.route('/suppliers')
-@role_required('professional', 'firm')
+@role_required('professional', 'firm', 'admin')
 def supplier_page():
     return render_template('suppliers.html')
 
@@ -2093,7 +2090,7 @@ def list_suppliers():
 
 
 @app.route('/api/suppliers', methods=['POST'])
-@role_required('professional', 'firm')
+@role_required('professional', 'firm', 'admin')
 def add_supplier():
     data = request.json or {}
     name = data.get('name', '').strip()
@@ -2190,17 +2187,20 @@ def get_pricing_bundle():
                 for row in cursor.fetchall()
             ]
 
+    # --- Initial fetch ---
     materials, labor = fetch_materials_and_labor(region)
     plants = fetch_plants(region)
 
     # --- Fallbacks ---
     if fallback_enabled and (not materials or not labor or not plants):
-        anchor_city = get_anchor_city(region)  # implement a mapping rural→city
+        anchor_city = get_anchor_city(region)  # implement mapping rural→city
         if anchor_city:
             if not materials or not labor:
                 m, l = fetch_materials_and_labor(anchor_city)
-                if not materials: materials = m
-                if not labor: labor = l
+                if not materials:
+                    materials = m
+                if not labor:
+                    labor = l
                 if m or l:
                     fallback_applied = f"anchor-city ({anchor_city})"
 
@@ -2214,6 +2214,15 @@ def get_pricing_bundle():
                         p["haulage"] = haulage_cost
                     fallback_applied = f"anchor-city ({anchor_city}) + haulage"
 
+    # --- Special case: group tree cutting ---
+    if any(task.startswith("tree cutting") for task in labor.keys()):
+        labor["tree cutting"] = {
+            "600-1500": labor.get("tree cutting 600-1500"),
+            "1500-3000": labor.get("tree cutting 1500-3000"),
+            "over 3000": labor.get("tree cutting over 3000"),
+        }
+
+    # --- Response ---
     response = {
         "materials": materials,
         "labor": labor,
@@ -2225,7 +2234,6 @@ def get_pricing_bundle():
         response["warning"] = f"Fallback used: {fallback_applied}"
 
     return jsonify(response)
-
 
 
 @app.route('/smm-rules', methods=['GET'])
@@ -2631,7 +2639,7 @@ def star_project(project_id):
     return jsonify({'message': 'Project starred'})
 
 @app.route('/api/projects/<int:project_id>/archive', methods=['POST'])
-@role_required('professional', 'firm')
+@role_required('professional', 'firm', 'admin')
 def archive_project(project_id):
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()

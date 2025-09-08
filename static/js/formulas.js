@@ -8,24 +8,47 @@ export const SMM7_2023 = {
       '1500-3000': 'average girth 1.5-3.0m',
       '>3000': 'average girth over 3.0m'
     },
+
+    // Decide which labor subtask applies
     getLaborTask: (inputs) => {
       if (inputs.tree_girth === '600-1500') return 'tree cutting 600-1500';
       if (inputs.tree_girth === '1500-3000') return 'tree cutting 1500-3000';
       if (inputs.tree_girth === '>3000') return 'tree cutting over 3000';
       return 'tree cutting 600-1500'; // default
     },
+
     description: (inputs) =>
-      `Cutting down and removal of ${inputs.num_trees} tree(s)/stump(s) of ${SMM7_2023['tree cutting'].girthBands[inputs.tree_girth]}`,
+      `Cutting down and removal of ${inputs.num_trees || 0} tree(s)/stump(s) of ${SMM7_2023['tree cutting'].girthBands[inputs.tree_girth] || 'unspecified girth'}`,
+
     reference: 'SMM7 D10',
     materials: [],
     laborTasks: [], // handled dynamically
+
     calculateMaterialCost: () => 0,
+
     calculateLaborCost: (inputs, laborRates) => {
-      const task = SMM7_2023['tree cutting'].getLaborTask(inputs);
-      const rate = laborRates[task] || 0;
       const quantity = Number(inputs.num_trees) || 0;
+      if (!quantity) {
+        return { totalDays: 0, laborCost: 0 };
+      }
+
+      // 1. Pick the subtask key
+      const taskKey = SMM7_2023['tree cutting'].getLaborTask(inputs);
+
+      // 2. Resolve rate from either grouped or flat laborRates
+      let rate = 0;
+      if (laborRates["tree cutting"] && typeof laborRates["tree cutting"] === "object") {
+        // Use grouped object, matching girth
+        if (inputs.tree_girth === '600-1500') rate = laborRates["tree cutting"]["600-1500"] || 0;
+        if (inputs.tree_girth === '1500-3000') rate = laborRates["tree cutting"]["1500-3000"] || 0;
+        if (inputs.tree_girth === '>3000') rate = laborRates["tree cutting"]["over 3000"] || 0;
+      } else {
+        // Fallback: use flat keys
+        rate = laborRates[taskKey] || 0;
+      }
+
       return {
-        totalDays: quantity, // 1 tree per day (adjust as needed)
+        totalDays: quantity, // assume 1 tree per day (adjust if needed)
         laborCost: rate * quantity
       };
     }
@@ -40,7 +63,20 @@ export const SMM7_2023 = {
     reference: 'SMM7 D20',
     materials: [],
     laborTasks: ['site clearance'],
-    calculateMaterialCost: () => 0
+    calculateMaterialCost: () => 0,
+    calculateLaborCost: (inputs, laborRates) => {
+      const quantity = (inputs.site_length || 0) * (inputs.site_width || 0);
+      const dailyRate = laborRates['site clearance'] || 0;
+      // Assume 8 hours per day, 1.0 efficiency, 8 hours per unit (adjust as needed)
+      const laborCalc = SMM7_2023.calculateLaborCost(
+        quantity,
+        8,   // laborHoursPerUnit: 8 hours per m²
+        1.0, // efficiency
+        8,   // hoursPerDay
+        dailyRate
+      );
+      return laborCalc;
+    }
   },
 
   // 3. Topsoil Excavation
@@ -204,3 +240,4 @@ export const SMM7_2023 = {
         return totalCost;
     }
 };
+

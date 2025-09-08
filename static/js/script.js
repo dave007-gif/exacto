@@ -2555,7 +2555,7 @@ async function handleBOQExport(exportFn) {
 }
 
 // --- PATCH your save-and-continue-project-details handler ---
-document.getElementById('save-and-continue-project-details').onclick = async function() {
+/*document.getElementById('save-and-continue-project-details').onclick = async function() {
     const details = {
         companyName: document.getElementById('company-name').value.trim(),
         companyAddress: document.getElementById('company-address').value.trim(),
@@ -2620,6 +2620,63 @@ document.getElementById('save-and-continue-project-details').onclick = async fun
 
 
     } catch (err) {
+        alert('Failed to save project details to backend.');
+    }
+};*/
+
+// --- Unified save-and-continue handler ---
+document.getElementById('save-and-continue-project-details').onclick = async function() {
+    const details = {
+        companyName: document.getElementById('company-name').value.trim(),
+        companyAddress: document.getElementById('company-address').value.trim(),
+        contactInfo: document.getElementById('contact-info').value.trim(),
+        projectTitle: document.getElementById('project-title').value.trim(),
+        clientName: document.getElementById('client-name').value.trim(),
+        projectPhase: document.getElementById('project-phase').value.trim(),
+        date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+    };
+
+    if (!details.companyName || !details.companyAddress || !details.projectTitle || !details.clientName) {
+        alert('Please fill all required fields.');
+        return;
+    }
+
+    setProjectDetailsAndUI(details);
+
+    try {
+        // ✅ Always create project using saveProject()
+        if (!currentProjectId) {
+            const response = await saveProject({
+                projectTitle: details.projectTitle,
+                total_cost: 0
+            });
+            currentProjectId = response.project_id;  // backend returns { project_id }
+        }
+
+        setProjectDetailsSavedFlag(currentProjectId);
+
+        console.log('[ProjectDetailsModal] Saving project details for projectId:', currentProjectId);
+        await saveProjectDetails(currentProjectId, details);
+
+        // Fetch latest details from backend and update UI
+        const latestDetails = await fetchProjectDetails(currentProjectId);
+        if (latestDetails) {
+            boqData.projectDetails = latestDetails;
+            refreshProjectDetailsUI();
+        }
+
+        alert('Project details saved!');
+        hideProjectDetailsModal();
+
+        // Resume BOQ export if pending
+        if (pendingBOQExportFn) {
+            const fn = pendingBOQExportFn;
+            pendingBOQExportFn = null;
+            await fn();
+        }
+
+    } catch (err) {
+        console.error("Failed to save project details:", err);
         alert('Failed to save project details to backend.');
     }
 };
@@ -2939,13 +2996,16 @@ async function saveProject(projectData) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 ...projectData,
+                project_name: projectData.projectTitle || "Untitled Project",  // ✅ always send
                 project_location: projectLoc,
                 supplier_location: supplierLoc,
+                supplier_id: localStorage.getItem('preferredSupplierId') || null, // ✅ optional
                 calculation_data: JSON.stringify(calculationData),
                 total_cost: totalCost
             }),
             credentials: 'include'
         });
+
         if (!response.ok) throw new Error('Project save failed');
         return await response.json();
     } catch (error) {
@@ -2955,7 +3015,7 @@ async function saveProject(projectData) {
 }
 
 // --- Patch: Mark incomplete projects in project list ---
-async function displayProjects() {
+/*async function displayProjects() {
     try {
         const response = await fetch('/api/projects', { credentials: 'include' });
         if (!response.ok) {
@@ -2988,7 +3048,49 @@ async function displayProjects() {
     } catch (error) {
         console.error("Error displaying projects:", error);
     }
+}*/
+
+// --- Unified project list display ---
+async function displayProjects() {
+    try {
+        const response = await fetch('/api/projects', { credentials: 'include' });
+        if (!response.ok) {
+            console.error("Failed to fetch projects from backend:", response.statusText);
+            return;
+        }
+        const data = await response.json();
+        const projects = Array.isArray(data) ? data : data.projects;
+        console.log("Displaying projects from backend:", projects);
+
+        const projectList = document.getElementById('project-list');
+        projectList.innerHTML = ''; // Clear existing
+
+        if (Array.isArray(projects)) {
+            projects.forEach(project => {
+                const projectItem = document.createElement('div');
+                projectItem.classList.add('project-item');
+
+                // Mark incomplete if missing critical details
+                const incomplete = project.project_details
+                    ? !(project.project_details.companyName && project.project_details.projectTitle && project.project_details.clientName)
+                    : true;
+                if (incomplete) projectItem.classList.add('incomplete');
+
+                projectItem.innerHTML = `
+                    <h4>${project.project_name || 'Untitled Project'}</h4>
+                    <p>Total Cost: GHS ${project.total_cost}</p>
+                    <p>Date: ${project.last_modified || ''}</p>
+                `;
+                projectList.appendChild(projectItem);
+            });
+        } else {
+            console.error("Projects data is not an array:", projects);
+        }
+    } catch (error) {
+        console.error("Error displaying projects:", error);
+    }
 }
+
 
 async function saveProjectState() {
     const projectId = getProjectIdFromUrl();
@@ -3107,7 +3209,7 @@ async function saveProjectState() {
     }
 }*/
 
-async function calculateCompositeRate(componentType, quantity, inputs = {}) {
+/*async function calculateCompositeRate(componentType, quantity, inputs = {}) {
     if (!componentType || !quantity || quantity <= 0) {
         console.error('Invalid input:', { componentType, quantity });
         return null;
@@ -3161,20 +3263,40 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
         // ✅ Labor cost
         let laborCost = 0;
         if (typeof formulaConfig.calculateLaborCost === 'function') {
-            laborCost = formulaConfig.calculateLaborCost(inputs, labor).laborCost;
+            const laborResult = formulaConfig.calculateLaborCost(inputs, labor);
+
+            // Handle both { laborCost } and numeric return
+            if (typeof laborResult === 'object' && laborResult !== null) {
+                laborCost = laborResult.laborCost || 0;
+            } else if (typeof laborResult === 'number') {
+                laborCost = laborResult;
+            }
         } else {
+            // Fallback to first laborTask if defined
             const laborTask = formulaConfig.laborTasks?.[0];
-            const dailyRate = laborTask ? labor[laborTask] || 0 : 0;
-            const laborCalc = SMM7_2023.calculateLaborCost(
-                quantity,
-                8,
-                1.0,
-                8,
-                dailyRate,
-                laborTask
-            );
-            laborCost = laborCalc?.laborCost || 0;
+            if (laborTask) {
+                const dailyRate = labor[laborTask] || 0;
+                const laborCalc = SMM7_2023.calculateLaborCost(
+                    quantity,
+                    8,
+                    1.0,
+                    8,
+                    dailyRate,
+                    laborTask
+                );
+                laborCost = laborCalc?.laborCost || 0;
+            }
         }
+
+        // Special handling for grouped tree cutting rates
+        if (componentType.toLowerCase() === "tree cutting" && labor["tree cutting"]) {
+            const girth = inputs.tree_girth;
+            const groupedRates = labor["tree cutting"];
+            const rate = groupedRates[girth] || 0;
+            const qty = Number(inputs.num_trees) || quantity;
+            laborCost = rate * qty;
+        }
+
 
         // ✅ Plant cost
         let plantCost = 0;
@@ -3225,11 +3347,11 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
         console.error(`Composite rate error for ${componentType}:`, error);
         return null;
     }
-}
+}*/
 
 
 // In generateSMM7BOQ, pass inputs to calculateCompositeRate:
-async function generateSMM7BOQ() {
+/*async function generateSMM7BOQ() {
     // Reset BOQ data using your model's reset function
     resetBOQ();
     initBillsFromTemplate(billTemplate); // Ensure standard bills are present
@@ -3279,6 +3401,286 @@ async function generateSMM7BOQ() {
 
         await generateBOQPDF();
         //alert("BOQ Report has been successfully generated!");
+
+    } catch (globalError) {
+        console.error("BOQ generation failed:", globalError);
+        alert("Failed to generate BOQ. See console for details.");
+    }
+}*/
+
+// Add this function to handle tree cutting specifically in BOQ generation
+async function calculateTreeCuttingForBOQ(component, inputs) {
+    const formulaKey = COMPONENT_TO_FORMULA_MAP["tree cutting"];
+    if (!formulaKey || !SMM7_2023[formulaKey]) {
+        console.warn(`No formula found for component: tree cutting`);
+        return null;
+    }
+
+    // Use the same region as the original calculation
+    const region = getNormalizedRegion();
+    const prices = await fetchPricesForComponent(formulaKey, region);
+    
+    if (!prices) return null;
+    const { materialPrices, laborRates } = prices;
+    
+    // Calculate quantity
+    const adjustments = window.adjustments || {};
+    const formula = SMM7_2023[formulaKey].formula;
+    const quantity = formula(inputs, adjustments.concrete_waste_factor || 1);
+    
+    // Material cost (typically 0 for tree cutting)
+    let totalMaterialCost = 0;
+    for (const material of SMM7_2023[formulaKey].materials || []) {
+        totalMaterialCost += (materialPrices[material] || 0) * quantity;
+    }
+    
+    // Labor cost - use the same logic as the component calculation
+    let laborTask;
+    if (typeof SMM7_2023[formulaKey].getLaborTask === 'function') {
+        laborTask = SMM7_2023[formulaKey].getLaborTask(inputs);
+    } else if (Array.isArray(SMM7_2023[formulaKey].laborTasks) && SMM7_2023[formulaKey].laborTasks.length > 0) {
+        laborTask = SMM7_2023[formulaKey].laborTasks[0];
+    } else {
+        laborTask = null;
+    }
+    
+    let labor;
+    if (laborTask && typeof SMM7_2023[formulaKey].calculateLaborCost === 'function') {
+        labor = SMM7_2023[formulaKey].calculateLaborCost(inputs, laborRates);
+    } else {
+        labor = SMM7_2023.calculateLaborCost(
+            quantity,
+            8,
+            adjustments.labor_efficiency || 1,
+            8,
+            laborRates[laborTask] || 0,
+            laborTask
+        );
+    }
+    
+    // Plant cost
+    const plantData = await fetchPlantData();
+    const equipmentList = SMM7_2023[formulaKey].equipment || [];
+    const relevantPlants = plantData.filter(plant =>
+        equipmentList.includes(plant.equipment)
+    );
+    const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
+    
+    // Apply haulage multiplier
+    totalMaterialCost *= haulageMultiplier;
+    labor.laborCost *= haulageMultiplier;
+    const finalPlantCost = plantCost * haulageMultiplier;
+    
+    // Financial calculations
+    const baseCost = totalMaterialCost + labor.laborCost + finalPlantCost;
+    const overheads = (baseCost * 0.15) || 0;
+    const profit = ((baseCost + overheads) * 0.10) || 0;
+    
+    return {
+        materialCost: Number(totalMaterialCost.toFixed(2)),
+        laborCost: Number(labor.laborCost.toFixed(2)),
+        plantCost: Number(finalPlantCost.toFixed(2)),
+        overheads: Number(overheads.toFixed(2)),
+        profit: Number(profit.toFixed(2)),
+        totalCost: Number((baseCost + overheads + profit).toFixed(2))
+    };
+}
+
+// Modify the calculateCompositeRate function to handle tree cutting specially
+async function calculateCompositeRate(componentType, quantity, inputs = {}) {
+    // Handle tree cutting as a special case
+    if (componentType === "tree cutting") {
+        return await calculateTreeCuttingForBOQ(componentType, inputs);
+    }
+    
+    // Original calculateCompositeRate logic for other components
+    if (!componentType || !quantity || quantity <= 0) {
+        console.error('Invalid input:', { componentType, quantity });
+        return null;
+    }
+
+    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
+    if (!formulaKey) {
+        console.warn(`No mapping for component: ${componentType}`);
+        return null;
+    }
+
+    const formulaConfig = SMM7_2023[formulaKey];
+    if (!formulaConfig) {
+        console.warn(`No formula config for key: ${formulaKey}`);
+        return null;
+    }
+
+    try {
+        // Get supplier region from dropdown
+        const region = getNormalizedRegion();
+
+        // Fetch pricing bundle based on region
+        const pricingResponse = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(region)}`, {
+            credentials: 'include'
+        });
+
+        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
+        const { materials, labor, warning } = await pricingResponse.json();
+
+        if (warning) {
+            console.warn(`⚠️ Fallback applied in pricing-bundle: ${warning}`);
+            const notice = document.getElementById('fallback-warning');
+            if (notice) {
+                notice.textContent = warning;
+                notice.style.display = 'block';
+            }
+        }
+
+        // Material cost
+        let materialCost = 0;
+        if (typeof formulaConfig.calculateMaterialCost === 'function') {
+            materialCost = formulaConfig.calculateMaterialCost(quantity, materials, inputs);
+        } else {
+            materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
+        }
+
+        // Labor cost
+        let laborCost = 0;
+
+        // Check if the component has its own calculateLaborCost method (not inherited)
+        const hasOwnCalculateLaborCost = Object.prototype.hasOwnProperty.call(formulaConfig, 'calculateLaborCost') && 
+                                        typeof formulaConfig.calculateLaborCost === 'function';
+
+        if (hasOwnCalculateLaborCost) {
+            // Use component-specific labor calculation
+            console.log(`Using component-specific labor calculation for ${componentType}`);
+            const laborResult = formulaConfig.calculateLaborCost(inputs, labor);
+            laborCost = typeof laborResult === 'object' ? laborResult.laborCost : laborResult;
+            console.log(`Component-specific labor cost for ${componentType}: ${laborCost}`);
+        } else {
+            // Use generic labor calculation for components without their own method
+            console.log(`Using generic labor calculation for ${componentType}`);
+            const laborTask = formulaConfig.laborTasks?.[0];
+            console.log(`Labor task for ${componentType}: ${laborTask}`);
+            
+            if (laborTask) {
+                const dailyRate = labor[laborTask] || 0;
+                console.log(`Daily rate for ${laborTask}: ${dailyRate}`);
+                
+                const laborCalc = SMM7_2023.calculateLaborCost(
+                    quantity,
+                    8, // hours per unit
+                    1.0, // efficiency
+                    8, // hours per day
+                    dailyRate,
+                    laborTask
+                );
+                console.log(`Labor calculation result:`, laborCalc);
+                
+                laborCost = laborCalc?.laborCost || 0;
+            }
+            console.log(`Final labor cost for ${componentType}: ${laborCost}`);
+        }
+        // Plant cost
+        let plantCost = 0;
+        const equipmentList = formulaConfig.equipment || [];
+        if (equipmentList.length > 0) {
+            try {
+                const plantData = await fetchPlantData();
+                const availablePlants = plantData.filter(p =>
+                    equipmentList.includes(p.equipment)
+                );
+                if (availablePlants.length > 0) {
+                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
+
+                    availablePlants.forEach(p => {
+                        if (p.haulageCost && p.haulageCost > 0) {
+                            showFallbackWarning(
+                                `${p.equipment} (plant)`,
+                                `${p.region} + haulage from ${p.anchorCity} (${p.distanceKm} km)`
+                            );
+                        }
+                    });
+                } else {
+                    console.warn(`⚠️ No available plants found for ${componentType}`);
+                }
+            } catch (plantError) {
+                console.error(`Plant data error for ${componentType}:`, plantError);
+            }
+        } else {
+            console.log(`No equipment required for ${componentType}`);
+        }
+
+        // Financials
+        const baseCost = materialCost + laborCost + plantCost;
+        const overheads = (baseCost * 0.15) || 0;
+        const profit = ((baseCost + overheads) * 0.10) || 0;
+
+        const result = {
+            materialCost: Number(materialCost.toFixed(2)),
+            laborCost: Number(laborCost.toFixed(2)),
+            plantCost: Number(plantCost.toFixed(2)),
+            overheads: Number(overheads.toFixed(2)),
+            profit: Number(profit.toFixed(2)),
+            totalCost: Number((baseCost + overheads + profit).toFixed(2))
+        };
+        console.log('Composite rate result:', result);
+        return result;
+    } catch (error) {
+        console.error(`Composite rate error for ${componentType}:`, error);
+        return null;
+    }
+}
+
+// Add better error logging to identify which components are failing
+async function generateSMM7BOQ() {
+    // Reset BOQ data using your model's reset function
+    resetBOQ();
+    initBillsFromTemplate(billTemplate); // Ensure standard bills are present
+
+    try {
+        const components = await fetchCalculatedComponents();
+        if (!components?.length) {
+            alert("No components found to generate BOQ");
+            return;
+        }
+
+        let validComponents = 0;
+
+        for (const component of components) {
+            try {
+                console.log(`Processing ${component.type} for BOQ...`);
+                const compositeRate = await calculateCompositeRate(component.type, component.quantity, component.inputs);
+                
+                if (!compositeRate?.totalCost || compositeRate.totalCost === 0) {
+                    console.warn(`Skipping ${component.type} - invalid composite rate:`, compositeRate);
+                    continue;
+                }
+
+                addToBOQ({
+                    component: component.type,
+                    quantity: component.quantity,
+                    unitCost: compositeRate.totalCost / component.quantity,
+                    inputs: component.inputs
+                });
+                validComponents++;
+                console.log(`Added ${component.type} to BOQ successfully`);
+            } catch (componentError) {
+                console.error(`Error processing ${component.type}:`, componentError, component);
+                continue;
+            }
+        }
+
+        if (validComponents === 0) {
+            alert("No valid components to generate BOQ");
+            return;
+        }
+
+        if (!validateBOQStructure()) {
+            alert("Cannot generate PDF - invalid BOQ structure");
+            return;
+        }
+
+        calculateSummary();
+
+        await generateBOQPDF();
+        console.log("BOQ generated successfully");
 
     } catch (globalError) {
         console.error("BOQ generation failed:", globalError);
