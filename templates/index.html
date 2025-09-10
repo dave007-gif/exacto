@@ -1,17 +1,86 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Home - BuildCost</title>
-</head>
-<body>
-    <h1>Welcome to BuildCost</h1>
-    <p>Your ultimate tool for building cost estimation and takeoff calculations.</p>
-    
-    <!-- Link to Signup/Login Page -->
-    <p>
-        <a href="/login">Calculate Building Cost</a>
-    </p>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Home - Exacto</title>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&family=Inter:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Favicon/Icons from teammate uploads -->
+    <link rel="icon" href="/teammate/uploads/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/teammate/uploads/icon.png" />
+
+    <!-- Main CSS -->
+    <link rel="stylesheet" href="/static/css/style.css" />
+  </head>
+  <body class="home">
+    <!-- Header + Navbar -->
+    <header class="ex-header">
+      <div class="ex-header-inner">
+        <a class="ex-brand" href="/">
+          <img src="/teammate/uploads/icon.png" alt="Exacto" class="ex-logo" />
+          <span class="ex-brand-text">Exacto</span>
+        </a>
+        <nav class="ex-nav" aria-label="Primary">
+          <a href="/" class="ex-nav-link">Home</a>
+          <a href="/projects" class="ex-nav-link">Projects</a>
+          <a href="/about" class="ex-nav-link">About</a>
+          <a href="/contact" class="ex-nav-link">Contact</a>
+          <a href="/login" class="ex-nav-cta">Calculate</a>
+        </nav>
+        <button
+          class="ex-nav-toggle"
+          aria-label="Toggle navigation"
+          aria-expanded="false"
+        >
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Hero with your original content -->
+    <main class="ex-hero">
+      <div class="ex-hero-content">
+        <h1>Welcome to Exacto</h1>
+        <p>
+          Your ultimate tool for building cost estimation and takeoff
+          calculations.
+        </p>
+        <p>
+          <a href="/login" class="ex-cta">Calculate Building Cost</a>
+        </p>
+      </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="ex-footer">
+      <div class="ex-footer-inner">
+        <p>© <span id="ex-year"></span> Exacto. All rights reserved.</p>
+        <div class="ex-footer-links">
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      document.getElementById("ex-year").textContent = new Date().getFullYear();
+      const toggle = document.querySelector(".ex-nav-toggle");
+      const nav = document.querySelector(".ex-nav");
+      if (toggle && nav) {
+        toggle.addEventListener("click", () => {
+          const expanded = toggle.getAttribute("aria-expanded") === "true";
+          toggle.setAttribute("aria-expanded", String(!expanded));
+          nav.classList.toggle("open", !expanded);
+        });
+      }
+    </script>
+  </body>
 </html>

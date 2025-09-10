@@ -9,3 +9,4 @@ source_id,equipment,daily_rate,duration_per_unit,region,valid_from,valid_to
 4,Tower Crane,3000,2.0,ashanti,2025-01-01,2025-12-31
 5,Plate Compactor,180,0.2,volta,2025-01-01,2025-12-31
 5,Grader,1300,1.5,volta,2025-01-01,2025-12-31
+6,Concrete Mixer (400L),250,0.5,national,2025-01-01,2025-12-31

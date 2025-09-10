@@ -1,13 +1,13 @@
 [default]
 VALID_REGIONS = [
-    "Ashanti",
-    "Volta",
-    "Eastern",
-    "Greater Accra",
-    "Western",
-    "Central",
-    "Bono",
-    "National",
+    "ashanti",
+    "volta",
+    "eastern",
+    "greater Accra",
+    "cestern",
+    "central",
+    "bono",
+    "national",
 ]
 
 # Require admin to validate + approve uploads (disable fast-path)

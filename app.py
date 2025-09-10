@@ -334,18 +334,27 @@ def populate_initial_data():
         admin_password = app.config.get('ADMIN_PASSWORD', '1234')
         hashed_password = generate_password_hash(admin_password)
         
-        # Insert or update admin user
+        # Avoid REPLACE: keep existing id if present
+        cursor.execute('SELECT id FROM users WHERE email = ?', (admin_email,))
+        row = cursor.fetchone()
+        if row is None:
+            cursor.execute(
+                'INSERT INTO users (email, password, verified) VALUES (?, ?, 1)',
+                (admin_email, hashed_password)
+            )
+            admin_user_id = cursor.lastrowid
+        else:
+            admin_user_id = row[0]
+            # Optional: keep password as-is in dev; or uncomment to update
+            # cursor.execute('UPDATE users SET password = ?, verified = 1 WHERE id = ?', (hashed_password, admin_user_id))
+
+        # Ensure admin role exists
+        cursor.execute('INSERT OR IGNORE INTO roles (name, description) VALUES (?, ?)', ('admin', 'Administrator with full access'))
+        # Assign role (idempotent)
         cursor.execute('''
-            INSERT OR REPLACE INTO users (email, password, verified)
-            VALUES (?, ?, 1)
-        ''', (admin_email, hashed_password))
-        
-        # Assign admin role
-        cursor.execute('''
-            INSERT OR REPLACE INTO user_roles (user_id, role_id)
-            SELECT u.id, r.id FROM users u, roles r
-            WHERE u.email = ? AND r.name = 'admin'
-        ''', (admin_email,))
+            INSERT OR IGNORE INTO user_roles (user_id, role_id)
+            SELECT ?, r.id FROM roles r WHERE r.name = 'admin'
+        ''', (admin_user_id,))
 
     
         # Populate Locations table
@@ -451,47 +460,48 @@ def initialize_app():
     try:
         init_db()
         populate_initial_data()
-        
-        # Verify admin exists
+
+        email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
+        raw_password = app.config.get('ADMIN_PASSWORD', '1234')
+
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
+
+            # Ensure admin role exists
             cursor.execute('''
-                SELECT COUNT(*) FROM user_roles ur
-                JOIN roles r ON ur.role_id = r.id
-                WHERE r.name = 'admin'
+                INSERT OR IGNORE INTO roles (name, description)
+                VALUES ('admin', 'Administrator with full access')
             ''')
-            admin_count = cursor.fetchone()[0]
-            
-            if admin_count == 0:
-                print("⚠️ No admin users found. Creating default admin...")
-                # Force admin creation
-                email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
-                password = app.config.get('ADMIN_PASSWORD', '1234')
-                hashed_password = generate_password_hash(password)
-                
+
+            # Ensure admin user exists (preserve id)
+            cursor.execute('SELECT id, verified FROM users WHERE email = ?', (email,))
+            row = cursor.fetchone()
+            if row is None:
+                hashed_password = generate_password_hash(raw_password)
                 cursor.execute(
-                    'INSERT OR REPLACE INTO users (email, password, verified) VALUES (?, ?, 1)',
+                    'INSERT INTO users (email, password, verified) VALUES (?, ?, 1)',
                     (email, hashed_password)
                 )
-                
-                # Get admin role ID
-                cursor.execute('SELECT id FROM roles WHERE name = "admin"')
-                role_id = cursor.fetchone()[0]
-                
-                # Get user ID
-                cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
-                user_id = cursor.fetchone()[0]
-                
-                # Assign admin role
-                cursor.execute(
-                    'INSERT OR REPLACE INTO user_roles (user_id, role_id) VALUES (?, ?)',
-                    (user_id, role_id)
-                )
-                conn.commit()
-                
+                admin_user_id = cursor.lastrowid
+            else:
+                admin_user_id, verified = row
+                if not verified:
+                    cursor.execute('UPDATE users SET verified = 1 WHERE id = ?', (admin_user_id,))
+
+            # Assign admin role idempotently
+            cursor.execute('SELECT id FROM roles WHERE name = "admin"')
+            role_id = cursor.fetchone()[0]
+            cursor.execute(
+                'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+                (admin_user_id, role_id)
+            )
+
+            conn.commit()
+
         print("✅ Application initialized successfully")
     except Exception as e:
         print(f"❌ Application initialization failed: {e}")
+
         # Don't raise here to allow the app to start, but log the error
 
 # JWT Helpers
@@ -585,11 +595,10 @@ def log_activity(description):
     return decorator
 
 # Refactored handle_*_upload() functions with detailed row-level error messages and Dynaconf-safe config access
-
 def handle_material_upload(csv_data):
     config = app.config
     required_fields = config.get("REQUIRED_MATERIAL_FIELDS", [])
-    valid_regions = config.get("VALID_REGIONS", [])
+    valid_regions = [normalize_region(r) for r in config.get("VALID_REGIONS", [])]
     date_pattern = re.compile(config.get("REGEX_PATTERNS.date", r"^\d{4}-\d{2}-\d{2}$"))
     material_pattern = re.compile(config.get("REGEX_PATTERNS.material_name", r".+"))
     min_cost = config.get("MIN_UNIT_COST", 1)
@@ -610,7 +619,7 @@ def handle_material_upload(csv_data):
                 unit_cost = float(row["unit_cost"])
                 valid_from = row["valid_from"].strip()
                 valid_to = row["valid_to"].strip()
-                region = row["region"].strip()
+                region = normalize_region(row["region"])
                 source_name = row.get("source", "unknown").strip()
 
                 if not material_pattern.match(material):
@@ -657,7 +666,7 @@ def handle_material_upload(csv_data):
 def handle_labor_upload(rows):
     config = app.config
     required = set(config.get("REQUIRED_LABOR_FIELDS", []))
-    valid_regions = config.get("VALID_REGIONS", [])
+    valid_regions = [normalize_region(r) for r in config.get("VALID_REGIONS", [])]
     regex = config.get("REGEX_PATTERNS", {})
     thresholds = config.get("LABOR_THRESHOLDS", {})
     date_pattern = re.compile(regex.get("date", r"^\d{4}-\d{2}-\d{2}$"))
@@ -676,7 +685,7 @@ def handle_labor_upload(rows):
             try:
                 task = row["task"].strip()
                 rate = float(row["rate"])
-                region = row["region"].strip()
+                region = normalize_region(row["region"])
                 valid_from = row["valid_from"].strip()
                 valid_to = row["valid_to"].strip()
                 source = row.get("source", "unknown").strip()
@@ -724,7 +733,7 @@ def handle_plant_upload(rows):
     config = app.config
     required = set(config.get("REQUIRED_PLANT_FIELDS", []))
     thresholds = config.get("PLANT_THRESHOLDS", {})
-    valid_regions = set(r.lower() for r in config.get("VALID_REGIONS", []))
+    valid_regions = set(normalize_region(r) for r in config.get("VALID_REGIONS", []))
     strict_supplier = config.get("STRICT_SUPPLIER_MATCH", False)
 
     inserted, skipped, errors = 0, 0, []
@@ -733,7 +742,6 @@ def handle_plant_upload(rows):
         cursor = conn.cursor()
 
         for i, row in enumerate(rows, 1):
-            # Debug: show available keys per row
             print(f"[DEBUG] Row {i} keys: {list(row.keys())}")
 
             if not required.issubset(row.keys()):
@@ -762,7 +770,6 @@ def handle_plant_upload(rows):
                 if not (0.01 <= duration <= 100):
                     raise ValueError(f"Invalid duration per unit {duration}")
 
-                # --- Resolve source_id ---
                 cursor.execute("SELECT id FROM Sources WHERE name = ? AND region = ?", (source_name, region))
                 src = cursor.fetchone()
                 if not src:
@@ -778,7 +785,6 @@ def handle_plant_upload(rows):
                 else:
                     source_id = src[0]
 
-                # ✅ Include valid_from and valid_to
                 cursor.execute('''
                     INSERT INTO Plants (equipment, daily_rate, duration_per_unit, source_id, region, valid_from, valid_to)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -809,7 +815,7 @@ def handle_adjustment_upload(rows):
                 continue
 
             try:
-                region = row["region"].strip().lower()
+                region = normalize_region(row["region"])
                 cwf = float(row["concrete_waste_factor"])
                 eff = float(row["labor_efficiency"])
                 thick = float(row["thickness"])
@@ -865,7 +871,7 @@ def handle_source_upload(rows):
             try:
                 name = row["name"].strip()
                 type_ = row["type"].strip().lower()
-                region = row["region"].strip()
+                region = normalize_region(row["region"])
                 contact = row["contact"].strip()
 
                 if type_ not in {"supplier", "manufacturer"}:
@@ -900,6 +906,7 @@ def handle_source_upload(rows):
         conn.commit()
 
     return inserted, skipped, errors
+
 
 #Refactored location handler with proper validation
 def handle_location_upload(rows, is_admin=False):
@@ -1451,8 +1458,14 @@ def login():
         'message': 'Login successful!',
         'redirect': redirect_url
     }))
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=True)
+    #response.set_cookie('authToken', token, httponly=True, #samesite='Strict', secure=True)
+    #return response
+
+    # In development allow non-secure cookie on http; in production request.is_secure will be True.
+    secure_cookie = request.is_secure if request else False
+    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=secure_cookie)
     return response
+
 
 
 @app.route('/verify-email/<token>', methods=['GET'])
@@ -1781,42 +1794,50 @@ def setup_admin():
     try:
         email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
         raw_password = app.config.get('ADMIN_PASSWORD', '1234')
-        hashed_password = generate_password_hash(raw_password)
 
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
 
-            # Step 1: Insert admin user
-            cursor.execute('''
-                INSERT OR REPLACE INTO users (email, password, verified)
-                VALUES (?, ?, 1)
-            ''', (email, hashed_password))
-
-            # Step 2: Ensure admin role exists
+            # Ensure admin role exists
             cursor.execute('''
                 INSERT OR IGNORE INTO roles (name, description)
-                VALUES (?, ?)
-            ''', ('admin', 'Superuser with upload access'))
+                VALUES ('admin', 'Superuser with upload access')
+            ''')
 
-            # Step 3: Assign admin role to user
-            cursor.execute('''
-                INSERT OR REPLACE INTO user_roles (user_id, role_id)
-                SELECT u.id, r.id FROM users u, roles r
-                WHERE u.email = ? AND r.name = 'admin'
-            ''', (email,))
+            # Create admin if missing (preserve id)
+            cursor.execute('SELECT id, verified FROM users WHERE email = ?', (email,))
+            row = cursor.fetchone()
+            created = False
+            if row is None:
+                hashed_password = generate_password_hash(raw_password)
+                cursor.execute(
+                    'INSERT INTO users (email, password, verified) VALUES (?, ?, 1)',
+                    (email, hashed_password)
+                )
+                admin_user_id = cursor.lastrowid
+                created = True
+            else:
+                admin_user_id, verified = row
+                if not verified:
+                    cursor.execute('UPDATE users SET verified = 1 WHERE id = ?', (admin_user_id,))
+
+            # Assign admin role idempotently
+            cursor.execute('SELECT id FROM roles WHERE name = "admin"')
+            role_id = cursor.fetchone()[0]
+            cursor.execute(
+                'INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)',
+                (admin_user_id, role_id)
+            )
 
             conn.commit()
-        
+
         return jsonify({
-            'message': '✅ Admin user setup complete.',
+            'message': '✅ Admin ensured',
             'email': email,
-            'status': 'success'
+            'created': created
         })
     except Exception as e:
-        return jsonify({
-            'message': f'❌ Error: {e}',
-            'status': 'error'
-        }), 500
+        return jsonify({'message': f'❌ Error: {e}', 'status': 'error'}), 500
 
 @app.route("/admin_upload", methods=["GET"])
 @admin_required
@@ -2145,19 +2166,26 @@ def get_labor_rates():
     return jsonify({'labor_rates': labor_rates})
 
 # Consolidated Pricing Endpoint
+# ...existing code...
+
 @app.route('/api/pricing-bundle', methods=['GET'])
 @token_required
 def get_pricing_bundle():
-    region = request.args.get('region', 'default').lower()
-    project_location = request.args.get('project_location', region).lower()  # fallback
+    def normalize_region(region):
+        return (region or "").strip().lower()
+
+    region = normalize_region(request.args.get('region', 'default'))
+    project_location = normalize_region(request.args.get('project_location', region))
     fallback_enabled = app.config.get("FALLBACK_ENABLED", True)
 
     haulage_rate = app.config.get("PLANT_HAULAGE_RATE", 15)  # GHS/km default
     mobilization_factor = app.config.get("PLANT_HAULAGE_FACTOR", 2)
 
     fallback_applied = None
+    tried_regions = []
 
     def fetch_materials_and_labor(region_option):
+        region_option = normalize_region(region_option)
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -2172,9 +2200,11 @@ def get_pricing_bundle():
             ''', (region_option,))
             labor = {row[0]: row[1] for row in cursor.fetchall()}
 
+        print(f"[DEBUG] fetch_materials_and_labor('{region_option}') -> materials: {list(materials.keys())}, labor: {list(labor.keys())}")
         return materials, labor
 
     def fetch_plants(region_option):
+        region_option = normalize_region(region_option)
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -2182,37 +2212,64 @@ def get_pricing_bundle():
                 FROM Plants
                 WHERE region = ?
             ''', (region_option,))
-            return [
+            plants = [
                 {"equipment": row[0], "dailyRate": row[1], "durationPerUnit": row[2]}
                 for row in cursor.fetchall()
             ]
+        print(f"[DEBUG] fetch_plants('{region_option}') -> plants: {[p['equipment'] for p in plants]}")
+        return plants
 
-    # --- Initial fetch ---
+    # --- Try requested region ---
+    print(f"[DEBUG] Trying requested region: {region}")
     materials, labor = fetch_materials_and_labor(region)
     plants = fetch_plants(region)
+    tried_regions.append(region)
 
-    # --- Fallbacks ---
+    # --- Fallbacks: anchor city, then national ---
+    anchor_city = get_anchor_city(region)
     if fallback_enabled and (not materials or not labor or not plants):
-        anchor_city = get_anchor_city(region)  # implement mapping rural→city
-        if anchor_city:
-            if not materials or not labor:
-                m, l = fetch_materials_and_labor(anchor_city)
-                if not materials:
-                    materials = m
-                if not labor:
-                    labor = l
-                if m or l:
-                    fallback_applied = f"anchor-city ({anchor_city})"
+        print(f"[DEBUG] Fallback triggered for region: {region}")
+        # Try anchor city
+        if anchor_city and normalize_region(anchor_city) not in tried_regions:
+            print(f"[DEBUG] Trying anchor city fallback: {anchor_city}")
+            m, l = fetch_materials_and_labor(anchor_city)
+            p = fetch_plants(anchor_city)
+            if not materials and m:
+                print(f"[DEBUG] Using anchor city materials for {anchor_city}")
+                materials = m
+                fallback_applied = f"anchor-city ({anchor_city})"
+            if not labor and l:
+                print(f"[DEBUG] Using anchor city labor for {anchor_city}")
+                labor = l
+                fallback_applied = f"anchor-city ({anchor_city})"
+            if not plants and p:
+                print(f"[DEBUG] Using anchor city plants for {anchor_city}")
+                distance_km = get_distance_km(project_location, anchor_city)
+                haulage_cost = distance_km * haulage_rate * mobilization_factor
+                for plant in p:
+                    plant["haulage"] = haulage_cost
+                plants = p
+                fallback_applied = f"anchor-city ({anchor_city}) + haulage"
+            tried_regions.append(normalize_region(anchor_city))
 
-            if not plants:
-                plants = fetch_plants(anchor_city)
-                if plants:
-                    # Add haulage cost
-                    distance_km = get_distance_km(project_location, anchor_city)
-                    haulage_cost = distance_km * haulage_rate * mobilization_factor
-                    for p in plants:
-                        p["haulage"] = haulage_cost
-                    fallback_applied = f"anchor-city ({anchor_city}) + haulage"
+        # Try national if still missing
+        if (not materials or not labor or not plants) and 'national' not in tried_regions:
+            print(f"[DEBUG] Trying national fallback")
+            m, l = fetch_materials_and_labor('national')
+            p = fetch_plants('national')
+            if not materials and m:
+                print(f"[DEBUG] Using national materials")
+                materials = m
+                fallback_applied = "national"
+            if not labor and l:
+                print(f"[DEBUG] Using national labor")
+                labor = l
+                fallback_applied = "national"
+            if not plants and p:
+                print(f"[DEBUG] Using national plants")
+                plants = p
+                fallback_applied = "national"
+            tried_regions.append('national')
 
     # --- Special case: group tree cutting ---
     if any(task.startswith("tree cutting") for task in labor.keys()):
@@ -2222,7 +2279,7 @@ def get_pricing_bundle():
             "over 3000": labor.get("tree cutting over 3000"),
         }
 
-    # --- Response ---
+    print(f"[DEBUG] Final bundle for region '{region}': materials={list(materials.keys())}, labor={list(labor.keys())}, plants={[p['equipment'] for p in plants]}")
     response = {
         "materials": materials,
         "labor": labor,
@@ -2234,7 +2291,7 @@ def get_pricing_bundle():
         response["warning"] = f"Fallback used: {fallback_applied}"
 
     return jsonify(response)
-
+# ...existing code...
 
 @app.route('/smm-rules', methods=['GET'])
 @token_required

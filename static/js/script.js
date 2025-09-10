@@ -361,6 +361,34 @@ async function calculateComponentFromData(componentType, inputs) {
         }
     });
 
+    // --- Preliminaries: normalize and short-circuit as lump-sum ---
+    if (formulaKey === 'preliminaries_item') {
+        const valueKey = Object.keys(processedInputs).find(k => /_value$|^value$/i.test(k));
+        const descKey  = Object.keys(processedInputs).find(k => /_description$|^description$/i.test(k));
+        const value = Number(processedInputs[valueKey]) || 0;
+        const description = (descKey && processedInputs[descKey]) || (typeof SMM7_2023[formulaKey].description === 'function'
+            ? SMM7_2023[formulaKey].description({ value })
+            : 'Preliminaries Item');
+
+        // qty 1, cost equals entered lump-sum; no labor/plant
+        const quantity = 1;
+        const unit = SMM7_2023[formulaKey].unit || 'item';
+        const totalMaterialCost = value;
+        const labor = { totalDays: 0, laborCost: 0 };
+        const finalPlantCost = 0;
+
+        return {
+            componentType,
+            description,
+            quantity,
+            unit,
+            totalMaterialCost,
+            labor,
+            finalPlantCost,
+            inputs: processedInputs
+        };
+    }
+
     // Special case: mean girth for trench excavation
     if (componentType === "trench excavation") {
         const extGirth = 2 * ((processedInputs.ext_len || 0) + (processedInputs.ext_width || 0)) - 4 * (processedInputs.spread_trench || 0);
@@ -1676,7 +1704,116 @@ document.addEventListener('DOMContentLoaded', async function () {
         setupInputValidation();
         setupComponentDropdown();
         setupCalculateButtons();
+
+        // Ensure save/update buttons are set up early
         setupSaveProjectButton();
+        setupUpdateProjectButton();
+
+        setupLogoutButton();
+
+        // On page load, restore project if project_id is present
+        const params = new URLSearchParams(window.location.search);
+        // Prefer the canonical function if available, otherwise try alternative
+        const pidFromURL = (typeof getProjectIdFromURL === 'function') ? getProjectIdFromURL() :
+                            (typeof getProjectIdFromUrl === 'function') ? getProjectIdFromUrl() : null;
+        currentProjectId = pidFromURL; // Use the resolved project id
+        console.log('[RestoreProject] URL params:', Array.from(params.entries()));
+
+        // Initialize Save/Update button visibility based on presence of project id or existing results
+        (function initSaveUpdateButtons() {
+            const saveBtn = document.getElementById('save-project-btn');
+            const updateBtn = document.getElementById('update-project-btn');
+            if (currentProjectId) {
+                if (saveBtn) saveBtn.style.display = 'none';
+                if (updateBtn) updateBtn.style.display = 'inline-block';
+            } else {
+                // Show save button if there are result items present
+                if (document.querySelectorAll('.result-item').length > 0) {
+                    if (saveBtn) saveBtn.style.display = 'inline-block';
+                }
+                if (updateBtn) updateBtn.style.display = 'none';
+            }
+        })();
+
+        if (currentProjectId) {
+            console.log('[RestoreProject] Found project_id:', currentProjectId);
+            showLoading(); // Show initial loading spinner
+
+            try {
+                // Fetch project data
+                const res = await fetch(`/api/projects/${currentProjectId}`, {
+                    credentials: 'include'
+                });
+
+                console.log('[RestoreProject] Fetch response:', res);
+                if (res.ok) {
+                    const project = await res.json();
+                    projectFormulaVersion = project.formula_version;
+                    lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
+                    const calculationSnapshot = project.calculation_snapshot ? JSON.parse(project.calculation_snapshot) : null;
+                    restoreCalculationUI(lastSavedData, calculationSnapshot, projectFormulaVersion);
+                    console.log('[RestoreProject] Project data loaded:', project);
+
+                    // Version warning
+                    currentFormulaVersion = await fetchCurrentFormulaVersion();
+                    if (projectFormulaVersion !== currentFormulaVersion) {
+                        showVersionWarning(projectFormulaVersion, currentFormulaVersion);
+                    }
+                } else {
+                    alert('Could not load project.');
+                    console.error('[RestoreProject] Failed to fetch project. Status:', res.status);
+                }
+
+                // USE THE NEW LOADING FUNCTION HERE
+                await loadProjectDetailsWithLoading(currentProjectId);
+
+            } catch (error) {
+                console.error('Project load error:', error);
+                //showProjectDetailsModal();
+            } finally {
+                hideLoading(); // Hide spinner when done
+            }
+        }
+
+        displayProjects();
+
+    } catch (error) {
+        console.error("Initialization failed:", error);
+        alert("A critical error occurred during initialization. Please reload the page.");
+    } finally {
+        hideLoading(); // Ensure loading is hidden in case of errors
+    }
+
+    // Add this at the end of your DOMContentLoaded handler
+    window.addEventListener('resize', centerProjectDetailsModal);
+});
+
+
+/*document.addEventListener('DOMContentLoaded', async function () {
+    console.log("DOMContentLoaded event fired");
+    refreshProjectDetailsUI();
+    try {
+        await checkAuthentication();
+        const userRoles = await fetchUserRoles();
+        console.log("User roles:", userRoles);
+        console.log("User roles array:", userRoles, typeof userRoles[0]);
+        checkRoleVisibility(userRoles);
+
+        // --- Place here ---
+        let role = userRoles && userRoles[0] || 'professional';
+        window.currentUserRole = role;
+        renderProjectList(role);
+        // --- end placement ---
+
+        await loadLocations();
+        await checkFormulaVersion();
+        await fetchInitialRates();
+
+        setupInputValidation();
+        setupComponentDropdown();
+        setupCalculateButtons();
+        setupSaveProjectButton();
+        setupUpdateProjectButton();
         setupLogoutButton();
 
         // On page load, restore project if project_id is present
@@ -1733,9 +1870,11 @@ document.addEventListener('DOMContentLoaded', async function () {
     } finally {
         hideLoading(); // Ensure loading is hidden in case of errors
     }
+
+
     // Add this at the end of your DOMContentLoaded handler
 window.addEventListener('resize', centerProjectDetailsModal);
-});
+});*/
 
 // --- Modularized Functions ---
 
@@ -1825,47 +1964,6 @@ async function checkFormulaVersion() {
     }
 }
 
-
-/*async function fetchInitialRates() {
-    try {
-        // Get selected region from supplier dropdown
-        const region = getNormalizedRegion();
-
-        const materials = ['cement', 'sand', 'aggregate', 'blocks', 'mortar'];
-        for (const mat of materials) {
-            const data = await fetchMaterialRate(mat, region);
-            if (data) {
-                console.log(`${mat} rate: ${data.unit_cost} GHS (${getPreferredRegionDisplayName()})`);
-                if (data.fallback) {
-                    console.warn(`⚠️ Fallback used for ${mat}: ${data.fallback}`);
-                    //showFallbackWarning(mat, data.fallback);
-                }
-            }
-        }
-
-        const laborTasks = [
-            'bricklaying',
-            'concreting',
-            'site clearance',
-            'excavation',
-            'tree cutting 600-1500',
-            'tree cutting 1500-3000',
-            'tree cutting over 3000'
-        ];
-        for (const task of laborTasks) {
-            const data = await fetchLaborRate(task, region);
-            if (data) {
-                console.log(`${task} rate: ${data.rate} GHS (${getPreferredRegionDisplayName()})`);
-                if (data.fallback) {
-                    console.warn(`⚠️ Fallback used for ${task}: ${data.fallback}`);
-                    //showFallbackWarning(task, data.fallback);
-                }
-            }
-        }
-    } catch (error) {
-        console.error('Error fetching initial rates:', error);
-    }
-}*/
 
 async function fetchInitialRates() {
     try {
@@ -2066,7 +2164,7 @@ function setupComponentDropdown() {
     // Add more special cases here as needed
 };*/
 
-const SPECIAL_LABOR_FETCH_HANDLERS = {
+/*const SPECIAL_LABOR_FETCH_HANDLERS = {
     'tree cutting': async (component) => {
         const girthTasks = [
             'tree cutting 600-1500',
@@ -2093,7 +2191,86 @@ const SPECIAL_LABOR_FETCH_HANDLERS = {
         }
         return laborRates;
     }
+};*/
+
+const SPECIAL_LABOR_FETCH_HANDLERS = {
+    'tree cutting': async () => {
+        const girthTasks = [
+            'tree cutting 600-1500',
+            'tree cutting 1500-3000',
+            'tree cutting over 3000'
+        ];
+        const laborRates = {};
+
+        const requestedRegion = (getNormalizedRegion() || 'default').toLowerCase();
+        const anchorCity = typeof get_anchor_city === 'function' ? get_anchor_city(requestedRegion) : null;
+
+        function extractRate(val) {
+            if (!val) return 0;
+            if (typeof val.rate === 'number') return val.rate;
+            if (val.rate && typeof val.rate === 'object' && 'parsedValue' in val.rate) return val.rate.parsedValue;
+            if (typeof val === 'number') return val;
+            return Number(val.rate) || 0;
+        }
+
+        async function getLaborRateWithFallback(task) {
+            // 1) Requested region
+            try {
+                const res = await fetchLaborRate(task, requestedRegion);
+                const rate = extractRate(res);
+                if (rate > 0) {
+                    if (res?.fallback && !suppressFallbackUI) {
+                        showFallbackWarning(`${task} (labor)`, `Requested ${requestedRegion}, used ${res.fallback}`);
+                    }
+                    return rate;
+                }
+            } catch (e) {
+                console.debug(`[tree cutting] requested-region fetch failed for "${task}"`, e);
+            }
+
+            // 2) Anchor city
+            if (anchorCity && anchorCity.toLowerCase() !== requestedRegion) {
+                try {
+                    const res = await fetchLaborRate(task, anchorCity.toLowerCase());
+                    const rate = extractRate(res);
+                    if (rate > 0) {
+                        if (!suppressFallbackUI) {
+                            showFallbackWarning(`${task} (labor)`, `anchor: ${anchorCity}`);
+                        }
+                        return rate;
+                    }
+                } catch (e) {
+                    console.debug(`[tree cutting] anchor fetch failed for "${task}" (${anchorCity})`, e);
+                }
+            }
+
+            // 3) National
+            try {
+                const res = await fetchLaborRate(task, 'national');
+                const rate = extractRate(res);
+                if (rate > 0) {
+                    if (!suppressFallbackUI) {
+                        showFallbackWarning(`${task} (labor)`, 'national');
+                    }
+                    return rate;
+                }
+            } catch (e) {
+                console.debug(`[tree cutting] national fetch failed for "${task}"`, e);
+            }
+
+            console.warn(`[tree cutting] No rate found for "${task}" after fallbacks`);
+            return 0;
+        }
+
+        console.log(`🌳 [tree cutting] Using region: ${requestedRegion} (anchor: ${anchorCity || 'n/a'})`);
+        for (const task of girthTasks) {
+            laborRates[task] = await getLaborRateWithFallback(task);
+        }
+
+        return laborRates;
+    }
 };
+
 
 // Scalable price fetcher
 /*async function fetchPricesForComponent(componentKey) {
@@ -2248,6 +2425,19 @@ async function fetchPricesForComponent(componentKey) {
     return { materialPrices, laborRates };
 }
 
+function showSaveOrUpdateButton() {
+    const saveBtn = document.getElementById('save-project-btn');
+    const updateBtn = document.getElementById('update-project-btn');
+    if (currentProjectId) {
+        if (saveBtn) saveBtn.style.display = 'none';
+        if (updateBtn) updateBtn.style.display = 'inline-block';
+    } else {
+        if (saveBtn) saveBtn.style.display = 'inline-block';
+        if (updateBtn) updateBtn.style.display = 'none';
+    }
+}
+
+
 function setupCalculateButtons() {
     console.log("Setting up calculate buttons");
     const buttons = document.querySelectorAll('.calculate-btn');
@@ -2372,6 +2562,44 @@ function setupCalculateButtons() {
                 return;
             }
 
+            // --- Preliminaries short-circuit (lump-sum) ---
+            if (formulaKey === 'preliminaries_item') {
+                const valueKey = Object.keys(inputValues).find(k => /_value$|^value$/i.test(k));
+                const descKey  = Object.keys(inputValues).find(k => /_description$|^description$/i.test(k));
+                const amount = Number(inputValues[valueKey] ?? inputValues.value) || 0;
+
+                const unit = SMM7_2023[formulaKey].unit || 'item';
+                // Prefer explicit description input, else show the component name
+                const description =
+                    (descKey && inputValues[descKey]) ||
+                    (typeof SMM7_2023[formulaKey].description === 'function'
+                        ? SMM7_2023[formulaKey].description({ description: componentType })
+                        : componentType);
+
+                const quantity = 1;
+                const totalMaterialCost = amount;
+                const labor = { totalDays: 0, laborCost: 0 };
+                const finalPlantCost = 0;
+
+                renderResultItem(
+                    componentType,
+                    description,
+                    quantity,
+                    unit,
+                    totalMaterialCost,
+                    labor,
+                    finalPlantCost,
+                    inputValues
+                );
+
+                updateSectionAndGrandTotals();
+                calculatedComponents.add(componentType);
+                showSaveOrUpdateButton();
+                return; // ⛔ do not proceed to pricing/materials/labor path
+            }
+            // --- end prelim short-circuit ---
+
+
             // --- Add this block for trench excavation ---
             if (formulaKey === "trench excavation") {
                 // Replicate the mean girth logic from your formulas.js
@@ -2482,16 +2710,26 @@ function setupCalculateButtons() {
             calculatedComponents.add(componentType);
 
             const selectedComponents = Array.from(componentSelect.selectedOptions).map(option => option.value);
+            // Show appropriate Save/Update button depending on whether a project exists
             if (selectedComponents.every(component => calculatedComponents.has(component))) {
-                const saveBtn = document.getElementById('save-project-btn');
-                if (saveBtn) saveBtn.style.display = 'block';
+                showSaveOrUpdateButton();
+            } else {
+                // Even if not all selected components calculated, ensure correct button shown
+                showSaveOrUpdateButton();
             }
-            const saveBtn = document.getElementById('save-project-btn');
-            if (saveBtn) saveBtn.style.display = 'block';
+
+            // remove unconditional saveBtn display to avoid re-showing Save over Update
+            // const saveBtn = document.getElementById('save-project-btn');
+            // if (saveBtn) saveBtn.style.display = 'block';
         });
     }
 }
 
+
+// Ensure globals
+//let currentProjectId = currentProjectId || null;
+
+// Setup initial Save button (existing) — augment to reveal Update after save
 function setupSaveProjectButton() {
     console.log("Setting up save project button");
     const saveBtn = document.getElementById('save-project-btn');
@@ -2499,6 +2737,7 @@ function setupSaveProjectButton() {
         console.warn("Save project button not found");
         return;
     }
+
     saveBtn.addEventListener('click', async function () {
         const projectName = prompt("Enter a name for this project:");
         if (!projectName) {
@@ -2506,27 +2745,82 @@ function setupSaveProjectButton() {
             return;
         }
 
-        // Collect all results
+        // Collect results and totalCost
         const results = document.querySelectorAll('.result-item');
         let totalCost = 0;
-
         results.forEach(result => {
-            const materialCost = parseFloat(result.querySelector('p:nth-child(3)').textContent.split(': ')[1].replace('GHS ', ''));
-            const laborCost = parseFloat(result.querySelector('p:nth-child(5)').textContent.split(': ')[1].replace('GHS ', ''));
-            const plantCost = parseFloat(result.querySelector('p:nth-child(6)').textContent.split(': ')[1].replace('GHS ', ''));
+            const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+            const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+            const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
             totalCost += materialCost + laborCost + plantCost;
         });
 
-        // Save the project ONCE
         try {
-            await saveProject({
+            const response = await saveProject({
                 project_name: projectName,
                 total_cost: totalCost
             });
+
+            // Ensure currentProjectId reflects backend
+            const newId = response.project_id || response.id || response.projectId || null;
+            if (newId) currentProjectId = newId;
+
+            // Toggle buttons: hide initial save, show update
+            saveBtn.style.display = 'none';
+            const updateBtn = document.getElementById('update-project-btn');
+            if (updateBtn) updateBtn.style.display = 'inline-block';
+
             alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
-            displayProjects();
+            await displayProjects();
         } catch (e) {
             alert("Failed to save project.");
+        }
+    });
+}
+
+// New: setup Update button for subsequent saves (PUT)
+function setupUpdateProjectButton() {
+    console.log("Setting up update project button");
+    const updateBtn = document.getElementById('update-project-btn');
+    if (!updateBtn) {
+        console.warn("Update project button not found");
+        return;
+    }
+
+    updateBtn.addEventListener('click', async function () {
+        if (!currentProjectId) {
+            alert('No existing saved project to update. Use Save Project first.');
+            // Show Save button as fallback
+            const saveBtn = document.getElementById('save-project-btn');
+            if (saveBtn) saveBtn.style.display = 'inline-block';
+            updateBtn.style.display = 'none';
+            return;
+        }
+
+        // Recompute total cost
+        const results = document.querySelectorAll('.result-item');
+        let totalCost = 0;
+        results.forEach(result => {
+            const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+            const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+            const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+            totalCost += materialCost + laborCost + plantCost;
+        });
+
+        try {
+            // Call saveProject with id to trigger update path
+            const resp = await saveProject({
+                project_id: currentProjectId,
+                project_name: (document.getElementById('project-title')?.value || undefined),
+                total_cost: totalCost
+            });
+
+            // Update UI and projects list
+            alert(`Project updated. New Total: GHS ${totalCost.toFixed(2)}`);
+            await displayProjects();
+        } catch (err) {
+            console.error('Failed to update project:', err);
+            alert('Failed to update project.');
         }
     });
 }
@@ -2979,8 +3273,8 @@ clearInvalidProjects();
 
 // Modified project saving with locations
 async function saveProject(projectData) {
-    const projectLoc = document.getElementById('project-location').value;
-    const supplierLoc = document.getElementById('supplier-location').value;
+    const projectLoc = document.getElementById('project-location')?.value || null;
+    const supplierLoc = document.getElementById('supplier-location')?.value || null;
     const calculationData = gatherCalculationData();
     let totalCost = 0;
     document.querySelectorAll('.result-item').forEach(result => {
@@ -2990,24 +3284,49 @@ async function saveProject(projectData) {
         totalCost += materialCost + laborCost + plantCost;
     });
 
+    // Normalize project name keys (accept projectName, project_name, projectTitle)
+    const projectName = projectData.projectName || projectData.project_name || projectData.projectTitle || projectData.project_name || 'Untitled Project';
+
     try {
-        const response = await fetch('/api/projects', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                ...projectData,
-                project_name: projectData.projectTitle || "Untitled Project",  // ✅ always send
-                project_location: projectLoc,
-                supplier_location: supplierLoc,
-                supplier_id: localStorage.getItem('preferredSupplierId') || null, // ✅ optional
-                calculation_data: JSON.stringify(calculationData),
-                total_cost: totalCost
-            }),
-            credentials: 'include'
-        });
+        const payload = {
+            ...projectData,
+            project_name: projectName,
+            project_location: projectLoc,
+            supplier_location: supplierLoc,
+            supplier_id: localStorage.getItem('preferredSupplierId') || null,
+            calculation_data: JSON.stringify(calculationData),
+            total_cost: typeof projectData.total_cost === 'number' ? projectData.total_cost : totalCost
+        };
+
+        // If a project_id exists in projectData or global currentProjectId, update instead of create
+        const createUrl = '/api/projects';
+        const updateId = projectData.project_id || projectData.id || currentProjectId || null;
+
+        let response;
+        if (updateId) {
+            response = await fetch(`/api/projects/${encodeURIComponent(updateId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+        } else {
+            response = await fetch(createUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+        }
 
         if (!response.ok) throw new Error('Project save failed');
-        return await response.json();
+        const json = await response.json();
+
+        // If backend returned a new id, set currentProjectId
+        const returnedId = json.project_id || json.id || json.projectId || null;
+        if (returnedId) currentProjectId = returnedId;
+
+        return json;
     } catch (error) {
         console.error('Error saving project:', error);
         throw error;
@@ -3209,7 +3528,24 @@ async function saveProjectState() {
     }
 }*/
 
-/*async function calculateCompositeRate(componentType, quantity, inputs = {}) {
+// Add this helper at the top of calculateCompositeRate:
+function normalizeRates(obj) {
+    const out = {};
+    for (const [k, v] of Object.entries(obj || {})) {
+        if (v && typeof v === 'object' && 'parsedValue' in v) {
+            out[k] = v.parsedValue;
+        } else if (v && typeof v === 'object') {
+            // Handle nested tree cutting rates
+            out[k] = normalizeRates(v);
+        } else {
+            out[k] = v;
+        }
+    }
+    return out;
+}
+
+
+async function calculateCompositeRate(componentType, quantity, inputs = {}) {
     if (!componentType || !quantity || quantity <= 0) {
         console.error('Invalid input:', { componentType, quantity });
         return null;
@@ -3227,127 +3563,304 @@ async function saveProjectState() {
         return null;
     }
 
-    try {
-        // ✅ Get supplier region from dropdown
-        const region = getNormalizedRegion();
-        //const region = getEffectiveRegion();
-
-        // ✅ Fetch pricing bundle based on region
-        const pricingResponse = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(region)}`, {
-            credentials: 'include'
-        });
-
-        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
-        const { materials, labor, warning } = await pricingResponse.json();
-
-        if (warning) {
-            console.warn(`⚠️ Fallback applied in pricing-bundle: ${warning}`);
-            const notice = document.getElementById('fallback-warning');
-            if (notice) {
-                notice.textContent = warning;
-                notice.style.display = 'block';
-            }
+    // --- Preliminaries: treat as lump-sum, no markups ---
+    if (formulaKey === 'preliminaries_item') {
+        const valueKey = Object.keys(inputs || {}).find(k => /_value$|^value$/i.test(k));
+        const amount = Number(inputs?.[valueKey] ?? inputs?.value) || 0;
+        if (amount <= 0) {
+            console.warn(`Skipping ${componentType} - prelim value is zero/invalid.`);
+            return null;
         }
-
-        console.log('Pricing bundle materials:', materials);
-        console.log('Pricing bundle labor:', labor);
-
-        // ✅ Material cost
-        let materialCost = 0;
-        if (typeof formulaConfig.calculateMaterialCost === 'function') {
-            materialCost = formulaConfig.calculateMaterialCost(quantity, materials, inputs);
-        } else {
-            materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
-        }
-
-        // ✅ Labor cost
-        let laborCost = 0;
-        if (typeof formulaConfig.calculateLaborCost === 'function') {
-            const laborResult = formulaConfig.calculateLaborCost(inputs, labor);
-
-            // Handle both { laborCost } and numeric return
-            if (typeof laborResult === 'object' && laborResult !== null) {
-                laborCost = laborResult.laborCost || 0;
-            } else if (typeof laborResult === 'number') {
-                laborCost = laborResult;
-            }
-        } else {
-            // Fallback to first laborTask if defined
-            const laborTask = formulaConfig.laborTasks?.[0];
-            if (laborTask) {
-                const dailyRate = labor[laborTask] || 0;
-                const laborCalc = SMM7_2023.calculateLaborCost(
-                    quantity,
-                    8,
-                    1.0,
-                    8,
-                    dailyRate,
-                    laborTask
-                );
-                laborCost = laborCalc?.laborCost || 0;
-            }
-        }
-
-        // Special handling for grouped tree cutting rates
-        if (componentType.toLowerCase() === "tree cutting" && labor["tree cutting"]) {
-            const girth = inputs.tree_girth;
-            const groupedRates = labor["tree cutting"];
-            const rate = groupedRates[girth] || 0;
-            const qty = Number(inputs.num_trees) || quantity;
-            laborCost = rate * qty;
-        }
-
-
-        // ✅ Plant cost
-        let plantCost = 0;
-        const equipmentList = formulaConfig.equipment || [];
-        if (equipmentList.length > 0) {
-            try {
-                const plantData = await fetchPlantData();
-                const availablePlants = plantData.filter(p =>
-                    equipmentList.includes(p.equipment)
-                );
-                if (availablePlants.length > 0) {
-                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
-
-                    availablePlants.forEach(p => {
-                        if (p.haulageCost && p.haulageCost > 0) {
-                            showFallbackWarning(
-                                `${p.equipment} (plant)`,
-                                `${p.region} + haulage from ${p.anchorCity} (${p.distanceKm} km)`
-                            );
-                        }
-                    });
-                } else {
-                    console.warn(`⚠️ No available plants found for ${componentType}`);
-                }
-            } catch (plantError) {
-                console.error(`Plant data error for ${componentType}:`, plantError);
-            }
-        } else {
-            console.log(`No equipment required for ${componentType}`);
-        }
-
-        // ✅ Financials
-        const baseCost = materialCost + laborCost + plantCost;
-        const overheads = (baseCost * 0.15) || 0;
-        const profit = ((baseCost + overheads) * 0.10) || 0;
-
-        const result = {
-            materialCost: Number(materialCost.toFixed(2)),
-            laborCost: Number(laborCost.toFixed(2)),
-            plantCost: Number(plantCost.toFixed(2)),
-            overheads: Number(overheads.toFixed(2)),
-            profit: Number(profit.toFixed(2)),
-            totalCost: Number((baseCost + overheads + profit).toFixed(2))
+        return {
+            materialCost: Number(amount.toFixed(2)),
+            laborCost: 0,
+            plantCost: 0,
+            overheads: 0,
+            profit: 0,
+            totalCost: Number(amount.toFixed(2))
         };
-        console.log('Composite rate result:', result);
-        return result;
-    } catch (error) {
-        console.error(`Composite rate error for ${componentType}:`, error);
+    }
+
+    const region = getNormalizedRegion().toLowerCase();
+
+    // Fetch bundle for requested region (may contain partial data)
+    let pricingResponse = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(region)}`, { credentials: 'include' });
+    let bundle = pricingResponse.ok ? await pricingResponse.json() : {};
+    let usedFallback = false;
+
+    // If bundle totally empty, keep existing anchor/national bundle fallback behavior
+    if (
+        (!bundle.materials || Object.values(bundle.materials).every(v => !v)) &&
+        (!bundle.labor || Object.values(bundle.labor).every(v => !v))
+    ) {
+        let anchorCity = typeof get_anchor_city === "function" ? get_anchor_city(region) : null;
+        if (anchorCity && anchorCity.toLowerCase() !== region) {
+            pricingResponse = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(anchorCity.toLowerCase())}`, { credentials: 'include' });
+            bundle = pricingResponse.ok ? await pricingResponse.json() : {};
+            usedFallback = true;
+        }
+        if (
+            (!bundle.materials || Object.values(bundle.materials).every(v => !v)) &&
+            (!bundle.labor || Object.values(bundle.labor).every(v => !v))
+        ) {
+            pricingResponse = await fetch(`/api/pricing-bundle?region=national`, { credentials: 'include' });
+            bundle = pricingResponse.ok ? await pricingResponse.json() : {};
+            usedFallback = true;
+        }
+    }
+
+    if (usedFallback) {
+        showFallbackWarning(componentType, bundle.region || 'fallback');
+    }
+
+    // Raw bundle objects (may contain nested parsedValue shapes)
+    const materialsRaw = bundle.materials || {};
+    const laborRaw = bundle.labor || {};
+
+    // Normalize parsedValue shapes -> numeric or nested numeric objects
+    const materials = normalizeRates(materialsRaw);
+    const labor = normalizeRates(laborRaw);
+
+    // --- Per-task fallback helpers (use existing fetchMaterialRate / fetchLaborRate) ---
+    async function extractMaterialValueFromFetch(data) {
+        if (!data) return 0;
+        if (typeof data.unit_cost === 'number') return data.unit_cost;
+        if (data.unit_cost && typeof data.unit_cost === 'object' && 'parsedValue' in data.unit_cost) return data.unit_cost.parsedValue;
+        // fallback if direct number present
+        if (typeof data === 'number') return data;
+        return data.unit_cost ?? 0;
+    }
+
+    async function extractLaborValueFromFetch(data) {
+        if (!data) return 0;
+        if (typeof data.rate === 'number') return data.rate;
+        if (data.rate && typeof data.rate === 'object' && 'parsedValue' in data.rate) return data.rate.parsedValue;
+        if (typeof data === 'number') return data;
+        return data.rate ?? 0;
+    }
+
+    async function getMaterialRateWithFallback(material) {
+        // If already present and truthy (number), return it
+        const cur = materials[material];
+        if (typeof cur === 'number' && cur > 0) return cur;
+
+        // Try anchor city
+        const anchorCity = typeof get_anchor_city === "function" ? get_anchor_city(region) : null;
+        if (anchorCity && anchorCity.toLowerCase() !== region) {
+            const dataAnchor = await fetchMaterialRate(material, anchorCity.toLowerCase());
+            const val = await extractMaterialValueFromFetch(dataAnchor);
+            if (val && val > 0) {
+                if (!suppressFallbackUI) showFallbackWarning(`${material} (material)`, `anchor: ${anchorCity}`);
+                return val;
+            }
+        }
+
+        // Try national
+        const dataNational = await fetchMaterialRate(material, 'national');
+        const valNat = await extractMaterialValueFromFetch(dataNational);
+        if (valNat && valNat > 0) {
+            if (!suppressFallbackUI) showFallbackWarning(`${material} (material)`, 'national');
+            return valNat;
+        }
+
+        return 0;
+    }
+
+    async function getLaborRateWithFallback(task) {
+        // If already present and truthy (number), return it
+        const cur = labor[task];
+        if (typeof cur === 'number' && cur > 0) return cur;
+
+        // Try anchor city
+        const anchorCity = typeof get_anchor_city === "function" ? get_anchor_city(region) : null;
+        if (anchorCity && anchorCity.toLowerCase() !== region) {
+            const dataAnchor = await fetchLaborRate(task, anchorCity.toLowerCase());
+            const val = await extractLaborValueFromFetch(dataAnchor);
+            if (val && val > 0) {
+                if (!suppressFallbackUI) showFallbackWarning(`${task} (labor)`, `anchor: ${anchorCity}`);
+                return val;
+            }
+        }
+
+        // Try national
+        const dataNational = await fetchLaborRate(task, 'national');
+        const valNat = await extractLaborValueFromFetch(dataNational);
+        if (valNat && valNat > 0) {
+            if (!suppressFallbackUI) showFallbackWarning(`${task} (labor)`, 'national');
+            return valNat;
+        }
+
+        return 0;
+    }
+
+    // --- Ensure every required material/labor has a numeric value (use per-task fallback) ---
+    const requiredMaterials = formulaConfig.materials || [];
+    const requiredLaborTasks = formulaConfig.laborTasks || [];
+
+    for (const m of requiredMaterials) {
+        if (!materials[m] || materials[m] === 0) {
+            try {
+                const v = await getMaterialRateWithFallback(m);
+                materials[m] = v || 0;
+            } catch (err) {
+                console.error(`Error fetching fallback material rate for ${m}:`, err);
+                materials[m] = materials[m] || 0;
+            }
+        }
+    }
+
+    for (const t of requiredLaborTasks) {
+        if (!labor[t] || labor[t] === 0) {
+            try {
+                const r = await getLaborRateWithFallback(t);
+                labor[t] = r || 0;
+            } catch (err) {
+                console.error(`Error fetching fallback labor rate for ${t}:`, err);
+                labor[t] = labor[t] || 0;
+            }
+        }
+    }
+
+    // Recompute missing lists after per-task fallback
+    const missingMaterials = requiredMaterials.filter(m => !materials[m] || materials[m] === 0);
+    const missingLabor = requiredLaborTasks.filter(l => !labor[l] || labor[l] === 0);
+
+    // --- Ensure grouped tree cutting rates exist (requested → anchor → national) ---
+    if (componentType.toLowerCase() === 'tree cutting') {
+        // Fetch using API task names, store under normalized band keys without prefix
+        const bandMap = [
+            { task: 'tree cutting 600-1500', key: '600-1500' },
+            { task: 'tree cutting 1500-3000', key: '1500-3000' },
+            { task: 'tree cutting over 3000', key: 'over 3000' }
+        ];
+        if (!labor['tree cutting'] || typeof labor['tree cutting'] !== 'object') {
+            labor['tree cutting'] = {};
+        }
+        for (const { task, key } of bandMap) {
+            if (!labor['tree cutting'][key] || labor['tree cutting'][key] === 0) {
+                try {
+                    const r = await getLaborRateWithFallback(task);
+                    labor['tree cutting'][key] = r || 0;
+                } catch (e) {
+                    console.warn(`[tree cutting] failed to fetch band "${task}" with fallbacks`, e);
+                    labor['tree cutting'][key] = labor['tree cutting'][key] || 0;
+                }
+            }
+        }
+    }
+
+
+    // --- Material cost ---
+    let materialCost = 0;
+    if (typeof formulaConfig.calculateMaterialCost === 'function') {
+        materialCost = formulaConfig.calculateMaterialCost(quantity, materials, inputs);
+    } else {
+        materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
+    }
+
+    // --- Labor cost ---
+    let laborCost = 0;
+    if (typeof formulaConfig.calculateLaborCost === 'function') {
+        if (componentType.toLowerCase() === 'site clearance') {
+            console.log('Calling calculateLaborCost for site clearance with:', { laborRates: labor, inputs });
+        }
+        const laborResult = formulaConfig.calculateLaborCost(inputs, labor);
+        if (typeof laborResult === 'object' && laborResult !== null) {
+            laborCost = laborResult.laborCost || 0;
+        } else if (typeof laborResult === 'number') {
+            laborCost = laborResult;
+        }
+    } else {
+        const laborTask = formulaConfig.laborTasks?.[0];
+        if (laborTask) {
+            const dailyRate = labor[laborTask] || 0;
+            const laborCalc = SMM7_2023.calculateLaborCost(
+                quantity,
+                8,
+                1.0,
+                8,
+                dailyRate,
+                laborTask
+            );
+            laborCost = laborCalc?.laborCost || 0;
+        }
+    }
+
+    // Special handling for grouped tree cutting rates
+    if (componentType.toLowerCase() === "tree cutting" && labor["tree cutting"]) {
+        const normalizeGirth = (g) => {
+            const s = String(g || '').toLowerCase();
+            if (s.includes('>3000') || s.includes('over 3000')) return 'over 3000';
+            if (s.includes('1500-3000')) return '1500-3000';
+            if (s.includes('600-1500')) return '600-1500';
+            return s;
+        };
+
+        const groupedRates = labor["tree cutting"];
+        const bandKey = normalizeGirth(inputs.tree_girth);
+        // Prefer normalized keys; tolerate prefixed keys if present
+        const rate = groupedRates[bandKey] ?? groupedRates[`tree cutting ${bandKey}`] ?? 0;
+        const qty = Number(inputs.num_trees) || quantity;
+        laborCost = rate * qty;
+    }
+
+    // --- Plant cost ---
+    let plantCost = 0;
+    const equipmentList = formulaConfig.equipment || [];
+    if (equipmentList.length > 0) {
+        try {
+            const plantData = await fetchPlantData();
+            const availablePlants = plantData.filter(p =>
+                equipmentList.includes(p.equipment)
+            );
+            if (availablePlants.length > 0) {
+                plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
+
+                availablePlants.forEach(p => {
+                    if (p.haulageCost && p.haulageCost > 0) {
+                        showFallbackWarning(
+                            `${p.equipment} (plant)`,
+                            `${p.region} + haulage from ${p.anchorCity} (${p.distanceKm} km)`
+                        );
+                    }
+                });
+            } else {
+                console.warn(`⚠️ No available plants found for ${componentType}`);
+            }
+        } catch (plantError) {
+            console.error(`Plant data error for ${componentType}:`, plantError);
+        }
+    } else {
+        console.log(`No equipment required for ${componentType}`);
+    }
+
+    // --- Financials ---
+    const baseCost = materialCost + laborCost + plantCost;
+    const overheads = (baseCost * 0.15) || 0;
+    const profit = ((baseCost + overheads) * 0.10) || 0;
+
+    const result = {
+        materialCost: Number(materialCost.toFixed(2)),
+        laborCost: Number(laborCost.toFixed(2)),
+        plantCost: Number(plantCost.toFixed(2)),
+        overheads: Number(overheads.toFixed(2)),
+        profit: Number(profit.toFixed(2)),
+        totalCost: Number((baseCost + overheads + profit).toFixed(2))
+    };
+
+    // --- Enhanced error reporting ---
+    if (!result.totalCost || result.totalCost === 0) {
+        let msg = `Skipping ${componentType} - invalid composite rate.`;
+        if (missingMaterials.length > 0) msg += ` Missing materials: ${missingMaterials.join(', ')}.`;
+        if (missingLabor.length > 0) msg += ` Missing labor: ${missingLabor.join(', ')}.`;
+        console.warn(msg, result);
+        showFallbackWarning(componentType, msg);
         return null;
     }
-}*/
+
+    console.log('Composite rate result:', result);
+    return result;
+}
 
 
 // In generateSMM7BOQ, pass inputs to calculateCompositeRate:
@@ -3487,7 +4000,7 @@ async function calculateTreeCuttingForBOQ(component, inputs) {
 }
 
 // Modify the calculateCompositeRate function to handle tree cutting specially
-async function calculateCompositeRate(componentType, quantity, inputs = {}) {
+/*async function calculateCompositeRate(componentType, quantity, inputs = {}) {
     // Handle tree cutting as a special case
     if (componentType === "tree cutting") {
         return await calculateTreeCuttingForBOQ(componentType, inputs);
@@ -3626,13 +4139,12 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
         console.error(`Composite rate error for ${componentType}:`, error);
         return null;
     }
-}
+}*/
 
 // Add better error logging to identify which components are failing
 async function generateSMM7BOQ() {
-    // Reset BOQ data using your model's reset function
     resetBOQ();
-    initBillsFromTemplate(billTemplate); // Ensure standard bills are present
+    initBillsFromTemplate(billTemplate);
 
     try {
         const components = await fetchCalculatedComponents();
@@ -3647,9 +4159,9 @@ async function generateSMM7BOQ() {
             try {
                 console.log(`Processing ${component.type} for BOQ...`);
                 const compositeRate = await calculateCompositeRate(component.type, component.quantity, component.inputs);
-                
+
                 if (!compositeRate?.totalCost || compositeRate.totalCost === 0) {
-                    console.warn(`Skipping ${component.type} - invalid composite rate:`, compositeRate);
+                    // The warning and UI message are now handled in calculateCompositeRate
                     continue;
                 }
 
