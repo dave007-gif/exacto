@@ -301,6 +301,21 @@ def init_db():
             )
         ''')
 
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS UploaderRequests (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected','revoked')),
+                reason TEXT,
+                admin_note TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                decided_at DATETIME,
+                decided_by INTEGER,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+
+
         conn.commit()
         conn.close()
         print("✅ Database initialized successfully")
@@ -522,20 +537,18 @@ def role_required(*required_roles):
             token = request.cookies.get('authToken')
             if not token:
                 return jsonify({'message': 'Missing token'}), 401
-
             try:
                 data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
                 user_roles = data.get('roles', [])
-                
                 if not any(role in user_roles for role in required_roles):
+                    print(f"[AUTH] 403 role_required required={required_roles} actual={user_roles} user_id={data.get('user_id')}")
                     return jsonify({'message': 'Insufficient permissions'}), 403
-                
                 request.user_id = data['user_id']
+                request.user_roles = user_roles  # make roles available downstream
             except jwt.ExpiredSignatureError:
                 return jsonify({'message': 'Token expired'}), 401
             except jwt.InvalidTokenError:
                 return jsonify({'message': 'Invalid token'}), 401
-
             return f(*args, **kwargs)
         return wrapped
     return decorator
@@ -1216,6 +1229,37 @@ def validate_rows_dryrun(category, rows):
 
     return inserted_est, skipped, errors
 
+def has_role(user_id, role_name):
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT r.id FROM roles r JOIN user_roles ur ON ur.role_id=r.id WHERE ur.user_id=? AND r.name=?', (user_id, role_name))
+        return c.fetchone() is not None
+
+def grant_role(user_id, role_name):
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT id FROM roles WHERE name=?', (role_name,))
+        row = c.fetchone()
+        if not row:
+            return False
+        role_id = row[0]
+        c.execute('INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?,?)', (user_id, role_id))
+        conn.commit()
+        return True
+
+def revoke_role(user_id, role_name):
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT id FROM roles WHERE name=?', (role_name,))
+        row = c.fetchone()
+        if not row:
+            return False
+        role_id = row[0]
+        c.execute('DELETE FROM user_roles WHERE user_id=? AND role_id=?', (user_id, role_id))
+        conn.commit()
+        return True
+
+
 
 # Password Reset Routes
 @app.route('/forgot-password', methods=['GET'])
@@ -1224,30 +1268,39 @@ def forgot_password_page():
 
 @app.route('/forgot-password', methods=['POST'])
 def forgot_password():
-    email = request.json.get('email')
+    data = request.get_json(silent=True) or {}
+    email = data.get('email') or request.form.get('email')
+    if not email:
+        return jsonify({'message': 'Email is required'}), 400
+
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM users WHERE email = ?', (email,))
+        cursor.execute('SELECT 1 FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
-        
+
     if not user:
         return jsonify({'message': 'If this email exists, we will send a reset link'}), 200
 
-    # Generate reset token (use secrets in production)
     import secrets
     token = secrets.token_urlsafe(32)
     expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('PASSWORD_RESET_EXPIRATION_HOURS', 1))
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO password_resets (email, token, expiration)
-            VALUES (?, ?, ?)
-        ''', (email, token, expiration))
+        cursor.execute('DELETE FROM password_resets WHERE email = ?', (email,))
+        cursor.execute('INSERT INTO password_resets (email, token, expiration) VALUES (?, ?, ?)', (email, token, expiration))
         conn.commit()
 
-    # In production: Send email with reset link
-    print(f"Password reset link: http://127.0.0.1:5000/reset-password/{token}")  # For development
+    base_url = app.config.get('BASE_URL', 'http://127.0.0.1:5000')
+    if app.config.get('SENDGRID_API_KEY'):
+        try:
+            send_password_reset_email(email, token)
+        except Exception as e:
+            print(f"❌ Error sending reset email: {e}")
+            print(f"Password reset link: {base_url}/reset-password/{token}")
+    else:
+        print(f"Password reset link: {base_url}/reset-password/{token}")
+
     return jsonify({'message': 'Reset link sent if email exists'})
 
 @app.route('/reset-password/<token>', methods=['GET'])
@@ -1256,14 +1309,14 @@ def reset_password_page(token):
 
 @app.route('/reset-password/<token>', methods=['POST'])
 def reset_password(token):
-    new_password = request.json.get('password')
-    
+    data = request.get_json(silent=True) or {}
+    new_password = data.get('password') or request.form.get('password')
+    if not new_password:
+        return jsonify({'message': 'Password is required'}), 400
+
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            SELECT email FROM password_resets 
-            WHERE token = ? AND expiration > ?
-        ''', (token, datetime.now(timezone.utc)))
+        cursor.execute('SELECT email FROM password_resets WHERE token = ? AND expiration > ?', (token, datetime.now(timezone.utc)))
         reset_request = cursor.fetchone()
 
     if not reset_request:
@@ -1274,10 +1327,8 @@ def reset_password(token):
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE users SET password = ? WHERE email = ?
-        ''', (hashed_password, email))
-        cursor.execute('DELETE FROM password_resets WHERE token = ?', (token,))
+        cursor.execute('UPDATE users SET password = ? WHERE email = ?', (hashed_password, email))
+        cursor.execute('DELETE FROM password_resets WHERE email = ?', (email,))
         conn.commit()
 
     return jsonify({'message': 'Password updated successfully'})
@@ -1538,7 +1589,7 @@ def resend_verification():
 # Resend Password Reset Link
 @app.route('/resend-reset-link', methods=['POST'])
 def resend_reset_link():
-    email = request.json.get('email')
+    email = (request.get_json(silent=True) or {}).get('email') or request.form.get('email')
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
@@ -1548,42 +1599,43 @@ def resend_reset_link():
     if not user:
         return jsonify({'message': 'If your email exists, a reset link will be sent.'}), 200
 
-    # Generate new reset token
     import secrets
     token = secrets.token_urlsafe(32)
     expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('PASSWORD_RESET_EXPIRATION_HOURS', 1))
 
     with sqlite3.connect('users.db') as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO password_resets (email, token, expiration)
-            VALUES (?, ?, ?)
-        ''', (email, token, expiration))
+        cursor.execute('DELETE FROM password_resets WHERE email = ?', (email,))
+        cursor.execute('INSERT INTO password_resets (email, token, expiration) VALUES (?, ?, ?)', (email, token, expiration))
         conn.commit()
 
     send_password_reset_email(email, token)
-
     return jsonify({'message': 'Reset link sent if account exists.'})
 
 @app.route('/api/upload-prices/<category>', methods=['POST'])
-@role_required('admin', 'professional', 'firm', 'uploader')  # allow trusted roles to upload; non-admins will stage
+@role_required('admin', 'uploader')  # tighten: pros/firms must be approved (uploader) to upload
 def upload_price_csv(category):
+    print(f"[UPLOAD] enter user_id={getattr(request,'user_id',None)} roles={get_user_roles(getattr(request,'user_id',-1))} category={category}")
     if 'file' not in request.files:
+        print("[UPLOAD] 400 no file part")
         return jsonify({'message': 'No file part'}), 400
 
     file = request.files['file']
     if file.filename == '':
+        print("[UPLOAD] 400 empty filename")
         return jsonify({'message': 'No selected file'}), 400
 
     if not file.filename.lower().endswith('.csv'):
+        print(f"[UPLOAD] 400 not csv filename={file.filename}")
         return jsonify({'message': 'File must be a CSV'}), 400
 
     raw = file.stream.read().decode("utf8")
     rows = list(csv.DictReader(io.StringIO(raw)))
+    print(f"[UPLOAD] parsed rows={len(rows)} admin_auto_apply={app.config.get('ADMIN_AUTO_APPLY', False)}")
 
     admin_auto_apply = app.config.get('ADMIN_AUTO_APPLY', False)
     is_admin = (
-        'admin' in getattr(request, 'user_roles', []) 
+        'admin' in getattr(request, 'user_roles', [])
         or 'admin' in get_user_roles(request.user_id)
     )
 
@@ -1660,6 +1712,149 @@ def upload_price_csv(category):
             'errors_count': len(errors)
         }
     }), 202
+
+# User requests uploader access (professionals/firms only)
+@app.route('/api/uploader/request', methods=['POST'])
+@role_required('professional', 'firm')
+def request_uploader_access():
+    data = request.json or {}
+    reason = (data.get('reason') or '').strip()
+
+    # Already has role?
+    if has_role(request.user_id, 'uploader'):
+        return jsonify({'message': 'Already approved as uploader', 'status': 'approved'}), 200
+
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        # Existing pending?
+        c.execute('SELECT id, status FROM UploaderRequests WHERE user_id=? ORDER BY created_at DESC LIMIT 1', (request.user_id,))
+        row = c.fetchone()
+        if row and row[1] == 'pending':
+            return jsonify({'message': 'Request already pending', 'status': 'pending'}), 200
+
+        c.execute('INSERT INTO UploaderRequests (user_id, status, reason) VALUES (?, "pending", ?)', (request.user_id, reason))
+        conn.commit()
+
+    # Activity log (optional)
+    with sqlite3.connect('users.db') as conn:
+        conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
+                     (request.user_id, 'uploader_request', f'Uploader access requested: {reason[:200]}'))
+        conn.commit()
+
+    return jsonify({'message': 'Request submitted', 'status': 'pending'}), 201
+
+# Check requester status
+@app.route('/api/uploader/status', methods=['GET'])
+@token_required
+def uploader_status():
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT status, created_at, admin_note FROM UploaderRequests WHERE user_id=? ORDER BY created_at DESC LIMIT 1', (request.user_id,))
+        req = c.fetchone()
+    return jsonify({
+        'has_role': has_role(request.user_id, 'uploader'),
+        'latest_request': {'status': req[0], 'created_at': req[1], 'admin_note': req[2]} if req else None
+    }), 200
+
+@app.route('/admin/uploader/requests-ui')
+@role_required('admin')
+def admin_uploader_requests_page():
+    return render_template('admin_uploader_requests.html')
+
+
+# Admin: list requests
+@app.route('/api/admin/uploader/requests', methods=['GET'])
+@role_required('admin')
+def admin_list_uploader_requests():
+    status = request.args.get('status')  # pending/approved/rejected/revoked or None
+    with sqlite3.connect('users.db') as conn:
+        conn.row_factory = sqlite3.Row
+        c = conn.cursor()
+        if status:
+            c.execute('''
+              SELECT ur.*, u.email 
+              FROM UploaderRequests ur JOIN users u ON u.id=ur.user_id 
+              WHERE ur.status=? ORDER BY ur.created_at DESC
+            ''', (status,))
+        else:
+            c.execute('''
+              SELECT ur.*, u.email 
+              FROM UploaderRequests ur JOIN users u ON u.id=ur.user_id 
+              ORDER BY ur.created_at DESC
+            ''')
+        items = [dict(row) for row in c.fetchall()]
+    return jsonify(items), 200
+
+# Admin: approve request
+@app.route('/api/admin/uploader/requests/<int:req_id>/approve', methods=['POST'])
+@role_required('admin')
+def admin_approve_uploader(req_id):
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT user_id, status FROM UploaderRequests WHERE id=?', (req_id,))
+        row = c.fetchone()
+        if not row:
+            return jsonify({'message': 'Request not found'}), 404
+        user_id, status = row
+        if status != 'pending':
+            return jsonify({'message': f'Cannot approve a {status} request'}), 400
+
+        c.execute('UPDATE UploaderRequests SET status="approved", decided_at=CURRENT_TIMESTAMP, decided_by=? WHERE id=?', (request.user_id, req_id))
+        conn.commit()
+
+    grant_role(user_id, 'uploader')
+    with sqlite3.connect('users.db') as conn:
+        conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
+                     (request.user_id, 'uploader_approve', f'Approved uploader for user_id={user_id} (req={req_id})'))
+        conn.commit()
+
+    return jsonify({'message': 'Approved and role granted'}), 200
+
+# Admin: reject request
+@app.route('/api/admin/uploader/requests/<int:req_id>/reject', methods=['POST'])
+@role_required('admin')
+def admin_reject_uploader(req_id):
+    note = (request.json or {}).get('note', '')
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute('SELECT user_id, status FROM UploaderRequests WHERE id=?', (req_id,))
+        row = c.fetchone()
+        if not row:
+            return jsonify({'message': 'Request not found'}), 404
+        user_id, status = row
+        if status != 'pending':
+            return jsonify({'message': f'Cannot reject a {status} request'}), 400
+
+        c.execute('UPDATE UploaderRequests SET status="rejected", admin_note=?, decided_at=CURRENT_TIMESTAMP, decided_by=? WHERE id=?',
+                  (note, request.user_id, req_id))
+        conn.commit()
+
+    with sqlite3.connect('users.db') as conn:
+        conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
+                     (request.user_id, 'uploader_reject', f'Rejected uploader for user_id={user_id} (req={req_id})'))
+        conn.commit()
+
+    return jsonify({'message': 'Rejected'}), 200
+
+# Admin: revoke uploader role
+@app.route('/api/admin/uploader/<int:user_id>/revoke', methods=['POST'])
+@role_required('admin')
+def admin_revoke_uploader(user_id):
+    note = (request.json or {}).get('note', '')
+    # remove role
+    ok = revoke_role(user_id, 'uploader')
+    # log revocation as a request record for audit
+    with sqlite3.connect('users.db') as conn:
+        c = conn.cursor()
+        c.execute('INSERT INTO UploaderRequests (user_id, status, admin_note, decided_at, decided_by) VALUES (?, "revoked", ?, CURRENT_TIMESTAMP, ?)',
+                  (user_id, note, request.user_id))
+        conn.commit()
+    with sqlite3.connect('users.db') as conn:
+        conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
+                     (request.user_id, 'uploader_revoke', f'Revoked uploader from user_id={user_id}: {note[:200]}'))
+        conn.commit()
+    return jsonify({'message': 'Uploader role revoked', 'removed': ok}), 200
+
 
 # --- Admin endpoints to manage staged uploads ---
 
@@ -1845,6 +2040,7 @@ def admin_upload_page():
     return render_template("admin_upload.html")
 
 @app.route("/admin_review")
+@admin_required
 def admin_review_page():
     return render_template("admin_review.html")
 
@@ -1958,34 +2154,6 @@ def calculate_haulage():
         "multiplier": band["multiplier"],
         "distance_km": distance
     })
-
-# GET /projects
-#@app.route('/projects', methods=['GET'])
-#@token_required
-#def get_projects():
-#    with sqlite3.connect('users.db') as conn:
-#        cursor = conn.cursor()
-#        cursor.execute('SELECT * FROM Projects')
-#        projects = cursor.fetchall()
-#    return jsonify({'projects': projects})
-
-# POST /projects (legacy, logs activity)
-#@app.route('/projects', methods=['POST'])
-#@token_required
-#@log_activity("Created new project (legacy endpoint)")
-#def legacy_create_project():
-#   data = request.json
-#    project_name = data.get('project_name')
-#    total_cost = data.get('total_cost', 0)
-
-#    if not project_name:
-#        return jsonify({'message': 'Project name is required'}), 400
-#
-#    with sqlite3.connect('users.db') as conn:
-#        cursor = conn.cursor()
-#        cursor.execute('INSERT INTO Projects (project_name, total_cost) VALUES (?, ?)', (project_name, total_cost))
-#        conn.commit()
-#    return jsonify({'message': 'Project created successfully'}), 201
 
 # Project Management Endpoints (logs activity)
 @app.route('/api/projects', methods=['POST'])
@@ -2184,6 +2352,11 @@ def get_pricing_bundle():
     fallback_applied = None
     tried_regions = []
 
+    # Track which region actually supplied each group for metadata
+    materials_region_used = region
+    labor_region_used = region
+    plants_region_used = region
+
     def fetch_materials_and_labor(region_option):
         region_option = normalize_region(region_option)
         with sqlite3.connect('users.db') as conn:
@@ -2237,10 +2410,12 @@ def get_pricing_bundle():
             if not materials and m:
                 print(f"[DEBUG] Using anchor city materials for {anchor_city}")
                 materials = m
+                materials_region_used = normalize_region(anchor_city)
                 fallback_applied = f"anchor-city ({anchor_city})"
             if not labor and l:
                 print(f"[DEBUG] Using anchor city labor for {anchor_city}")
                 labor = l
+                labor_region_used = normalize_region(anchor_city)
                 fallback_applied = f"anchor-city ({anchor_city})"
             if not plants and p:
                 print(f"[DEBUG] Using anchor city plants for {anchor_city}")
@@ -2249,6 +2424,7 @@ def get_pricing_bundle():
                 for plant in p:
                     plant["haulage"] = haulage_cost
                 plants = p
+                plants_region_used = normalize_region(anchor_city)
                 fallback_applied = f"anchor-city ({anchor_city}) + haulage"
             tried_regions.append(normalize_region(anchor_city))
 
@@ -2260,14 +2436,17 @@ def get_pricing_bundle():
             if not materials and m:
                 print(f"[DEBUG] Using national materials")
                 materials = m
+                materials_region_used = 'national'
                 fallback_applied = "national"
             if not labor and l:
                 print(f"[DEBUG] Using national labor")
                 labor = l
+                labor_region_used = 'national'
                 fallback_applied = "national"
             if not plants and p:
                 print(f"[DEBUG] Using national plants")
                 plants = p
+                plants_region_used = 'national'
                 fallback_applied = "national"
             tried_regions.append('national')
 
@@ -2279,19 +2458,70 @@ def get_pricing_bundle():
             "over 3000": labor.get("tree cutting over 3000"),
         }
 
+    # --- Metadata: compute last_updated and version for the regions actually used ---
+    def latest_dates_for_region(rname):
+        if not rname:
+            return None
+        with sqlite3.connect('users.db') as conn:
+            cursor = conn.cursor()
+            # Materials latest valid_to in region
+            cursor.execute('''
+                SELECT MAX(m.valid_to)
+                FROM MaterialPrices m
+                JOIN Sources s ON m.source_id = s.id
+                WHERE LOWER(s.region) = ?
+            ''', (rname,))
+            mat_max = cursor.fetchone()[0]
+
+            # Labor latest valid_to in region
+            cursor.execute('''
+                SELECT MAX(l.valid_to)
+                FROM LaborRates l
+                JOIN Sources s ON l.source_id = s.id
+                WHERE LOWER(s.region) = ?
+            ''', (rname,))
+            lab_max = cursor.fetchone()[0]
+
+            # Plants latest valid_to in region
+            cursor.execute('''
+                SELECT MAX(valid_to)
+                FROM Plants
+                WHERE LOWER(region) = ?
+            ''', (rname,))
+            plant_max = cursor.fetchone()[0]
+
+        candidates = [d for d in (mat_max, lab_max, plant_max) if d]
+        return max(candidates) if candidates else None
+
+    # Take the max across the actual regions used
+    last_updated_candidates = list(filter(None, [
+        latest_dates_for_region(materials_region_used),
+        latest_dates_for_region(labor_region_used),
+        latest_dates_for_region(plants_region_used),
+    ]))
+    last_updated = max(last_updated_candidates) if last_updated_candidates else None
+
+    dataset_version = app.config.get('PRICING_DATASET_VERSION') or (last_updated[:10] if last_updated else None)
+
     print(f"[DEBUG] Final bundle for region '{region}': materials={list(materials.keys())}, labor={list(labor.keys())}, plants={[p['equipment'] for p in plants]}")
     response = {
         "materials": materials,
         "labor": labor,
         "plants": plants,
-        "region": region,
-        "timestamp": datetime.now().isoformat()
+        "region": region,                   # requested region
+        "regions": {                        # actual regions used per group
+            "materials": materials_region_used,
+            "labor": labor_region_used,
+            "plants": plants_region_used
+        },
+        "timestamp": datetime.now().isoformat(),  # response time
+        "version": dataset_version,               # NEW: dataset version
+        "last_updated": last_updated              # NEW: latest valid_to across used regions
     }
     if fallback_applied:
         response["warning"] = f"Fallback used: {fallback_applied}"
 
     return jsonify(response)
-# ...existing code...
 
 @app.route('/smm-rules', methods=['GET'])
 @token_required

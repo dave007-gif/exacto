@@ -1,23 +1,32 @@
-<!-- templates/dashboard.html -->
 <!DOCTYPE html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <title>Dashboard</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <script>
+      // Expose roles for client gating (degrade gracefully if status API is protected)
+      window.userRoles = JSON.parse("{{ current_user.roles | tojson | safe }}");
+    </script>
   </head>
   <body>
     <nav>
       <a href="/dashboard">Dashboard</a>
       <a href="/calculation">Calculator</a>
 
-      <!-- Bulk upload / review -->
       {% if 'admin' in current_user.roles %}
       <a href="/admin_upload">Admin Uploads</a>
       <a href="/admin_review">Staged Uploads</a>
+      {% elif 'uploader' in current_user.roles %}
+      <button type="button" id="open-bulk-upload-nav">Bulk CSV Upload</button>
       {% elif 'professional' in current_user.roles or 'firm' in
-      current_user.roles or 'uploader' in current_user.roles %}
-      <a href="/admin_upload">Request Bulk Upload</a>
+      current_user.roles %}
+      <button type="button" id="request-uploader-btn">
+        Request Uploader Access
+      </button>
       {% endif %}
 
       <button id="logout-btn">Logout</button>
@@ -31,7 +40,6 @@
         <p>Verified: {% if current_user.verified %}✅{% else %}❌{% endif %}</p>
         <p>Active Projects: {{ project_count }}</p>
 
-        <!-- ✅ Preferred Supplier Display -->
         <p>
           Preferred Supplier:
           <span id="preferred-supplier-name">None selected</span>
@@ -48,7 +56,8 @@
             <button onclick="location.href='/pricing'">View Plans</button>
           </div>
         </div>
-        {% endif %} {% if 'professional' in current_user.roles %}
+        {% endif %} {% if 'professional' in current_user.roles or 'firm' in
+        current_user.roles or 'uploader' in current_user.roles %}
         <div class="professional-dashboard">
           <h3>Professional Tools</h3>
           <div class="tool-grid">
@@ -62,18 +71,25 @@
             </div>
           </div>
         </div>
+
         <div class="action-card">
-          <h3>Professional Tools</h3>
+          <h3>Actions</h3>
           <button onclick="location.href='/suppliers'">Manage Suppliers</button>
           <button id="create-project-btn">Create Project</button>
+
           <div style="margin-top: 0.75rem">
-            <!-- Show bulk upload to trusted roles (professional/firm) or to 'uploader' role if you add it -->
-            {% if 'professional' in current_user.roles or 'firm' in
-            current_user.roles or 'uploader' in current_user.roles %}
-            <button onclick="location.href='/admin_upload'">
-              Request Bulk Upload
-            </button>
-            {% endif %}
+            <!-- Uploader controls for non-admins -->
+            <!-- In action card, keep controls but they’ll be gated by JS too -->
+            <div id="uploader-controls">
+              <span id="uploader-status-badge" style="margin-right: 8px"></span>
+              <button type="button" id="bulk-upload-btn">
+                Bulk CSV Upload
+              </button>
+              <button type="button" id="request-uploader-btn">
+                Request Uploader Access
+              </button>
+            </div>
+
             <!-- Admin quick link to review staged uploads -->
             {% if 'admin' in current_user.roles %}
             <button onclick="location.href='/admin_review'">
@@ -150,6 +166,52 @@
       </div>
     </div>
 
-    <script src="/static/js/dashboard.js"></script>
+    <!-- Staged Bulk Upload Modal -->
+    <div
+      id="bulk-upload-modal"
+      style="
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+      "
+    >
+      <div
+        style="
+          background: #fff;
+          max-width: 520px;
+          margin: 10vh auto;
+          padding: 16px;
+          border-radius: 8px;
+        "
+      >
+        <h3>Bulk CSV Upload (Staged)</h3>
+        <p style="font-size: 0.9em; color: #555">
+          Your file will be staged for admin validation. Non-admin uploads are
+          not applied directly.
+        </p>
+        <p>
+          <label for="upload-category">Category:</label>
+          <select id="upload-category">
+            <option value="materials">Materials</option>
+            <option value="labor">Labor</option>
+            <option value="plants">Plants</option>
+            <option value="adjustments">Adjustments</option>
+            <option value="sources">Sources</option>
+            <option value="locations">Locations</option>
+            <option value="haulage_bands">Haulage Bands</option>
+          </select>
+        </p>
+        <p>
+          <input type="file" id="upload-file" accept=".csv" />
+        </p>
+        <div style="display: flex; gap: 8px">
+          <button type="button" id="upload-submit">Upload</button>
+          <button type="button" id="upload-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
   </body>
 </html>

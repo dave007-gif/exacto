@@ -106,6 +106,7 @@ MAX_FALLBACK_DEPTH = 2
 JWT_EXPIRATION_HOURS = 1
 PASSWORD_RESET_EXPIRATION_HOURS = 1
 EMAIL_VERIFICATION_EXPIRATION_HOURS = 24
+BASE_URL = "http://127.0.0.1:5000"
 
 FALLBACK_DISTANCE_SAME_REGION = 3
 FALLBACK_DISTANCE_ADJACENT_REGION = 10
@@ -149,6 +150,14 @@ max_rate = 10000
 
 HAULAGE_RATE_PER_KM = 2.0 # GHS/km, configurable
 HAULAGE_BASE_COST = 0     # optional flat surcharge
+
+# Pricing dataset metadata (used by /api/pricing-bundle)
+PRICING_DATASET_VERSION = "2025-09"
+
+# Plant haulage config for anchor-city fallback in /api/pricing-bundle
+# Keep this in sync with HAULAGE_RATE_PER_KM unless you want a different rate for plants.
+PLANT_HAULAGE_RATE = 2.0 # GHS/km (matches HAULAGE_RATE_PER_KM)
+PLANT_HAULAGE_FACTOR = 2
 
 [ADJUSTMENT_THRESHOLDS]
 min_factor = 0.5

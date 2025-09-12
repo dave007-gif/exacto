@@ -56,12 +56,34 @@ export function resetBOQ() {
     boqData.haulage = { multiplier: 1.0, band: '' };
 }
 
+// --- Normalizer ---
+function normKey(s) {
+    return String(s || '').trim().toLowerCase();
+}
+// --- Fast lookup: component -> section meta (built at module load) ---
+export const COMPONENT_TO_SECTION = {};
+Object.keys(SMM7_CATEGORIES).forEach(catKey => {
+    const cat = SMM7_CATEGORIES[catKey];
+    (cat.sections || []).forEach(sec => {
+        (sec.components || []).forEach(c => {
+            COMPONENT_TO_SECTION[normKey(c)] = {
+                sectionCode: sec.code,
+                sectionTitle: sec.title,
+                mainCategory: cat.mainCategory,
+                defaultBillNo: sec.defaultBillNo
+            };
+        });
+    });
+});
+
 // --- Helper: Classify component ---
 export function classifyComponent(component) {
-    const workSection = Object.keys(SMM7_CATEGORIES).find((section) =>
-        SMM7_CATEGORIES[section].components.includes(component)
-    );
-    console.log(`[classifyComponent] "${component}" mapped to section "${workSection}"`);
+    const ck = normKey(component);
+    const workSection = Object.keys(SMM7_CATEGORIES).find((section) => {
+        const comps = (SMM7_CATEGORIES[section]?.components || []).map(normKey);
+        return comps.includes(ck);
+    });
+    console.log(`[classifyComponent] "${component}" (ck="${ck}") mapped to section "${workSection}"`);
     return {
         workSection: workSection || "Z. Unclassified Works",
         mainCategory: workSection
@@ -70,55 +92,91 @@ export function classifyComponent(component) {
     };
 }
 
-// --- Component to BillNo mapping ---
+// --- Component to BillNo mapping (lower-case). Others use section defaultBillNo ---
 export const COMPONENT_TO_BILLNO = {
-    // Preliminaries
-    "Mobilization and Demobilization": "1",
-    "Site Office and Facilities": "1",
-    "Temporary Fencing": "1",
-    "Water for Works": "1",
-    "Electricity for Works": "1",
-    "Insurance": "1",
-    "Health and Safety": "1",
-    "Setting Out": "1",
-    "Project Signboard": "1",
-    "Other Preliminaries": "1",
+    // Preliminaries (explicitly force Bill 1)
+    "mobilization and demobilization": "1",
+    "site office and facilities": "1",
+    "temporary fencing": "1",
+    "water for works": "1",
+    "electricity for works": "1",
+    "insurance": "1",
+    "health and safety": "1",
+    "setting out": "1",
+    "project signboard": "1",
+    "other preliminaries": "1",
 
-    // Substructure
-    "Tree Cutting": "2A",
-    "Site Clearance": "2A",
-    "Topsoil Excavation": "2A",
-    "Retaining Topsoil": "2A",
-    "Trench Excavation": "2A",
-    "Concrete in Trench": "2A",
-    "Blockwork in Foundation": "2A",
-    // ...add mappings for all components
+    // Optional explicit overrides (keep only if you need to override section defaults)
+    // "tree cutting": "2A",
+    // "trench excavation": "2A",
+    // "foundations": "2A",
+    // "concrete in trench": "2A",
+    // "blockwork in foundation": "2A",
 };
 
 // --- Add all Preliminaries to BOQ if missing ---
+// Stores category as lower-case key; render title in PDF via toTitleCase(item.category)
 export function ensurePreliminariesInBOQ() {
     const prelimComponents = Object.keys(COMPONENT_TO_BILLNO).filter(
         c => COMPONENT_TO_BILLNO[c] === "1"
     );
     const prelimBill = boqData.bills.find(b => b.billNo === "1");
     if (!prelimBill) return;
+
     prelimComponents.forEach(component => {
-        const alreadyAdded = prelimBill.items.some(item => item.category === component);
+        const ck = normKey(component); // enforce lower-case key
+        const alreadyAdded = prelimBill.items.some(item => normKey(item.category) === ck);
         if (!alreadyAdded) {
-            // Add as "item" with quantity 1, unit "item", rate 0, amount 0
+            const sec = COMPONENT_TO_SECTION[ck];
             prelimBill.items.push({
                 itemCode: `ITEM-${Date.now().toString(36)}`,
-                category: component,
-                description: component,
+                category: ck,                // lower-case key for consistency
+                description: ck,             // keep data normalized; format on render
                 quantity: 1,
                 unit: "item",
                 rate: 0,
                 amount: 0,
                 haulageMultiplier: 1,
-                type: "item"
+                type: "item",
+                // tag section for grouping
+                sectionCode: sec?.sectionCode || "Z",
+                sectionTitle: sec?.sectionTitle || "Unclassified",
+                mainCategory: sec?.mainCategory || "Other",
             });
         }
     });
+}
+
+// Helper: derive bill number with storey routing for Superstructure
+function deriveBillNo(component, inputs) {
+    const ck = normKey(component);
+
+    // 1) explicit mapping
+    if (COMPONENT_TO_BILLNO[ck]) return COMPONENT_TO_BILLNO[ck];
+
+    // 2) section default with category-based routing
+    const sec = COMPONENT_TO_SECTION[ck];
+    if (sec) {
+        if (sec.mainCategory === "Superstructure") {
+            const s = String(inputs?.storey ?? "").toLowerCase();
+            if (s.includes("ground") || s === "0") return "2B";
+            if (s.includes("first") || s === "1") return "2C";
+            if (s.includes("second") || s === "2") return "2D";
+            return "2B"; // default for superstructure
+        }
+        if (sec.mainCategory === "MEP") return "3";
+        if (sec.mainCategory === "External") return "4";
+        return sec.defaultBillNo || "PS";
+    }
+
+    // 3) last resort: classify by category
+    const { mainCategory } = classifyComponent(ck);
+    if (mainCategory === "Preliminaries") return "1";
+    if (mainCategory === "Substructure") return "2A";
+    if (mainCategory === "Superstructure") return "2B";
+    if (mainCategory === "MEP") return "3";
+    if (mainCategory === "External") return "4";
+    return "PS";
 }
 
 // --- Modified addToBOQ ---
@@ -133,65 +191,50 @@ export function addToBOQ({
     description = null, 
     unit = null 
 }) {
-    // 1. Determine correct billNo using mapping
-    if (!billNo) {
-        billNo = COMPONENT_TO_BILLNO[component];
-        if (!billNo) {
-            // Fallback: use first bill in boqData.bills
-            if (boqData.bills.length > 0) {
-                billNo = boqData.bills[0].billNo;
-            } else {
-                console.error(`[addToBOQ] No bill mapping for component "${component}" and no bills initialized.`);
-                return;
-            }
-        }
-    }
+    const ck = normKey(component);
 
-    // 2. Find the bill in boqData.bills
-    let bill = boqData.bills.find(b => b.billNo === billNo);
+    // 1) Determine bill
+    billNo = billNo || deriveBillNo(ck, inputs);
+    const bill = boqData.bills.find(b => b.billNo === billNo);
     if (!bill) {
-        console.error(`[addToBOQ] Bill with billNo "${billNo}" not found. Make sure you called initBillsFromTemplate first.`);
+        console.error(`[addToBOQ] Bill ${billNo} not found. Make sure you called initBillsFromTemplate first.`);
         return;
     }
 
-    // 3. Description and unit
-    const formulaKey = COMPONENT_TO_FORMULA_MAP[component];
+    // 2) Section metadata
+    const sec = COMPONENT_TO_SECTION[ck];
+    const sectionCode = sec?.sectionCode || "Z";
+    const sectionTitle = sec?.sectionTitle || "Unclassified";
+
+    // 3) Description/unit from formula
+    const formulaKey = COMPONENT_TO_FORMULA_MAP[ck] || COMPONENT_TO_FORMULA_MAP[component];
     const formulaObj = SMM7_2023[formulaKey];
-    console.log('addToBOQ:', { component, formulaKey, formulaObj, inputs });
-
     if (!description) {
-        if (formulaObj && typeof formulaObj.description === 'function') {
-            description = formulaObj.description(inputs);
-        } else if (formulaObj?.reference) {
-            description = formulaObj.reference;
-        } else {
-            description = component;
-        }
-        unit = unit || (formulaObj?.unit || "m³");
+        description = (formulaObj?.description ? formulaObj.description(inputs) : (formulaObj?.reference || component));
     }
+    unit = unit || (formulaObj?.unit || "m³");
 
-    // 4. Apply haulage multiplier
+    // 4) Rate/amount
     const multiplier = boqData.haulage?.multiplier || 1.0;
     const rate = Number((unitCost * multiplier).toFixed(2));
-    const total = Number((quantity * unitCost * multiplier).toFixed(2));
+    const amount = Number((quantity * unitCost * multiplier).toFixed(2));
 
-    // 5. Create item
-    const boqItem = {
+    // 5) Add item
+    const item = {
         itemCode: `ITEM-${Date.now().toString(36)}`,
-        category: component,
+        category: component, // display label
+        sectionCode, sectionTitle, mainCategory: sec?.mainCategory || "Other",
         description,
         quantity: Number(quantity?.toFixed?.(2) ?? 1),
         unit,
         rate,
-        amount: total,
+        amount,
         haulageMultiplier: multiplier,
         type
     };
-
-    // 6. Add item to bill
-    bill.items.push(boqItem);
-    bill.total += boqItem.amount;
-    console.log(`[addToBOQ] Added "${component}" to bill "${billNo}" (${bill.title}). Item:`, boqItem);
+    bill.items.push(item);
+    bill.total += item.amount;
+    console.log(`[addToBOQ] Added "${component}" (ck="${ck}") to bill "${billNo}" (${bill.title}). Item:`, item);
 }
 
 // --- BOQ Validation: Only Preliminaries compulsory ---

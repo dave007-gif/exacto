@@ -230,17 +230,217 @@ async function loadProjectDetailsWithLoading(projectId) {
 
 
 // Define your standard bill template (ACECoR/SMM7 style)
+
+// Define your standard bill template (ACECoR/SMM7 style)
 const billTemplate = [
-    { billNo: "1", title: "Preliminaries / General Conditions" },
-    { billNo: "2A", title: "Substructure" },
-    { billNo: "2B", title: "Superstructure" },
-    { billNo: "PS", title: "Provisional Sums" },
-    { billNo: "CONT", title: "Contingencies" }
+  { billNo: "1",  title: "Preliminaries / General Conditions" },
+  { billNo: "2A", title: "Substructure" },
+  { billNo: "2B", title: "Superstructure – Ground Floor" },
+  { billNo: "2C", title: "Superstructure – First Floor" },
+  { billNo: "2D", title: "Superstructure – Second Floor" },
+  { billNo: "3",  title: "Mechanical, Electrical and Plumbing (MEP)" },
+  { billNo: "4",  title: "External Works" },
+  { billNo: "PS", title: "Provisional Sums" },
+  { billNo: "CONT", title: "Contingencies" }
 ];
 
 // Initialize bills at project start or when starting a new project
 initBillsFromTemplate(billTemplate);
 
+const DRAFT_KEY = 'boq_autosave_draft_v1';
+
+// --- New session/draft helpers ---
+function isNewCalculationRequested() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('new') === '1' || window.location.hash.includes('new');
+}
+function cameFromDashboard() {
+    try {
+        const ref = document.referrer || '';
+        // Treat plain navigation from dashboard (without project_id) as a "new" request
+        return ref.includes('/dashboard') && !new URLSearchParams(window.location.search).get('project_id');
+    } catch { return false; }
+}
+function hasMeaningfulProgress(calculationData, totalCost = null) {
+    try {
+        // Any rendered result item
+        if (document.querySelectorAll('.result-item').length > 0) return true;
+        // Any non-zero cost
+        if (totalCost !== null && Number(totalCost) > 0) return true;
+
+        const data = calculationData || gatherCalculationData();
+        if (Array.isArray(data?.selectedComponents) && data.selectedComponents.length > 0) return true;
+        if (data?.componentData && Object.values(data.componentData).some(obj => obj && Object.keys(obj).length > 0)) return true;
+
+        return false;
+    } catch { return false; }
+}
+async function fetchUserProjectsSimple(pageSize = 200) {
+    try {
+        const res = await fetch(`/api/projects?filter=all&sort=date&order=desc&page=1&page_size=${pageSize}`, { credentials: 'include' });
+        if (!res.ok) return [];
+        const data = await res.json();
+        return Array.isArray(data) ? data : (data.projects || []);
+    } catch { return []; }
+}
+async function generateUntitledName() {
+    const projects = await fetchUserProjectsSimple();
+    const names = new Set(projects.map(p => String(p.project_name || '').trim().toLowerCase()));
+    // Find max suffix used
+    let max = 0;
+    const re = /^untitled project(?:\s*(\d+))?$/i;
+    projects.forEach(p => {
+        const m = String(p.project_name || '').trim().match(re);
+        if (m) {
+            if (!m[1]) { max = Math.max(max, 1); } else { max = Math.max(max, parseInt(m[1], 10)); }
+        }
+    });
+    if (!names.has('untitled project')) return 'Untitled Project';
+    return `Untitled Project ${max + 1}`;
+}
+async function ensureDraftProjectUnique(totalCost = 0) {
+    if (currentProjectId) return currentProjectId;
+    try {
+        const project_name = await generateUntitledName();
+        const resp = await saveProject({ project_name, total_cost: totalCost });
+        const newId = resp?.project_id || resp?.id || resp?.projectId || null;
+        if (newId) {
+            currentProjectId = newId;
+            console.log('[Autosave] Created draft project on backend:', currentProjectId, `(${project_name})`);
+            return currentProjectId;
+        }
+    } catch (e) {
+        console.warn('[Autosave] Could not create draft project on backend (offline or error). Falling back to local draft only.');
+    }
+    return null;
+}
+
+
+// --- Helpers for autosave drafts ---
+function computeTotalCostFromUI() {
+    let totalCost = 0;
+    document.querySelectorAll('.result-item').forEach(result => {
+        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+        totalCost += materialCost + laborCost + plantCost;
+    });
+    return totalCost;
+}
+
+function buildCalculationSnapshot() {
+    return {
+        results: Array.from(document.querySelectorAll('.result-item')).map(item => {
+            // Prefer attributes; fall back to parsing Quantity: text if needed
+            let qty = parseFloat(item.getAttribute('data-quantity'));
+            let unit = item.getAttribute('data-unit') || '';
+            if (!qty || Number.isNaN(qty)) {
+                const quantityP = Array.from(item.querySelectorAll('p')).find(p => p.textContent.trim().startsWith('Quantity:'));
+                if (quantityP) {
+                    const m = quantityP.textContent.match(/Quantity:\s*([\d.,]+)\s*(\S+)?/i);
+                    if (m) {
+                        qty = parseFloat((m[1] || '0').replace(/,/g, '')) || 0;
+                        unit = m[2] || unit || '';
+                    }
+                }
+            }
+            const desc = item.getAttribute('data-description') || '';
+
+            return {
+                type: item.querySelector('h4').textContent,
+                description: desc,
+                quantity: qty || 0,
+                unit,
+                inputs: JSON.parse(item.getAttribute('data-inputs') || '{}'),
+                outputs: {
+                    materialCost: parseFloat(item.getAttribute('data-material-cost')),
+                    laborCost: parseFloat(item.getAttribute('data-labor-cost')),
+                    plantCost: parseFloat(item.getAttribute('data-plant-cost'))
+                }
+            };
+        }),
+        formula_version: currentFormulaVersion,
+        timestamp: new Date().toISOString()
+    };
+}
+
+
+function persistDraftLocally(calculationData, snapshot, totalCost) {
+    try {
+        const details = boqData?.projectDetails || {};
+        const draft = {
+            project_name: details.projectTitle || 'Untitled Project',
+            calculation_data: calculationData,
+            calculation_snapshot: snapshot,
+            total_cost: totalCost,
+            formula_version: currentFormulaVersion,
+            saved_at: new Date().toISOString()
+        };
+        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+        console.log('[Autosave] Draft persisted locally');
+    } catch (e) {
+        console.warn('[Autosave] Failed to persist draft locally:', e);
+    }
+}
+
+function loadDraftFromLocal() {
+    try {
+        const raw = localStorage.getItem(DRAFT_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+async function ensureDraftProject(totalCost = 0) {
+    if (currentProjectId) return currentProjectId;
+    try {
+        const resp = await saveProject({
+            project_name: 'Untitled Project',
+            total_cost: totalCost
+        });
+        const newId = resp?.project_id || resp?.id || resp?.projectId || null;
+        if (newId) {
+            currentProjectId = newId;
+            console.log('[Autosave] Created draft project on backend:', currentProjectId);
+            return currentProjectId;
+        }
+    } catch (e) {
+        console.warn('[Autosave] Could not create draft project on backend (offline or error). Falling back to local draft only.');
+    }
+    return null;
+}
+
+// Ensure we await restore when resuming local drafts so banner logic can run in sequence
+async function tryResumeDraftFromLocal() {
+    const draft = loadDraftFromLocal();
+    if (!draft) return;
+
+    console.log('[Autosave] Local draft found. Restoring UI...');
+    try {
+        if (draft.calculation_snapshot) {
+            await restoreCalculationUI(draft.calculation_data || {}, draft.calculation_snapshot, draft.formula_version);
+        } else {
+            await restoreCalculationUI(draft.calculation_data || {}, null, draft.formula_version);
+        }
+    } catch (e) {
+        console.warn('[Autosave] Failed to restore draft UI:', e);
+    }
+
+    if (!currentProjectId) {
+        try {
+            const resp = await saveProject({
+                project_name: draft.project_name || 'Untitled Project',
+                total_cost: draft.total_cost || 0
+            });
+            currentProjectId = resp?.project_id || resp?.id || resp?.projectId || null;
+            console.log('[Autosave] Draft promoted to backend with id:', currentProjectId);
+        } catch (e) {
+            console.warn('[Autosave] Could not promote draft to backend yet.');
+        }
+    }
+}
 
 // Fetch the current formula version from backend
 async function fetchCurrentFormulaVersion() {
@@ -298,29 +498,6 @@ function showFallbackWarning(taskOrMaterial, fallbackRegion) {
 }
 
 
-/*function gatherCalculationData() {
-    const data = {};
-    // Save global inputs (if any)
-    document.querySelectorAll('input, select, textarea').forEach(input => {
-        if (input.name) data[input.name] = input.value;
-    });
-    // Save selected components
-    const componentSelect = document.getElementById('elements');
-    if (componentSelect) {
-        data.selectedComponents = Array.from(componentSelect.selectedOptions).map(opt => opt.value);
-    }
-    // Save per-component input data
-    data.componentData = {};
-    document.querySelectorAll('fieldset[data-component]').forEach(fieldset => {
-        const component = fieldset.dataset.component;
-        data.componentData[component] = {};
-        fieldset.querySelectorAll('input, select').forEach(input => {
-            if (input.name) data.componentData[component][input.name] = input.value;
-        });
-    });
-    return data;
-}*/
-
 function gatherCalculationData() {
     const data = {};
     // Save global inputs (if any)
@@ -353,27 +530,47 @@ async function calculateComponentFromData(componentType, inputs) {
         return null;
     }
 
-    // Convert mm to meters where needed
+    // Convert mm to meters where needed and coerce numeric strings
     const processedInputs = { ...inputs };
-    Object.keys(processedInputs).forEach(key => {
-        if (INPUT_UNITS[key] === 'mm') {
-            processedInputs[key] = parseFloat(processedInputs[key]) / 1000;
+    Object.keys(processedInputs).forEach(k => {
+        const v = processedInputs[k];
+        if (typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) {
+            processedInputs[k] = Number(v);
+        }
+        if (INPUT_UNITS[k] === 'mm') {
+            processedInputs[k] = parseFloat(processedInputs[k]) / 1000;
         }
     });
 
-    // --- Preliminaries: normalize and short-circuit as lump-sum ---
+    // --- Robust Preliminaries handling (lump-sum) ---
     if (formulaKey === 'preliminaries_item') {
-        const valueKey = Object.keys(processedInputs).find(k => /_value$|^value$/i.test(k));
-        const descKey  = Object.keys(processedInputs).find(k => /_description$|^description$/i.test(k));
-        const value = Number(processedInputs[valueKey]) || 0;
-        const description = (descKey && processedInputs[descKey]) || (typeof SMM7_2023[formulaKey].description === 'function'
-            ? SMM7_2023[formulaKey].description({ value })
-            : 'Preliminaries Item');
+        // Prefer common amount keys; otherwise choose the largest positive numeric as fallback.
+        const keys = Object.keys(processedInputs);
+        const priority = /(value|amount|sum|price|cost|lump)/i;
+        const numericEntries = keys
+            .map(k => [k, Number(processedInputs[k])])
+            .filter(([, n]) => Number.isFinite(n));
 
-        // qty 1, cost equals entered lump-sum; no labor/plant
+        let value = 0;
+        // find by priority
+        const prioEntry = numericEntries.find(([k]) => priority.test(k));
+        if (prioEntry) {
+            value = prioEntry[1] || 0;
+        } else if (numericEntries.length) {
+            // fallback: pick the largest positive numeric
+            value = numericEntries.sort((a, b) => (b[1] - a[1]))[0][1] || 0;
+        }
+
+        // description detection
+        const descKey = keys.find(k => /(description|desc|note|title|name)/i.test(k));
+        const description = (descKey && String(processedInputs[descKey])) ||
+            (typeof SMM7_2023[formulaKey].description === 'function'
+                ? SMM7_2023[formulaKey].description({ value })
+                : 'Preliminaries Item');
+
         const quantity = 1;
         const unit = SMM7_2023[formulaKey].unit || 'item';
-        const totalMaterialCost = value;
+        const totalMaterialCost = Number(value) || 0;
         const labor = { totalDays: 0, laborCost: 0 };
         const finalPlantCost = 0;
 
@@ -397,26 +594,20 @@ async function calculateComponentFromData(componentType, inputs) {
         processedInputs.mean_girth = extGirth + intHor + intVer;
     }
 
-    // Calculate quantity
     const formula = SMM7_2023[formulaKey].formula;
     const adjustments = window.adjustments || {};
     const quantity = formula(processedInputs, adjustments.concrete_waste_factor || 1);
 
-    // Fetch prices
     // Clear previous fallback messages
     const fallbackNotice = document.getElementById('fallback-warning');
     if (fallbackNotice) {
         fallbackNotice.innerHTML = '';
         fallbackNotice.style.display = 'none';
     }
-
-    // Un-suppress fallback UI so warnings can be shown
     suppressFallbackUI = false;
 
     const region = getNormalizedRegion();
-
     const prices = await fetchPricesForComponent(formulaKey, region);
-
     if (!prices) return null;
     const { materialPrices, laborRates } = prices;
 
@@ -452,9 +643,7 @@ async function calculateComponentFromData(componentType, inputs) {
     // Plant cost
     const plantData = await fetchPlantData();
     const equipmentList = SMM7_2023[formulaKey].equipment || [];
-    const relevantPlants = plantData.filter(plant =>
-        equipmentList.includes(plant.equipment)
-    );
+    const relevantPlants = plantData.filter(plant => equipmentList.includes(plant.equipment));
     const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
 
     // Apply haulage multiplier
@@ -463,7 +652,6 @@ async function calculateComponentFromData(componentType, inputs) {
     labor.laborCost *= haulageMultiplier;
     const finalPlantCost = plantCost * haulageMultiplier;
 
-    // Compose result
     const unit = SMM7_2023[formulaKey].unit || "m³";
     const description = typeof SMM7_2023[formulaKey].description === 'function'
         ? SMM7_2023[formulaKey].description(processedInputs)
@@ -481,45 +669,151 @@ async function calculateComponentFromData(componentType, inputs) {
     };
 }
 
-/*// Show version warning if needed
-function showVersionWarning(projectVersion, currentVersion) {
-    let warning = document.getElementById('version-warning');
-    if (!warning) {
-        warning = document.createElement('div');
-        warning.id = 'version-warning';
-        warning.style.background = '#ffe0b2';
-        warning.style.color = '#b26a00';
-        warning.style.padding = '10px';
-        warning.style.marginBottom = '10px';
-        warning.style.fontWeight = 'bold';
-        document.body.prepend(warning);
-    }
-    warning.textContent = `Warning: This project uses formula version ${projectVersion}, but the current version is ${currentVersion}. Results are frozen.`;
-    warning.style.display = 'block';
-}*/
+
 
 function showVersionWarning(savedVersion, currentVersion, isSnapshot) {
     let warning = document.getElementById('version-warning');
     if (!warning) {
         warning = document.createElement('div');
         warning.id = 'version-warning';
-        warning.style.background = '#ffe0b2';
-        warning.style.color = '#b26a00';
-        warning.style.padding = '10px';
-        warning.style.marginBottom = '10px';
-        warning.style.fontWeight = 'bold';
         document.body.prepend(warning);
     }
-    warning.innerHTML = isSnapshot
-        ? `This project was calculated with version ${savedVersion}. <button id="recalc-btn">Recalculate with latest formulas/prices</button>`
-        : `Warning: This project uses formula version ${savedVersion}, but the current version is ${currentVersion}. Results are frozen.`;
-    warning.style.display = 'block';
-    if (isSnapshot) {
-        document.getElementById('recalc-btn').onclick = () => {
-            recalculateProject();
+
+    // Inline “banner + button” layout
+    Object.assign(warning.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        background: '#ffe0b2',
+        color: '#b26a00',
+        padding: '10px',
+        marginBottom: '10px',
+        fontWeight: 'bold'
+    });
+
+    const same = String(savedVersion ?? '') === String(currentVersion ?? '');
+    const msg = same
+        ? `Calculated with formula version ${savedVersion}.`
+        : (isSnapshot
+            ? `This project was calculated with version ${savedVersion}.`
+            : `Warning: This project uses formula version ${savedVersion}, but the current version is ${currentVersion}. Results are frozen.`);
+
+    // Build content: message + right-aligned button
+    warning.innerHTML = '';
+    const msgSpan = document.createElement('span');
+    msgSpan.textContent = msg;
+
+    const btn = document.createElement('button');
+    btn.id = 'recalc-btn';
+    btn.textContent = 'Recalculate with latest formulas/prices';
+    Object.assign(btn.style, {
+        marginLeft: 'auto',
+        background: '#b26a00',
+        color: '#fff',
+        border: 'none',
+        padding: '6px 10px',
+        borderRadius: '4px',
+        cursor: 'pointer'
+    });
+
+    btn.onclick = async () => {
+        try {
+            btn.disabled = true;
+            btn.textContent = 'Recalculating...';
+            await recalculateProject();
+        } finally {
+            btn.disabled = false;
+            btn.textContent = 'Recalculate with latest formulas/prices';
+        }
+    };
+
+    warning.appendChild(msgSpan);
+    warning.appendChild(btn);
+    warning.style.display = 'flex';
+}
+
+async function fetchPricesMeta(region = getNormalizedRegion()) {
+    try {
+        const res = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(region)}`, { credentials: 'include' });
+        if (!res.ok) throw new Error('meta fetch failed');
+        const bundle = await res.json();
+        return {
+            datasetVersion: bundle.version || bundle.dataset_version || null,
+            lastUpdated: bundle.last_updated || bundle.updated_at || res.headers.get('Date') || null,
+            regionUsed: (bundle.region || region || '').toLowerCase(),
+            source: localStorage.getItem('preferred_supplier') ? 'preferred supplier' : 'dropdown',
+            fallback: bundle.fallback || null
+        };
+    } catch {
+        return {
+            datasetVersion: null,
+            lastUpdated: null,
+            regionUsed: (region || '').toLowerCase(),
+            source: localStorage.getItem('preferred_supplier') ? 'preferred supplier' : 'dropdown',
+            fallback: null
         };
     }
 }
+
+function showRatesBanner(meta) {
+    let el = document.getElementById('rates-banner');
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'rates-banner';
+        document.body.prepend(el);
+    }
+
+    Object.assign(el.style, {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        background: '#e8f5e9',
+        color: '#1b5e20',
+        padding: '8px 10px',
+        marginBottom: '10px',
+        fontWeight: 'bold'
+    });
+
+    const parts = [];
+    parts.push(`Rates${meta.datasetVersion ? ' v' + meta.datasetVersion : ''}`);
+    if (meta.lastUpdated) parts.push(`as of ${new Date(meta.lastUpdated).toLocaleString()}`);
+    parts.push(`region: ${meta.regionUsed}`);
+    parts.push(`source: ${meta.source}`);
+    if (meta.fallback) parts.push(`fallback: ${meta.fallback}`);
+
+    el.innerHTML = '';
+    const msg = document.createElement('span');
+    msg.textContent = parts.join(' • ');
+
+    const refresh = document.createElement('button');
+    refresh.textContent = 'Refresh rates';
+    Object.assign(refresh.style, {
+        marginLeft: 'auto',
+        background: '#1b5e20',
+        color: '#fff',
+        border: 'none',
+        padding: '6px 10px',
+        borderRadius: '4px',
+        cursor: 'pointer'
+    });
+    refresh.onclick = async () => {
+        refresh.disabled = true;
+        refresh.textContent = 'Refreshing...';
+        try {
+            await fetchInitialRates(); // re-pull base rates
+            const m = await fetchPricesMeta();
+            showRatesBanner(m);       // update banner text
+        } finally {
+            refresh.disabled = false;
+            refresh.textContent = 'Refresh rates';
+        }
+    };
+
+    el.appendChild(msg);
+    el.appendChild(refresh);
+    el.style.display = 'flex';
+}
+
 
 async function recalculateProject() {
     // Use current calculation data and recalculate all components
@@ -561,113 +855,78 @@ async function recalculateProject() {
     }
 }
 
-// Auto-save logic
-function scheduleAutoSave() {
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
-    autoSaveTimer = setTimeout(saveProjectAuto, 2000); // Save 2s after last change
-}
 
-/*async function saveProjectAuto() {
-    // If no project yet, create one automatically
-    if (!currentProjectId) {
-        // You can use a default name or prompt the user
-        const projectName = document.getElementById('project-title')?.value || 'Untitled Project';
-        const response = await fetch('/api/projects', {
-            method: 'POST',
+// --- REPLACE saveProjectAuto with progress-aware autosave and unique untitled naming ---
+async function saveProjectAuto() {
+    try {
+        const calculationData = gatherCalculationData();
+        const snapshot = buildCalculationSnapshot();
+        const totalCost = computeTotalCostFromUI();
+        const progressed = hasMeaningfulProgress(calculationData, totalCost);
+
+        // Always persist locally as a safety net
+        persistDraftLocally(calculationData, snapshot, totalCost);
+
+        // Skip backend activity if no meaningful progress (prevents empty "Untitled Project")
+        if (!progressed) {
+            console.log('[Autosave] Skipping backend save (no progress). Local draft updated.');
+            return;
+        }
+
+        // Ensure we have a backend project; create Untitled/Untitled N if missing
+        if (!currentProjectId) {
+            await ensureDraftProjectUnique(totalCost);
+        }
+        if (!currentProjectId) {
+            // Still no backend id (offline). Exit after local draft persisted.
+            return;
+        }
+
+        await fetch(`/api/projects/${currentProjectId}`, {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
             body: JSON.stringify({
-                project_name: projectName,
-                total_cost: 0
+                calculation_data: JSON.stringify(calculationData),
+                calculation_snapshot: JSON.stringify({
+                    ...snapshot,
+                    prices: await fetchCurrentPrices().catch(() => null)
+                }),
+                total_cost: totalCost,
+                formula_version: currentFormulaVersion
             })
         });
-        if (response.ok) {
-            const project = await response.json();
-            currentProjectId = project.id || project.project_id || project._id;
-        } else {
-            console.error('Failed to auto-create project');
-            return;
-        }
+        console.log('[Autosave] Backend autosave complete');
+    } catch (e) {
+        console.warn('[Autosave] Backend autosave failed; local draft persisted.', e);
     }
-
-    const calculationData = gatherCalculationData();
-    if (JSON.stringify(calculationData) === JSON.stringify(lastSavedData)) return;
-    lastSavedData = calculationData;
-
-    // Calculate total cost from result items
-    let totalCost = 0;
-    document.querySelectorAll('.result-item').forEach(result => {
-        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
-        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
-        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
-        totalCost += materialCost + laborCost + plantCost;
-    });
-
-    await fetch(`/api/projects/${currentProjectId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-            calculation_data: JSON.stringify(calculationData),
-            total_cost: totalCost
-        })
-    });
-}*/
-
-async function saveProjectAuto() {
-    if (!currentProjectId) return;
-    const calculationData = gatherCalculationData();
-
-    // --- NEW: Gather snapshot ---
-    const calculationSnapshot = {
-        results: Array.from(document.querySelectorAll('.result-item')).map(item => ({
-            type: item.querySelector('h4').textContent,
-            inputs: JSON.parse(item.getAttribute('data-inputs')),
-            outputs: {
-                materialCost: parseFloat(item.getAttribute('data-material-cost')),
-                laborCost: parseFloat(item.getAttribute('data-labor-cost')),
-                plantCost: parseFloat(item.getAttribute('data-plant-cost')),
-            }
-        })),
-        formula_version: currentFormulaVersion,
-        prices: await fetchCurrentPrices(), // Implement this to get current prices used
-        timestamp: new Date().toISOString()
-    };
-
-    // Calculate total cost from result items
-    let totalCost = 0;
-    document.querySelectorAll('.result-item').forEach(result => {
-        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
-        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
-        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
-        totalCost += materialCost + laborCost + plantCost;
-    });
-
-    await fetch(`/api/projects/${currentProjectId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-            calculation_data: JSON.stringify(calculationData),
-            calculation_snapshot: JSON.stringify(calculationSnapshot),
-            total_cost: totalCost,
-            formula_version: currentFormulaVersion,
-            rates_snapshot: calculationSnapshot.prices
-        })
-    });
 }
 
 
-// Prompt on page unload if unsaved changes
+// Debounced autosave trigger
+function scheduleAutoSave() {
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(saveProjectAuto, 1500);
+}
+
+// Persist draft on tab hide/close and keep existing unload warning
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        saveProjectAuto();
+    }
+});
 window.addEventListener('beforeunload', (e) => {
+    // Keep existing change-warning logic
     const calculationData = gatherCalculationData();
     if (JSON.stringify(calculationData) !== JSON.stringify(lastSavedData)) {
+        // Persist last snapshot locally to be safe
+        persistDraftLocally(calculationData, buildCalculationSnapshot(), computeTotalCostFromUI());
         e.preventDefault();
         e.returnValue = '';
     }
 });
 
-// Listen for changes to trigger auto-save
+// Hook autosave to edits
 document.addEventListener('input', scheduleAutoSave);
 document.addEventListener('change', scheduleAutoSave);
 
@@ -688,54 +947,6 @@ export async function loadProjectDetails(projectId) {
         console.error('[loadProjectDetails] Error:', err);
     }
 }
-
-/*async function fetchCurrentPrices() {
-    // --- Materials ---
-    const materials = ['cement', 'sand', 'aggregate', 'blocks', 'mortar', 'water'];
-    const prices = { materials: {}, labor: {}, special: {} };
-
-    for (const mat of materials) {
-        const res = await fetch(`/api/prices/${mat}`, { credentials: 'include' });
-        if (res.ok) {
-            const data = await res.json();
-            prices.materials[mat] = data.unit_cost;
-        }
-    }
-
-    // --- Standard Labor Tasks ---
-    const laborTasks = [
-        'bricklaying',
-        'concreting',
-        'site clearance',
-        'excavation'
-    ];
-    for (const task of laborTasks) {
-        const res = await fetch(`/api/labor/${encodeURIComponent(task)}`, { credentials: 'include' });
-        if (res.ok) {
-            const data = await res.json();
-            prices.labor[task] = data.rate;
-        }
-    }
-
-    // --- Special-case Labor Rates (e.g., tree cutting by girth) ---
-    const treeCuttingBands = [
-        'tree cutting 600-1500',
-        'tree cutting 1500-3000',
-        'tree cutting over 3000'
-    ];
-    prices.special.treeCutting = {};
-    for (const band of treeCuttingBands) {
-        const res = await fetch(`/api/labor/${encodeURIComponent(band)}`, { credentials: 'include' });
-        if (res.ok) {
-            const data = await res.json();
-            prices.special.treeCutting[band] = data.rate;
-        }
-    }
-
-    // --- Add more special-case rates here as needed ---
-
-    return prices;
-}*/
 
 async function fetchCurrentPrices() {
     const requestedRegion = getNormalizedRegion(); // ✅ always preferred supplier or dropdown
@@ -802,98 +1013,66 @@ async function fetchCurrentPrices() {
     return prices;
 }
 
-/*async function restoreCalculationUI(data) {
+async function restoreCalculationUI(data, snapshot, projectVersion) {
     if (!data) return;
-    // Restore global inputs (if any)
+
+    // 1) Always hydrate global inputs + selected components + fieldset values from calculation_data
     for (const [key, value] of Object.entries(data)) {
         if (key === "selectedComponents" || key === "componentData") continue;
         const input = document.querySelector(`[name="${key}"]`);
         if (input) input.value = value;
     }
-    // Restore selected components in dropdown
     const componentSelect = document.getElementById('elements');
-    let selected = data.selectedComponents || [];
+    const selected = (data.selectedComponents || []).map(c => c.toLowerCase());
     if (componentSelect && selected.length) {
         Array.from(componentSelect.options).forEach(opt => {
-            opt.selected = selected.includes(opt.value);
+            opt.selected = selected.includes(opt.value.toLowerCase());
         });
         componentSelect.dispatchEvent(new Event('change', { bubbles: true }));
     }
-    // Restore per-component fieldsets and results
     if (data.componentData) {
-        for (const component of selected) {
-            const fieldset = document.querySelector(`fieldset[data-component="${component}"]`);
+        for (const comp of selected) {
+            const fieldset = document.querySelector(`fieldset[data-component="${comp}"]`);
             if (fieldset) {
                 fieldset.classList.remove('hidden');
-                // Fill inputs for this component
-                const compInputs = data.componentData[component] || {};
+                const compInputs = data.componentData[comp] || {};
                 for (const [name, value] of Object.entries(compInputs)) {
                     const input = fieldset.querySelector(`[name="${name}"]`);
                     if (input) input.value = value;
                 }
             }
-            // Calculate and render result for this component
-            calculateComponentFromData(component, data.componentData[component] || {}).then(result => {
-                if (result) {
-                    renderResultItem(
-                        result.componentType,
-                        result.description,
-                        result.quantity,
-                        result.unit,
-                        result.totalMaterialCost,
-                        result.labor,
-                        result.finalPlantCost,
-                        result.inputs
-                    );
-                    updateSectionAndGrandTotals();
-                }
-            });
         }
     }
-}*/
 
-async function restoreCalculationUI(data, snapshot, projectVersion) {
-    if (!data) return;
-    if (snapshot) {
-        // Render snapshot results (do not recalculate)
+    // Ensure currentFormulaVersion is known for version banner
+    if (!currentFormulaVersion) {
+        try { currentFormulaVersion = await fetchCurrentFormulaVersion(); } catch {}
+    }
+
+    // Always show banner (info if same, warning if different)
+    try {
+        const savedVersion = projectVersion || snapshot?.formula_version || data?.formula_version || null;
+        const hasSnapshotResults = !!(snapshot && Array.isArray(snapshot.results) && snapshot.results.length > 0);
+        if (savedVersion && currentFormulaVersion) {
+            console.log('[VersionBanner] saved=', savedVersion, 'current=', currentFormulaVersion, 'snapshotResults=', hasSnapshotResults);
+            showVersionWarning(savedVersion, currentFormulaVersion, hasSnapshotResults);
+        }
+    } catch (e) {
+        console.debug('[restoreCalculationUI] version banner check skipped:', e);
+    }
+
+    // 2) Prefer snapshot render for speed
+    if (snapshot && Array.isArray(snapshot.results) && snapshot.results.length > 0) {
         renderResultsFromSnapshot(snapshot.results);
-        // Show warning if formula_version !== currentFormulaVersion
-        if (snapshot.formula_version !== currentFormulaVersion) {
-            showVersionWarning(snapshot.formula_version, currentFormulaVersion, true);
-            showRecalculateButton();
-        }
-    } else {
 
-        // Restore global inputs (if any)
-        for (const [key, value] of Object.entries(data)) {
-            if (key === "selectedComponents" || key === "componentData") continue;
-            const input = document.querySelector(`[name="${key}"]`);
-            if (input) input.value = value;
-        }
-        // Restore selected components in dropdown
+        // 2b) Recalculate any components saved in calculation_data but missing in snapshot
+        const snapshotTypes = new Set(snapshot.results.map(r => String(r.type || '').toLowerCase()));
         const componentSelect = document.getElementById('elements');
-        let selected = (data.selectedComponents || []).map(c => c.toLowerCase());
-        if (componentSelect && selected.length) {
-            Array.from(componentSelect.options).forEach(opt => {
-                opt.selected = selected.includes(opt.value.toLowerCase());
-            });
-            componentSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-        // Restore per-component fieldsets and results
-        if (data.componentData) {
-            for (const component of selected) {
-                const fieldset = document.querySelector(`fieldset[data-component="${component}"]`);
-                if (fieldset) {
-                    fieldset.classList.remove('hidden');
-                    // Fill inputs for this component
-                    const compInputs = data.componentData[component] || {};
-                    for (const [name, value] of Object.entries(compInputs)) {
-                        const input = fieldset.querySelector(`[name="${name}"]`);
-                        if (input) input.value = value;
-                    }
-                }
-                // Calculate and render result for this component
-                calculateComponentFromData(component, data.componentData[component] || {}).then(result => {
+        const selected = (data.selectedComponents || []).map(c => c.toLowerCase());
+        for (const comp of selected) {
+            if (!snapshotTypes.has(comp)) {
+                try {
+                    const result = await calculateComponentFromData(comp, (data.componentData || {})[comp] || {});
                     if (result) {
                         renderResultItem(
                             result.componentType,
@@ -905,11 +1084,58 @@ async function restoreCalculationUI(data, snapshot, projectVersion) {
                             result.finalPlantCost,
                             result.inputs
                         );
-                        updateSectionAndGrandTotals();
                     }
-                });
+                } catch (e) {
+                    console.warn('[restoreCalculationUI] Failed to recalc missing component:', comp, e);
+                }
             }
         }
+
+        // Force preliminaries to re-render to ensure visibility from dashboard
+        try {
+            for (const comp of Object.keys(data.componentData || {})) {
+                if (COMPONENT_TO_FORMULA_MAP[comp] === 'preliminaries_item') {
+                    const result = await calculateComponentFromData(comp, (data.componentData || {})[comp] || {});
+                    if (result) {
+                        renderResultItem(
+                            result.componentType,
+                            result.description,
+                            result.quantity,
+                            result.unit,
+                            result.totalMaterialCost,
+                            result.labor,
+                            result.finalPlantCost,
+                            result.inputs
+                        );
+                    }
+                }
+            }
+        } catch (e) {
+            console.debug('[restoreCalculationUI] preliminaries refresh skipped:', e);
+        }
+
+        updateSectionAndGrandTotals();
+        return;
+    }
+
+    // 4) No snapshot → full recompute
+    if (data.componentData) {
+        for (const comp of selected) {
+            const result = await calculateComponentFromData(comp, data.componentData[comp] || {});
+            if (result) {
+                renderResultItem(
+                    result.componentType,
+                    result.description,
+                    result.quantity,
+                    result.unit,
+                    result.totalMaterialCost,
+                    result.labor,
+                    result.finalPlantCost,
+                    result.inputs
+                );
+            }
+        }
+        updateSectionAndGrandTotals();
     }
 }
 
@@ -917,11 +1143,15 @@ function renderResultsFromSnapshot(results) {
     const output = document.getElementById('output');
     output.innerHTML = '';
     results.forEach(result => {
+        // Use saved quantity/unit/description if present
+        const qty = typeof result.quantity === 'number' ? result.quantity : (result.outputs.quantity || 0);
+        const unit = result.unit || result.outputs.unit || '';
+        const desc = result.description || '';
         renderResultItem(
             result.type,
-            '', // description if available
-            result.outputs.quantity || 0,
-            result.outputs.unit || '',
+            desc,
+            qty,
+            unit,
             result.outputs.materialCost,
             { laborCost: result.outputs.laborCost, totalDays: 0 },
             result.outputs.plantCost,
@@ -1128,6 +1358,10 @@ function renderResultItem(componentType, description, quantity, unit, totalMater
     resultItem.setAttribute('data-plant-cost', finalPlantCost);
     resultItem.setAttribute('data-currency', 'GHS');
     resultItem.setAttribute('data-inputs', JSON.stringify(inputs));
+    // NEW: persist quantity/unit/description for robust snapshots
+    resultItem.setAttribute('data-quantity', Number(quantity) || 0);
+    resultItem.setAttribute('data-unit', unit || '');
+    resultItem.setAttribute('data-description', description || '');
     resultItem.innerHTML = `
         <h4>${componentType}</h4>
         <p>Description: ${description}</p>
@@ -1286,7 +1520,6 @@ export async function generateBOQPDF() {
         if (details && details.companyName && details.projectTitle && details.clientName) {
             boqData.projectDetails = details;
         } else {
-            // Pre-fill modal if possible
             const d = boqData.projectDetails || {};
             document.getElementById('company-name').value = d.companyName || '';
             document.getElementById('company-address').value = d.companyAddress || '';
@@ -1299,7 +1532,6 @@ export async function generateBOQPDF() {
             return;
         }
     } else {
-        // No project ID, fallback to local data
         details = boqData.projectDetails;
         if (!details || !details.companyName || !details.projectTitle || !details.clientName) {
             const d = boqData.projectDetails || {};
@@ -1321,6 +1553,7 @@ export async function generateBOQPDF() {
             alert("No BOQ data available to generate PDF.");
             return;
         }
+
         const { PDFDocument, StandardFonts, rgb } = PDFLib;
         const pdfDoc = await PDFDocument.create();
         const pageSize = [595, 842];
@@ -1328,54 +1561,43 @@ export async function generateBOQPDF() {
         const colWidths = [40, 260, 45, 40, 65, 65];
         const descPadding = 6;
 
-        // --- Embed fonts ---
+        // Fonts
         const normalFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
         const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
-        // --- Helper: Draw underlined, centered text ---
+        // Helpers
         function drawCenteredUnderlinedText(page, text, y, font, fontSize) {
-            const textWidth = font.widthOfTextAtSize(text, fontSize);
+            const t = String(text || '');
+            const textWidth = font.widthOfTextAtSize(t, fontSize);
             const x = (pageSize[0] - textWidth) / 2;
-            page.drawText(text, { x, y, size: fontSize, font, color: rgb(0,0,0) });
-            // Underline
-            page.drawLine({
-                start: { x, y: y - 2 },
-                end: { x: x + textWidth, y: y - 2 },
-                thickness: 1,
-                color: rgb(0,0,0)
-            });
+            page.drawText(t, { x, y, size: fontSize, font, color: rgb(0,0,0) });
+            page.drawLine({ start: { x, y: y - 2 }, end: { x: x + textWidth, y: y - 2 }, thickness: 1, color: rgb(0,0,0) });
         }
-
-        // --- Helper: Draw header/footer on each page ---
+        // Title-case helper for display only
+        function toTitleCase(s) {
+            return String(s || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+        }
         function drawHeaderFooter(page, yStart, billNo, pageNo) {
             const d = boqData.projectDetails || {};
             let y = yStart;
-            // Company name (bold)
             page.drawText(d.companyName || '', { x: margin, y, size: 11, font: boldFont, color: rgb(0,0,0) });
             y -= 13;
-            // Company address
             (d.companyAddress || '').split('\n').forEach(line => {
                 page.drawText(line, { x: margin, y, size: 9, font: normalFont, color: rgb(0,0,0) });
                 y -= 11;
             });
-            // Contact info
             page.drawText(d.contactInfo || '', { x: margin, y, size: 9, font: normalFont, color: rgb(0,0,0) });
-            // Bill No. and Page No. (right-aligned)
             const billText = billNo ? `Bill No: ${billNo}` : '';
             const pageText = `Page ${pageNo}`;
             const rightText = [billText, pageText].filter(Boolean).join('   ');
             const rightTextWidth = normalFont.widthOfTextAtSize(rightText, 9);
             page.drawText(rightText, { x: pageSize[0] - margin - rightTextWidth, y: yStart, size: 9, font: normalFont, color: rgb(0,0,0) });
         }
-
-        // --- Helper: Draw project title (centered, bold, underlined) ---
         function drawProjectTitle(page, y) {
             const d = boqData.projectDetails || {};
             drawCenteredUnderlinedText(page, d.projectTitle || '', y, boldFont, 15);
             return y - 22;
         }
-
-        // --- Helper: Draw project phase (centered, bold, underlined) ---
         function drawProjectPhase(page, y) {
             const d = boqData.projectDetails || {};
             if (d.projectPhase) {
@@ -1384,33 +1606,18 @@ export async function generateBOQPDF() {
             }
             return y;
         }
-
-        // ...inside generateBOQPDF, before drawTableHeader...
-
-        // --- Helper: Draw double horizontal line ---
         function drawDoubleHorizontalLine(page, y) {
             const totalWidth = colWidths.reduce((a, b) => a + b, 0);
             page.drawLine({ start: { x: margin, y }, end: { x: margin + totalWidth, y }, thickness: 1.2, color: rgb(0,0,0) });
             page.drawLine({ start: { x: margin, y: y - 2 }, end: { x: margin + totalWidth, y: y - 2 }, thickness: 1.2, color: rgb(0,0,0) });
         }
-        // ...inside generateBOQPDF, before drawTableHeader...
-
-        // --- Helper: Draw vertical column lines for the table area ---
         function drawColumnLines(page, yTop, yBottom) {
             let x = margin;
             for (let i = 0; i < colWidths.length + 1; i++) {
-                page.drawLine({
-                    start: { x, y: yTop },
-                    end: { x, y: yBottom },
-                    thickness: 0.7,
-                    color: rgb(0,0,0)
-                });
+                page.drawLine({ start: { x, y: yTop }, end: { x, y: yBottom }, thickness: 0.7, color: rgb(0,0,0) });
                 if (i < colWidths.length) x += colWidths[i];
             }
         }
-
-
-        // --- Table header with double horizontal line below ---
         function drawTableHeader(page, y) {
             const headers = ["ITEM", "DESCRIPTION", "QTY", "UNIT", "RATE (GHe)", "AMOUNT (GHe)"];
             let x = margin;
@@ -1418,17 +1625,12 @@ export async function generateBOQPDF() {
                 page.drawText(h, { x, y, size: 10, font: boldFont, color: rgb(0,0,0) });
                 x += colWidths[i];
             });
-            // Draw double horizontal line below header
             drawDoubleHorizontalLine(page, y - 3);
-            // Draw vertical column lines for the table area (header row height: 15)
             drawColumnLines(page, y + 3, y - 15);
             return y - 15;
         }
-
-
-        // 2. Word-wrap helper
         function wrapText(text, font, fontSize, maxWidth) {
-            const words = text.split(' ');
+            const words = String(text || '').split(' ');
             let lines = [];
             let currentLine = '';
             for (let word of words) {
@@ -1444,35 +1646,30 @@ export async function generateBOQPDF() {
             if (currentLine) lines.push(currentLine);
             return lines;
         }
-
-        // 3. Improved row rendering with word-wrap and padding
         function drawBOQItemRow(page, yPos, item, itemCode, normalFont, boldFont) {
             let x = margin;
 
-            // Draw item code (A, B, ...)
+            // Item code
             page.drawText(itemCode, { x, y: yPos, size: fontSize, font: normalFont, color: rgb(0,0,0) });
             x += colWidths[0];
 
-            // Draw Description: Component name (bold, underlined), then description (word-wrapped)
+            // Category (Title Case for display only)
             let descY = yPos;
-            page.drawText(item.category, { x: x + descPadding, y: descY, size: fontSize, font: boldFont, color: rgb(0,0,0) });
-            const compWidth = boldFont.widthOfTextAtSize(item.category, fontSize);
-            page.drawLine({
-                start: { x: x + descPadding, y: descY - 2 },
-                end: { x: x + descPadding + compWidth, y: descY - 2 },
-                thickness: 0.7,
-                color: rgb(0,0,0)
-            });
+            const category = String(item.category || '');
+            const displayCategory = toTitleCase(category);
+            page.drawText(displayCategory, { x: x + descPadding, y: descY, size: fontSize, font: boldFont, color: rgb(0,0,0) });
+            const compWidth = boldFont.widthOfTextAtSize(displayCategory, fontSize);
+            page.drawLine({ start: { x: x + descPadding, y: descY - 2 }, end: { x: x + descPadding + compWidth, y: yPos - 2 }, thickness: 0.7, color: rgb(0,0,0) });
             descY -= fontSize + 2;
 
-            // --- Word-wrap the description ---
+            // Description (wrap)
             const descLines = wrapText(item.description, normalFont, fontSize, colWidths[1] - 2 * descPadding);
             for (const line of descLines) {
                 page.drawText(line, { x: x + descPadding, y: descY, size: fontSize, font: normalFont, color: rgb(0,0,0) });
                 descY -= fontSize + 1;
             }
 
-            // Draw other columns (Qty, Unit, Rate, Amount) aligned with the first line
+            // Other columns
             let colX = margin + colWidths[0] + colWidths[1];
             const columns = [
                 item.quantity ?? '',
@@ -1485,95 +1682,149 @@ export async function generateBOQPDF() {
                 colX += colWidths[i + 2];
             });
 
-            // Adjust row height for wrapped description
+            // Row boundary
             const rowHeight = (fontSize + 1) * (descLines.length + 1) + 6;
             drawColumnLines(page, yPos + 3, yPos - rowHeight);
 
-            // Return new yPos (move down by the row height)
             return yPos - rowHeight;
         }
 
-        // --- PDF page and yPos setup ---
+        // Page setup
         let page = pdfDoc.addPage(pageSize);
         let fontSize = 10;
         let yPos = pageSize[1] - margin;
-
-        // --- Draw project title at the top of the first page ---
         yPos = drawProjectTitle(page, yPos);
 
         let pageNo = 1;
-        let isFirstBill = true; // Add this before the loop
+        let isFirstBill = true;
 
-        // --- Draw each bill ---
+        // Bills
         for (const bill of boqData.bills) {
             if (!bill || !bill.items) continue;
 
-            // --- Always start each bill on a new page (except the first) ---
+            // New page for each bill (except the first)
             if (!isFirstBill) {
-                // Footer for previous page
                 page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
                 page.drawText(`Page ${++pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
-
-                // New page for new bill
                 page = pdfDoc.addPage(pageSize);
                 yPos = pageSize[1] - margin;
             }
             isFirstBill = false;
 
-            // Draw header/footer for each new page
             drawHeaderFooter(page, pageSize[1] - margin + 10, bill.billNo, pageNo);
-
-            // Draw project phase above bill heading
             yPos = drawProjectPhase(page, yPos);
 
-            // Bill heading (bold, underlined)
-            let billHeading = `BILL No. ${bill.billNo || ''}: ${bill.title || ''}`;
+            const billHeading = `BILL No. ${bill.billNo || ''}: ${bill.title || ''}`;
             drawCenteredUnderlinedText(page, billHeading, yPos, boldFont, 12);
             yPos -= 20;
 
             yPos = drawTableHeader(page, yPos);
 
+            // Group by section with section headings/subtotals
+            const items = (bill.items || [])
+                .slice()
+                .filter(Boolean)
+                .sort((a, b) => (a.sectionCode || '').localeCompare(b.sectionCode || ''));
+
+            let currentSection = null;
+            let sectionTotal = 0;
             let itemCodeChar = 0;
-            for (const item of bill.items) {
-                if (!item) continue;
-                if (yPos < 80) {
-                    // Footer for previous page
+
+            for (const item of items) {
+                const itemSection = item.sectionCode || 'Z';
+                if (currentSection !== itemSection) {
+                    if (currentSection !== null) {
+                        yPos -= 6;
+                        page.drawText(`Subtotal for ${currentSection}: ${sectionTotal.toFixed(2)}`, {
+                            x: margin + 260, y: yPos, size: fontSize, font: boldFont, color: rgb(0,0,0)
+                        });
+                        yPos -= 14;
+                        sectionTotal = 0;
+                    }
+                    // Page break before new section header if low space
+                    if (yPos < 120) {
+                        page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+                        page.drawText(`Page ${++pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+                        page = pdfDoc.addPage(pageSize);
+                        yPos = pageSize[1] - margin;
+
+                        drawHeaderFooter(page, pageSize[1] - margin + 10, bill.billNo, pageNo);
+                        yPos = drawProjectPhase(page, yPos);
+                        drawCenteredUnderlinedText(page, billHeading, yPos, boldFont, 12);
+                        yPos -= 20;
+                        yPos = drawTableHeader(page, yPos);
+                        itemCodeChar = 0; // restart item codes per page
+                    }
+
+                    currentSection = itemSection;
+                    const secTitle = `${item.sectionCode || 'Z'}. ${item.sectionTitle || 'Unclassified'}`;
+                    page.drawText(secTitle, { x: margin, y: yPos, size: 11, font: boldFont, color: rgb(0,0,0) });
+                    yPos -= 14;
+                }
+
+                // Page break before item row if near bottom
+                if (yPos < 100) {
                     page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
                     page.drawText(`Page ${++pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
-
-                    // New page
                     page = pdfDoc.addPage(pageSize);
                     yPos = pageSize[1] - margin;
 
-                    // Header/footer for new page
                     drawHeaderFooter(page, pageSize[1] - margin + 10, bill.billNo, pageNo);
-
-                    // Project title only on first page
-                    if (pageNo === 1) yPos = drawProjectTitle(page, yPos);
-
-                    // Project phase above bill heading
                     yPos = drawProjectPhase(page, yPos);
-
-                    // Bill heading
                     drawCenteredUnderlinedText(page, billHeading, yPos, boldFont, 12);
                     yPos -= 20;
-
                     yPos = drawTableHeader(page, yPos);
                     itemCodeChar = 0;
+
+                    // Reprint current section header
+                    const secTitle = `${item.sectionCode || 'Z'}. ${item.sectionTitle || 'Unclassified'}`;
+                    page.drawText(secTitle, { x: margin, y: yPos, size: 11, font: boldFont, color: rgb(0,0,0) });
+                    yPos -= 14;
                 }
-                const itemCode = String.fromCharCode(65 + itemCodeChar);
+
+                const itemCode = String.fromCharCode(65 + (itemCodeChar % 26));
                 yPos = drawBOQItemRow(page, yPos, item, itemCode, normalFont, boldFont);
                 itemCodeChar++;
-                if (itemCodeChar > 25) itemCodeChar = 0;
+                sectionTotal += (item.amount || 0);
             }
 
+            // Close last section subtotal
+            if (currentSection !== null) {
+                yPos -= 6;
+                page.drawText(`Subtotal for ${currentSection}: ${sectionTotal.toFixed(2)}`, {
+                    x: margin + 260, y: yPos, size: fontSize, font: boldFont, color: rgb(0,0,0)
+                });
+                yPos -= 14;
+            }
+
+            // Bill summary
             yPos -= 8;
             page.drawText(`SUMMARY OF BILL No.${bill.billNo || ''}`, { x: margin, y: yPos, size: fontSize, color: rgb(0,0,0) });
             page.drawText((typeof bill.total === 'number' ? bill.total.toFixed(2) : '0.00'), { x: margin + 420, y: yPos, size: fontSize, color: rgb(0,0,0) });
             yPos -= 20;
         }
 
-        // Grand summary (unchanged)
+        // Optional: GENERAL SUMMARY – BILL No. 2 (2A..2D)
+        const bill2Bills = (boqData.bills || []).filter(b => /^2[A-D]$/.test(b.billNo));
+        if (bill2Bills.length > 0) {
+            const bill2Sum = bill2Bills.reduce((s, b) => s + (b.total || 0), 0);
+
+            if (yPos < 120) {
+                page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+                page.drawText(`Page ${++pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+                page = pdfDoc.addPage(pageSize);
+                yPos = pageSize[1] - margin;
+                drawHeaderFooter(page, pageSize[1] - margin + 10, null, pageNo);
+            }
+
+            page.drawText("GENERAL SUMMARY – BILL No. 2 (2A..2D)", { x: margin, y: yPos, size: 11, font: boldFont, color: rgb(0,0,0) });
+            yPos -= 15;
+            page.drawText(`TOTAL FOR BILL No. 2`, { x: margin, y: yPos, size: fontSize, font: normalFont, color: rgb(0,0,0) });
+            page.drawText(bill2Sum.toFixed(2), { x: margin + 420, y: yPos, size: fontSize, font: normalFont, color: rgb(0,0,0) });
+            yPos -= 20;
+        }
+
+        // Grand summary
         let subtotal = 0, contingency = 0, grandTotal = 0;
         try {
             subtotal = boqData.bills.reduce((sum, b) => sum + (b.total || 0), 0);
@@ -1583,6 +1834,15 @@ export async function generateBOQPDF() {
             grandTotal = subtotal + contingency;
         } catch (err) {
             console.error('[generateBOQPDF] Error calculating summary:', err);
+        }
+
+        // Page break before general summary if needed
+        if (yPos < 120) {
+            page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+            page.drawText(`Page ${++pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
+            page = pdfDoc.addPage(pageSize);
+            yPos = pageSize[1] - margin;
+            drawHeaderFooter(page, pageSize[1] - margin + 10, null, pageNo);
         }
 
         page.drawText("GENERAL SUMMARY", { x: margin, y: yPos, size: 11, color: rgb(0,0,0) });
@@ -1596,11 +1856,11 @@ export async function generateBOQPDF() {
         page.drawText(`TOTAL ESTIMATE`, { x: margin, y: yPos, size: fontSize, color: rgb(0,0,0) });
         page.drawText(grandTotal.toFixed(2), { x: margin + 420, y: yPos, size: fontSize, color: rgb(0,0,0) });
 
-        // Footer for last page
+        // Footer last page
         page.drawText(boqData.projectDetails.companyName || '', { x: margin, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
         page.drawText(`Page ${pageNo}`, { x: pageSize[0] - margin - 40, y: 20, size: 9, font: normalFont, color: rgb(0,0,0) });
 
-        // Download (unchanged)
+        // Download
         try {
             const pdfBytes = await pdfDoc.save();
             const blob = new Blob([pdfBytes], { type: "application/pdf" });
@@ -1681,45 +1941,64 @@ export async function fetchProjectDetails(projectId) {
     }
 }
 
+
 document.addEventListener('DOMContentLoaded', async function () {
-    console.log("DOMContentLoaded event fired");
+    console.log('DOMContentLoaded event fired');
     refreshProjectDetailsUI();
+
     try {
+        // Auth + profile
         await checkAuthentication();
         const userRoles = await fetchUserRoles();
-        console.log("User roles:", userRoles);
-        console.log("User roles array:", userRoles, typeof userRoles[0]);
+        console.log('User roles:', userRoles);
+        console.log('User roles array:', userRoles, typeof userRoles[0]);
         checkRoleVisibility(userRoles);
 
-        // --- Place here ---
-        let role = userRoles && userRoles[0] || 'professional';
+        // Role-based project list (dashboard controls on calc page)
+        const role = (userRoles && userRoles[0]) || 'professional';
         window.currentUserRole = role;
         renderProjectList(role);
-        // --- end placement ---
 
+        // Locations + versions + initial rates
         await loadLocations();
+        try { currentFormulaVersion = await fetchCurrentFormulaVersion(); } catch (e) { console.debug('version fetch failed early:', e); }
         await checkFormulaVersion();
         await fetchInitialRates();
 
+        // Show price dataset/version banner
+        try {
+            const meta = await fetchPricesMeta();
+            showRatesBanner(meta);
+        } catch (e) {
+            console.debug('[RatesBanner] skipped:', e);
+        }
+
+        // UI setup
         setupInputValidation();
         setupComponentDropdown();
         setupCalculateButtons();
-
-        // Ensure save/update buttons are set up early
         setupSaveProjectButton();
         setupUpdateProjectButton();
-
         setupLogoutButton();
 
-        // On page load, restore project if project_id is present
+        // Resolve project_id
         const params = new URLSearchParams(window.location.search);
-        // Prefer the canonical function if available, otherwise try alternative
-        const pidFromURL = (typeof getProjectIdFromURL === 'function') ? getProjectIdFromURL() :
-                            (typeof getProjectIdFromUrl === 'function') ? getProjectIdFromUrl() : null;
-        currentProjectId = pidFromURL; // Use the resolved project id
+        const pidFromURL =
+            (typeof getProjectIdFromURL === 'function' && getProjectIdFromURL()) ||
+            (typeof getProjectIdFromUrl === 'function' && getProjectIdFromUrl()) ||
+            null;
+        currentProjectId = pidFromURL;
         console.log('[RestoreProject] URL params:', Array.from(params.entries()));
 
-        // Initialize Save/Update button visibility based on presence of project id or existing results
+        // New calc vs resume local draft
+        if (!currentProjectId && typeof isNewCalculationRequested === 'function' && isNewCalculationRequested()) {
+            console.log('[RestoreProject] New calculation requested. Clearing local draft and skipping resume.');
+            localStorage.removeItem(DRAFT_KEY);
+        } else if (!currentProjectId) {
+            await tryResumeDraftFromLocal();
+        }
+
+        // Initialize Save/Update visibility
         (function initSaveUpdateButtons() {
             const saveBtn = document.getElementById('save-project-btn');
             const updateBtn = document.getElementById('update-project-btn');
@@ -1727,7 +2006,6 @@ document.addEventListener('DOMContentLoaded', async function () {
                 if (saveBtn) saveBtn.style.display = 'none';
                 if (updateBtn) updateBtn.style.display = 'inline-block';
             } else {
-                // Show save button if there are result items present
                 if (document.querySelectorAll('.result-item').length > 0) {
                     if (saveBtn) saveBtn.style.display = 'inline-block';
                 }
@@ -1735,146 +2013,59 @@ document.addEventListener('DOMContentLoaded', async function () {
             }
         })();
 
+        // Load and restore existing project (with banner guarantees)
         if (currentProjectId) {
             console.log('[RestoreProject] Found project_id:', currentProjectId);
-            showLoading(); // Show initial loading spinner
-
+            showLoading();
             try {
-                // Fetch project data
-                const res = await fetch(`/api/projects/${currentProjectId}`, {
-                    credentials: 'include'
-                });
-
+                const res = await fetch(`/api/projects/${currentProjectId}`, { credentials: 'include' });
                 console.log('[RestoreProject] Fetch response:', res);
+
                 if (res.ok) {
                     const project = await res.json();
                     projectFormulaVersion = project.formula_version;
                     lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
                     const calculationSnapshot = project.calculation_snapshot ? JSON.parse(project.calculation_snapshot) : null;
-                    restoreCalculationUI(lastSavedData, calculationSnapshot, projectFormulaVersion);
-                    console.log('[RestoreProject] Project data loaded:', project);
 
-                    // Version warning
-                    currentFormulaVersion = await fetchCurrentFormulaVersion();
-                    if (projectFormulaVersion !== currentFormulaVersion) {
-                        showVersionWarning(projectFormulaVersion, currentFormulaVersion);
+                    // Ensure current version is known
+                    if (!currentFormulaVersion) { try { currentFormulaVersion = await fetchCurrentFormulaVersion(); } catch {} }
+                    console.log('[VersionBanner] projectFormulaVersion=', projectFormulaVersion, 'current=', currentFormulaVersion, 'hasSnapshot=', !!calculationSnapshot);
+
+                    // Restore UI first (hydrates fields and may render snapshot)
+                    await restoreCalculationUI(lastSavedData, calculationSnapshot, projectFormulaVersion);
+
+                    // Also show banner if restore path didn’t
+                    const savedVersion = projectFormulaVersion || calculationSnapshot?.formula_version || lastSavedData?.formula_version;
+                    if (savedVersion && currentFormulaVersion) {
+                        const hasSnapshotResults = !!(calculationSnapshot && Array.isArray(calculationSnapshot.results) && calculationSnapshot.results.length);
+                        showVersionWarning(savedVersion, currentFormulaVersion, hasSnapshotResults);
                     }
                 } else {
                     alert('Could not load project.');
                     console.error('[RestoreProject] Failed to fetch project. Status:', res.status);
                 }
 
-                // USE THE NEW LOADING FUNCTION HERE
                 await loadProjectDetailsWithLoading(currentProjectId);
-
             } catch (error) {
                 console.error('Project load error:', error);
-                //showProjectDetailsModal();
             } finally {
-                hideLoading(); // Hide spinner when done
+                hideLoading();
             }
         }
 
+        // Populate projects list in sidebar/dashboard section
         displayProjects();
 
     } catch (error) {
-        console.error("Initialization failed:", error);
-        alert("A critical error occurred during initialization. Please reload the page.");
+        console.error('Initialization failed:', error);
+        alert('A critical error occurred during initialization. Please reload the page.');
     } finally {
-        hideLoading(); // Ensure loading is hidden in case of errors
+        hideLoading();
     }
 
-    // Add this at the end of your DOMContentLoaded handler
     window.addEventListener('resize', centerProjectDetailsModal);
 });
 
-
-/*document.addEventListener('DOMContentLoaded', async function () {
-    console.log("DOMContentLoaded event fired");
-    refreshProjectDetailsUI();
-    try {
-        await checkAuthentication();
-        const userRoles = await fetchUserRoles();
-        console.log("User roles:", userRoles);
-        console.log("User roles array:", userRoles, typeof userRoles[0]);
-        checkRoleVisibility(userRoles);
-
-        // --- Place here ---
-        let role = userRoles && userRoles[0] || 'professional';
-        window.currentUserRole = role;
-        renderProjectList(role);
-        // --- end placement ---
-
-        await loadLocations();
-        await checkFormulaVersion();
-        await fetchInitialRates();
-
-        setupInputValidation();
-        setupComponentDropdown();
-        setupCalculateButtons();
-        setupSaveProjectButton();
-        setupUpdateProjectButton();
-        setupLogoutButton();
-
-        // On page load, restore project if project_id is present
-        const params = new URLSearchParams(window.location.search);
-        currentProjectId = getProjectIdFromURL(); // Use the updated function
-        console.log('[RestoreProject] URL params:', Array.from(params.entries()));
-        
-        if (currentProjectId) {
-            console.log('[RestoreProject] Found project_id:', currentProjectId);
-            showLoading(); // Show initial loading spinner
-            
-            try {
-                // Fetch project data
-                const res = await fetch(`/api/projects/${currentProjectId}`, { 
-                    credentials: 'include' 
-                });
-                
-                console.log('[RestoreProject] Fetch response:', res);
-                if (res.ok) {
-                    const project = await res.json();
-                    projectFormulaVersion = project.formula_version;
-                    lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
-                    const calculationSnapshot = project.calculation_snapshot ? JSON.parse(project.calculation_snapshot) : null;
-                    restoreCalculationUI(lastSavedData, calculationSnapshot, projectFormulaVersion);
-                    console.log('[RestoreProject] Project data loaded:', project);
-
-
-                    // Version warning
-                    currentFormulaVersion = await fetchCurrentFormulaVersion();
-                    if (projectFormulaVersion !== currentFormulaVersion) {
-                        showVersionWarning(projectFormulaVersion, currentFormulaVersion);
-                    }
-                } else {
-                    alert('Could not load project.');
-                    console.error('[RestoreProject] Failed to fetch project. Status:', res.status);
-                }
-                
-                // USE THE NEW LOADING FUNCTION HERE
-                await loadProjectDetailsWithLoading(currentProjectId);
-                
-            } catch (error) {
-                console.error('Project load error:', error);
-                //showProjectDetailsModal();
-            } finally {
-                hideLoading(); // Hide spinner when done
-            }
-        } 
-
-        displayProjects();
-
-    } catch (error) {
-        console.error("Initialization failed:", error);
-        alert("A critical error occurred during initialization. Please reload the page.");
-    } finally {
-        hideLoading(); // Ensure loading is hidden in case of errors
-    }
-
-
-    // Add this at the end of your DOMContentLoaded handler
-window.addEventListener('resize', centerProjectDetailsModal);
-});*/
 
 // --- Modularized Functions ---
 
@@ -2848,76 +3039,6 @@ async function handleBOQExport(exportFn) {
     await exportFn();
 }
 
-// --- PATCH your save-and-continue-project-details handler ---
-/*document.getElementById('save-and-continue-project-details').onclick = async function() {
-    const details = {
-        companyName: document.getElementById('company-name').value.trim(),
-        companyAddress: document.getElementById('company-address').value.trim(),
-        contactInfo: document.getElementById('contact-info').value.trim(),
-        projectTitle: document.getElementById('project-title').value.trim(),
-        clientName: document.getElementById('client-name').value.trim(),
-        projectPhase: document.getElementById('project-phase').value.trim(),
-        date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
-    };
-    if (!details.companyName || !details.companyAddress || !details.projectTitle || !details.clientName) {
-        alert('Please fill all required fields.');
-        return;
-    }
-    setProjectDetailsAndUI(details);
-
-    try {
-        // If no project ID, create a new project first
-        if (!currentProjectId) {
-            const response = await fetch('/api/projects', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({
-                    project_name: details.projectTitle,
-                    total_cost: 0 // or any default
-                })
-            });
-            if (!response.ok) throw new Error('Failed to create project');
-            const project = await response.json();
-            currentProjectId = project.id || project.project_id || project._id;
-        }
-
-        setProjectDetailsSavedFlag(currentProjectId);
-
-        console.log('[ProjectDetailsModal] Setting flag for projectId:', currentProjectId);
-        
-        // Now save the project details
-        console.log('Saving project details:', currentProjectId, boqData.projectDetails);
-        await saveProjectDetails(currentProjectId, boqData.projectDetails);
-
-        // --- Set the localStorage flag ---
-        //setProjectDetailsSavedFlag(currentProjectId);
-
-        // --- Always fetch latest details from backend and update UI ---
-        const latestDetails = await fetchProjectDetails(currentProjectId);
-        if (latestDetails && latestDetails.companyName && latestDetails.projectTitle && latestDetails.clientName) {
-            boqData.projectDetails = latestDetails;
-            refreshProjectDetailsUI();
-        }
-
-        alert('Project details saved!');
-        hideProjectDetailsModal();
-        refreshProjectDetailsUI();
-        // Do NOT redirect/reload here; just update UI
-
-        // --- PATCH: Resume pending export if set ---
-        if (pendingBOQExportFn) {
-            const fn = pendingBOQExportFn;
-            pendingBOQExportFn = null;
-            await fn();
-        }
-
-
-    } catch (err) {
-        alert('Failed to save project details to backend.');
-    }
-};*/
-
 // --- Unified save-and-continue handler ---
 document.getElementById('save-and-continue-project-details').onclick = async function() {
     const details = {
@@ -3141,35 +3262,7 @@ componentSelect.addEventListener("change", function () {
 // Call displayProjects on page load
 displayProjects();
 
-// Fetch material rate for a specific material
-/*async function fetchMaterialRate(material, region = null) {
-    region = (region || getNormalizedRegion()).toLowerCase();
 
-    const response = await fetch(`/api/prices/${encodeURIComponent(material)}?region=${encodeURIComponent(region)}`, {
-        credentials: 'include'
-    });
-
-    console.log(`Response for fetchMaterialRate (${material}, region=${region}):`, response);
-
-    if (!response.ok) {
-        console.error(`Failed to fetch material rate for ${material}:`, response.statusText);
-        return null;
-    }
-
-    try {
-        const data = await response.json();
-        if (data.fallback) {
-            console.warn(`⚠️ Fallback used for ${material}: ${data.fallback}`);
-            if (!suppressFallbackUI) {
-                showFallbackWarning(`${material} (material)`, data.fallback);
-            }
-        }
-        return data;
-    } catch (error) {
-        console.error("Error parsing JSON in fetchMaterialRate:", error);
-        return null;
-    }
-}*/
 
 async function fetchMaterialRate(material, region = null) {
     const requestedRegion = (region || getNormalizedRegion()).toLowerCase();
@@ -3201,35 +3294,6 @@ async function fetchMaterialRate(material, region = null) {
     }
 }
 
-// Fetch labor rate for a specific trade
-/*async function fetchLaborRate(trade, region = null) {
-    region = (region || getNormalizedRegion()).toLowerCase();
-
-    const response = await fetch(`/api/labor/${encodeURIComponent(trade)}?region=${encodeURIComponent(region)}`, {
-        credentials: 'include'
-    });
-
-    console.log(`Response for fetchLaborRate (${trade}, region=${region}):`, response);
-
-    if (!response.ok) {
-        console.error(`Failed to fetch labor rate for ${trade}:`, response.statusText);
-        return null;
-    }
-
-    try {
-        const data = await response.json();
-        if (data.fallback) {
-            console.warn(`⚠️ Fallback used for ${trade}: ${data.fallback}`);
-            if (!suppressFallbackUI) {
-                showFallbackWarning(`${trade} (labor)`, data.fallback);
-            }
-        }
-        return data;
-    } catch (error) {
-        console.error("Error parsing JSON in fetchLaborRate:", error);
-        return null;
-    }
-}*/
 
 async function fetchLaborRate(trade, region = null) {
     const requestedRegion = (region || getNormalizedRegion()).toLowerCase();
@@ -3333,41 +3397,6 @@ async function saveProject(projectData) {
     }
 }
 
-// --- Patch: Mark incomplete projects in project list ---
-/*async function displayProjects() {
-    try {
-        const response = await fetch('/api/projects', { credentials: 'include' });
-        if (!response.ok) {
-            console.error("Failed to fetch projects from backend:", response.statusText);
-            return;
-        }
-        const data = await response.json();
-        const projects = Array.isArray(data) ? data : data.projects;
-        console.log("Displaying projects from backend:", projects);
-
-        const projectList = document.getElementById('project-list');
-        projectList.innerHTML = ''; // Clear existing projects
-
-        if (Array.isArray(projects)) {
-            projects.forEach(project => {
-                const incomplete = !project.companyName || !project.projectTitle || !project.clientName;
-                const projectItem = document.createElement('div');
-                projectItem.classList.add('project-item');
-                if (incomplete) projectItem.classList.add('incomplete');
-                projectItem.innerHTML = `
-                    <h4>${project.project_name || project.projectTitle || 'Untitled Project'}</h4>
-                    <p>Total Cost: GHS ${project.total_cost}</p>
-                    <p>Date: ${project.last_modified || ''}</p>
-                `;
-                projectList.appendChild(projectItem);
-            });
-        } else {
-            console.error("Projects data is not an array:", projects);
-        }
-    } catch (error) {
-        console.error("Error displaying projects:", error);
-    }
-}*/
 
 // --- Unified project list display ---
 async function displayProjects() {
@@ -3426,107 +3455,6 @@ async function saveProjectState() {
         body: JSON.stringify({ components })
     });
 }
-
-// --- Update calculateCompositeRate to use inputs for special-case logic
-/*async function calculateCompositeRate(componentType, quantity, inputs = {}) {
-    if (!componentType || !quantity || quantity <= 0) {
-        console.error('Invalid input:', { componentType, quantity });
-        return null;
-    }
-
-    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
-    if (!formulaKey) {
-        console.warn(`No mapping for component: ${componentType}`);
-        return null;
-    }
-
-    const formulaConfig = SMM7_2023[formulaKey];
-    if (!formulaConfig) {
-        console.warn(`No formula config for key: ${formulaKey}`);
-        return null;
-    }
-
-    try {
-        // Fetch pricing bundle as before
-        const pricingResponse = await fetch(`/api/pricing-bundle?region=greater-accra`, {
-            headers: { Authorization: `Bearer ${localStorage.getItem('authToken')}` }
-        });
-        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
-        const { materials, labor } = await pricingResponse.json();
-        console.log('Pricing bundle materials:', materials);
-        console.log('Pricing bundle labor:', labor);
-
-        // Material cost
-        let materialCost = 0;
-        if (typeof formulaConfig.calculateMaterialCost === 'function') {
-            // Prefer (inputs, materials) signature
-            materialCost = formulaConfig.calculateMaterialCost(quantity, materials, inputs);
-        } else {
-            // fallback to old signature if needed
-            materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
-        }
-
-        // Labor cost
-        let laborCost = 0;
-        if (typeof formulaConfig.calculateLaborCost === 'function') {
-            // Prefer (inputs, labor) signature
-            laborCost = formulaConfig.calculateLaborCost(inputs, labor).laborCost;
-        } else {
-            // fallback to generic logic
-            const laborTask = formulaConfig.laborTasks?.[0];
-            const dailyRate = laborTask ? labor[laborTask] || 0 : 0;
-            const laborCalc = SMM7_2023.calculateLaborCost(
-                quantity,
-                8,
-                1.0,
-                8,
-                dailyRate,
-                laborTask
-            );
-            laborCost = laborCalc?.laborCost || 0;
-        }
-
-        // Plant cost as before
-        let plantCost = 0;
-        const equipmentList = formulaConfig.equipment || [];
-        if (equipmentList.length > 0) {
-            try {
-                const plantData = await fetchPlantData();
-                const availablePlants = plantData.filter(p =>
-                    equipmentList.includes(p.equipment)
-                );
-                if (availablePlants.length > 0) {
-                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
-                } else {
-                    console.warn(`No available plants found for ${componentType}`);
-                }
-            } catch (plantError) {
-                console.error(`Plant data error for ${componentType}:`, plantError);
-            }
-        } else {
-            console.log(`No equipment required for ${componentType}`);
-        }
-
-        // Financial calculations
-        const baseCost = materialCost + laborCost + plantCost;
-        const overheads = (baseCost * 0.15) || 0;
-        const profit = ((baseCost + overheads) * 0.10) || 0;
-
-        const result = {
-            materialCost: Number(materialCost.toFixed(2)),
-            laborCost: Number(laborCost.toFixed(2)),
-            plantCost: Number(plantCost.toFixed(2)),
-            overheads: Number(overheads.toFixed(2)),
-            profit: Number(profit.toFixed(2)),
-            totalCost: Number((baseCost + overheads + profit).toFixed(2))
-        };
-        console.log('Composite rate result:', result);
-        return result;
-    } catch (error) {
-        console.error(`Composite rate error for ${componentType}:`, error);
-        return null;
-    }
-}*/
 
 // Add this helper at the top of calculateCompositeRate:
 function normalizeRates(obj) {
@@ -3863,284 +3791,6 @@ async function calculateCompositeRate(componentType, quantity, inputs = {}) {
 }
 
 
-// In generateSMM7BOQ, pass inputs to calculateCompositeRate:
-/*async function generateSMM7BOQ() {
-    // Reset BOQ data using your model's reset function
-    resetBOQ();
-    initBillsFromTemplate(billTemplate); // Ensure standard bills are present
-
-    try {
-        const components = await fetchCalculatedComponents();
-        if (!components?.length) {
-            alert("No components found to generate BOQ");
-            return;
-        }
-
-        let validComponents = 0;
-
-        for (const component of components) {
-            try {
-                const compositeRate = await calculateCompositeRate(component.type, component.quantity, component.inputs);
-                if (!compositeRate?.totalCost) {
-                    console.warn(`Skipping ${component.type} - invalid composite rate`);
-                    continue;
-                }
-
-                addToBOQ({
-                    component: component.type,
-                    quantity: component.quantity,
-                    unitCost: compositeRate.totalCost / component.quantity,
-                    inputs: component.inputs
-                    // type, billNo, billTitle, description, unit are optional and auto-determined
-                });
-                validComponents++;
-            } catch (componentError) {
-                console.error(`Error processing ${component.type}:`, componentError);
-                continue;
-            }
-        }
-
-        if (validComponents === 0) {
-            alert("No valid components to generate BOQ");
-            return;
-        }
-
-        if (!validateBOQStructure()) {
-            alert("Cannot generate PDF - invalid BOQ structure");
-            return;
-        }
-
-        calculateSummary();
-
-        await generateBOQPDF();
-        //alert("BOQ Report has been successfully generated!");
-
-    } catch (globalError) {
-        console.error("BOQ generation failed:", globalError);
-        alert("Failed to generate BOQ. See console for details.");
-    }
-}*/
-
-// Add this function to handle tree cutting specifically in BOQ generation
-async function calculateTreeCuttingForBOQ(component, inputs) {
-    const formulaKey = COMPONENT_TO_FORMULA_MAP["tree cutting"];
-    if (!formulaKey || !SMM7_2023[formulaKey]) {
-        console.warn(`No formula found for component: tree cutting`);
-        return null;
-    }
-
-    // Use the same region as the original calculation
-    const region = getNormalizedRegion();
-    const prices = await fetchPricesForComponent(formulaKey, region);
-    
-    if (!prices) return null;
-    const { materialPrices, laborRates } = prices;
-    
-    // Calculate quantity
-    const adjustments = window.adjustments || {};
-    const formula = SMM7_2023[formulaKey].formula;
-    const quantity = formula(inputs, adjustments.concrete_waste_factor || 1);
-    
-    // Material cost (typically 0 for tree cutting)
-    let totalMaterialCost = 0;
-    for (const material of SMM7_2023[formulaKey].materials || []) {
-        totalMaterialCost += (materialPrices[material] || 0) * quantity;
-    }
-    
-    // Labor cost - use the same logic as the component calculation
-    let laborTask;
-    if (typeof SMM7_2023[formulaKey].getLaborTask === 'function') {
-        laborTask = SMM7_2023[formulaKey].getLaborTask(inputs);
-    } else if (Array.isArray(SMM7_2023[formulaKey].laborTasks) && SMM7_2023[formulaKey].laborTasks.length > 0) {
-        laborTask = SMM7_2023[formulaKey].laborTasks[0];
-    } else {
-        laborTask = null;
-    }
-    
-    let labor;
-    if (laborTask && typeof SMM7_2023[formulaKey].calculateLaborCost === 'function') {
-        labor = SMM7_2023[formulaKey].calculateLaborCost(inputs, laborRates);
-    } else {
-        labor = SMM7_2023.calculateLaborCost(
-            quantity,
-            8,
-            adjustments.labor_efficiency || 1,
-            8,
-            laborRates[laborTask] || 0,
-            laborTask
-        );
-    }
-    
-    // Plant cost
-    const plantData = await fetchPlantData();
-    const equipmentList = SMM7_2023[formulaKey].equipment || [];
-    const relevantPlants = plantData.filter(plant =>
-        equipmentList.includes(plant.equipment)
-    );
-    const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
-    
-    // Apply haulage multiplier
-    totalMaterialCost *= haulageMultiplier;
-    labor.laborCost *= haulageMultiplier;
-    const finalPlantCost = plantCost * haulageMultiplier;
-    
-    // Financial calculations
-    const baseCost = totalMaterialCost + labor.laborCost + finalPlantCost;
-    const overheads = (baseCost * 0.15) || 0;
-    const profit = ((baseCost + overheads) * 0.10) || 0;
-    
-    return {
-        materialCost: Number(totalMaterialCost.toFixed(2)),
-        laborCost: Number(labor.laborCost.toFixed(2)),
-        plantCost: Number(finalPlantCost.toFixed(2)),
-        overheads: Number(overheads.toFixed(2)),
-        profit: Number(profit.toFixed(2)),
-        totalCost: Number((baseCost + overheads + profit).toFixed(2))
-    };
-}
-
-// Modify the calculateCompositeRate function to handle tree cutting specially
-/*async function calculateCompositeRate(componentType, quantity, inputs = {}) {
-    // Handle tree cutting as a special case
-    if (componentType === "tree cutting") {
-        return await calculateTreeCuttingForBOQ(componentType, inputs);
-    }
-    
-    // Original calculateCompositeRate logic for other components
-    if (!componentType || !quantity || quantity <= 0) {
-        console.error('Invalid input:', { componentType, quantity });
-        return null;
-    }
-
-    const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
-    if (!formulaKey) {
-        console.warn(`No mapping for component: ${componentType}`);
-        return null;
-    }
-
-    const formulaConfig = SMM7_2023[formulaKey];
-    if (!formulaConfig) {
-        console.warn(`No formula config for key: ${formulaKey}`);
-        return null;
-    }
-
-    try {
-        // Get supplier region from dropdown
-        const region = getNormalizedRegion();
-
-        // Fetch pricing bundle based on region
-        const pricingResponse = await fetch(`/api/pricing-bundle?region=${encodeURIComponent(region)}`, {
-            credentials: 'include'
-        });
-
-        if (!pricingResponse.ok) throw new Error(`Pricing fetch failed: ${pricingResponse.status}`);
-        const { materials, labor, warning } = await pricingResponse.json();
-
-        if (warning) {
-            console.warn(`⚠️ Fallback applied in pricing-bundle: ${warning}`);
-            const notice = document.getElementById('fallback-warning');
-            if (notice) {
-                notice.textContent = warning;
-                notice.style.display = 'block';
-            }
-        }
-
-        // Material cost
-        let materialCost = 0;
-        if (typeof formulaConfig.calculateMaterialCost === 'function') {
-            materialCost = formulaConfig.calculateMaterialCost(quantity, materials, inputs);
-        } else {
-            materialCost = formulaConfig.calculateMaterialCost?.(quantity, materials) || 0;
-        }
-
-        // Labor cost
-        let laborCost = 0;
-
-        // Check if the component has its own calculateLaborCost method (not inherited)
-        const hasOwnCalculateLaborCost = Object.prototype.hasOwnProperty.call(formulaConfig, 'calculateLaborCost') && 
-                                        typeof formulaConfig.calculateLaborCost === 'function';
-
-        if (hasOwnCalculateLaborCost) {
-            // Use component-specific labor calculation
-            console.log(`Using component-specific labor calculation for ${componentType}`);
-            const laborResult = formulaConfig.calculateLaborCost(inputs, labor);
-            laborCost = typeof laborResult === 'object' ? laborResult.laborCost : laborResult;
-            console.log(`Component-specific labor cost for ${componentType}: ${laborCost}`);
-        } else {
-            // Use generic labor calculation for components without their own method
-            console.log(`Using generic labor calculation for ${componentType}`);
-            const laborTask = formulaConfig.laborTasks?.[0];
-            console.log(`Labor task for ${componentType}: ${laborTask}`);
-            
-            if (laborTask) {
-                const dailyRate = labor[laborTask] || 0;
-                console.log(`Daily rate for ${laborTask}: ${dailyRate}`);
-                
-                const laborCalc = SMM7_2023.calculateLaborCost(
-                    quantity,
-                    8, // hours per unit
-                    1.0, // efficiency
-                    8, // hours per day
-                    dailyRate,
-                    laborTask
-                );
-                console.log(`Labor calculation result:`, laborCalc);
-                
-                laborCost = laborCalc?.laborCost || 0;
-            }
-            console.log(`Final labor cost for ${componentType}: ${laborCost}`);
-        }
-        // Plant cost
-        let plantCost = 0;
-        const equipmentList = formulaConfig.equipment || [];
-        if (equipmentList.length > 0) {
-            try {
-                const plantData = await fetchPlantData();
-                const availablePlants = plantData.filter(p =>
-                    equipmentList.includes(p.equipment)
-                );
-                if (availablePlants.length > 0) {
-                    plantCost = SMM7_2023.calculatePlantCost(quantity, availablePlants);
-
-                    availablePlants.forEach(p => {
-                        if (p.haulageCost && p.haulageCost > 0) {
-                            showFallbackWarning(
-                                `${p.equipment} (plant)`,
-                                `${p.region} + haulage from ${p.anchorCity} (${p.distanceKm} km)`
-                            );
-                        }
-                    });
-                } else {
-                    console.warn(`⚠️ No available plants found for ${componentType}`);
-                }
-            } catch (plantError) {
-                console.error(`Plant data error for ${componentType}:`, plantError);
-            }
-        } else {
-            console.log(`No equipment required for ${componentType}`);
-        }
-
-        // Financials
-        const baseCost = materialCost + laborCost + plantCost;
-        const overheads = (baseCost * 0.15) || 0;
-        const profit = ((baseCost + overheads) * 0.10) || 0;
-
-        const result = {
-            materialCost: Number(materialCost.toFixed(2)),
-            laborCost: Number(laborCost.toFixed(2)),
-            plantCost: Number(plantCost.toFixed(2)),
-            overheads: Number(overheads.toFixed(2)),
-            profit: Number(profit.toFixed(2)),
-            totalCost: Number((baseCost + overheads + profit).toFixed(2))
-        };
-        console.log('Composite rate result:', result);
-        return result;
-    } catch (error) {
-        console.error(`Composite rate error for ${componentType}:`, error);
-        return null;
-    }
-}*/
-
 // Add better error logging to identify which components are failing
 async function generateSMM7BOQ() {
     resetBOQ();
@@ -4208,19 +3858,21 @@ function validateBOQStructure() {
     console.log('[validateBOQStructure] Validating BOQ structure...');
     const errors = [];
 
+    // Local normalizer
+    const normKey = s => String(s || '').trim().toLowerCase();
+
     // Find the Preliminaries bill (by billNo or title)
     const prelimBill = (boqData.bills || []).find(
         bill =>
-            (bill.billNo && bill.billNo.toString().toLowerCase().startsWith('1')) ||
+            (bill.billNo && String(bill.billNo).toLowerCase().startsWith('1')) ||
             (bill.title && bill.title.toLowerCase().includes('prelim'))
     );
-
     console.log('[validateBOQStructure] Preliminaries bill found:', prelimBill);
 
     if (!prelimBill) {
         errors.push("Preliminaries bill is missing.");
     } else {
-        // Use the actual Preliminaries categories from your UI
+        // Expected prelims (normalize to lower-case for matching)
         const expectedPrelimCategories = [
             "Mobilization and Demobilization",
             "Site Office and Facilities",
@@ -4233,35 +3885,28 @@ function validateBOQStructure() {
             "Project Signboard",
             "Other Preliminaries"
         ];
-        const presentCategories = (prelimBill.items || []).map(item => item.category);
-        console.log('[validateBOQStructure] Present prelim categories:', presentCategories);
+        const expectedSet = new Set(expectedPrelimCategories.map(normKey));
 
-        expectedPrelimCategories.forEach(cat => {
-            if (!presentCategories.includes(cat)) {
-                errors.push(`Preliminaries item missing: ${cat}`);
-                console.warn(`[validateBOQStructure] Missing preliminaries item: ${cat}`);
-            } else {
-                console.log(`[validateBOQStructure] Found preliminaries item: ${cat}`);
-            }
-        });
+        const presentLower = (prelimBill.items || []).map(it => normKey(it.category));
+        console.log('[validateBOQStructure] Present prelim categories (normalized):', presentLower);
+
+        // Missing any required prelims?
+        const missing = Array.from(expectedSet).filter(req => !presentLower.includes(req));
+        missing.forEach(m => errors.push(`Preliminaries item missing: ${m}`));
 
         // Validate preliminaries item fields
         (prelimBill.items || []).forEach(item => {
             if (!item.category) {
                 errors.push(`Preliminaries item missing category`);
-                console.warn('[validateBOQStructure] Preliminaries item missing category:', item);
             }
             if (typeof item.quantity !== 'number' || isNaN(item.quantity)) {
                 errors.push(`Invalid quantity for preliminaries item: ${item.category}`);
-                console.warn('[validateBOQStructure] Invalid quantity for:', item);
             }
             if (typeof item.rate !== 'number' || isNaN(item.rate)) {
                 errors.push(`Invalid rate for preliminaries item: ${item.category}`);
-                console.warn('[validateBOQStructure] Invalid rate for:', item);
             }
             if (typeof item.amount !== 'number' || isNaN(item.amount)) {
                 errors.push(`Invalid amount for preliminaries item: ${item.category}`);
-                console.warn('[validateBOQStructure] Invalid amount for:', item);
             }
         });
     }
@@ -4394,127 +4039,73 @@ if (boqBtn && boqModal && closeModalBtn && pdfBtn && xlsxBtn && csvBtn) {
 function generateBOQSpreadsheet(format) {
     console.log(`[BOQ Export] Generating spreadsheet in format: ${format}`);
 
-    // SheetJS rich text for Description (XLSX only)
-    function getRichDescription(item) {
-        return [
-            { text: item.category + '\n', bold: true, underline: true },
-            { text: item.description || '' }
-        ];
+    function toTitleCase(s) {
+        return String(s || '').toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+    }
+    // A, B, ..., Z, AA, AB, ...
+    function getItemCode(n) {
+        let s = '';
+        n = Number(n) || 0;
+        do {
+            s = String.fromCharCode(65 + (n % 26)) + s;
+            n = Math.floor(n / 26) - 1;
+        } while (n >= 0);
+        return s;
     }
 
-    // For CSV: add clear separation and padding
-    function getCSVDescription(item) {
-        // Two line breaks and a little indent for description
-        return `${item.category}\n\n  ${item.description || ''}`;
-    }
+    if (format === 'csv') {
+        // Simple CSV fallback (flat). XLSX below draws the table like the PDF.
+        const rows = [];
+        (boqData.bills || []).forEach(bill => {
+            if (!bill || !Array.isArray(bill.items) || bill.items.length === 0) return;
+            rows.push([boqData.projectTitle || boqData.project || boqData.title || 'Project']);
+            rows.push([`Bill No.: ${bill.billNo || ''}`, '', 'Heading:', bill.title || '']);
+            rows.push(['Item', 'Description', 'Unit', 'Qty', 'Rate (GHS)', 'Amount (GHS)', 'Type']);
 
-    // Helper for alphabetical item code per page (A-Z, restart per 40 rows)
-    function getItemCode(rowIdx) {
-        const code = String.fromCharCode(65 + (rowIdx % 26));
-        return code;
-    }
+            const items = bill.items.slice().filter(Boolean).sort(
+                (a, b) => String(a.sectionCode || '').localeCompare(String(b.sectionCode || ''))
+            );
 
-    // Build rows for SheetJS
-    const rows = [
-        ["Bill No.", "Bill Title", "Item Code", "Description", "Qty", "Unit", "Rate (GHS)", "Amount (GHS)", "Type"]
-    ];
-
-    // For XLSX, keep track of row for per-page item code
-    let excelRowIdx = 0;
-    boqData.bills.forEach(bill => {
-        if (bill.items && bill.items.length > 0) {
-            let itemCodeChar = 0;
-            bill.items.forEach((item, idx) => {
-                rows.push([
-                    bill.billNo,
-                    bill.title,
-                    getItemCode(itemCodeChar),
-                    format === 'xlsx' ? getRichDescription(item) : getCSVDescription(item),
-                    item.quantity ?? '',
-                    item.unit || '',
-                    typeof item.rate === 'number' ? item.rate.toFixed(2) : '',
-                    typeof item.amount === 'number' ? item.amount.toFixed(2) : '',
-                    item.type || ''
-                ]);
-                itemCodeChar++;
-                if (itemCodeChar > 25) itemCodeChar = 0; // Restart at 'A' after 'Z'
-                excelRowIdx++;
-            });
-            // Bill subtotal row
-            rows.push([
-                bill.billNo,
-                bill.title + " TOTAL",
-                "", "", "", "", "", bill.total.toFixed(2), ""
-            ]);
-            excelRowIdx++;
-        }
-    });
-
-    // Grand summary row
-    const grandTotal = boqData.bills.reduce((sum, b) => sum + (b.total || 0), 0);
-    rows.push(["", "GRAND TOTAL", "", "", "", "", "", grandTotal.toFixed(2), ""]);
-
-    if (format === 'xlsx') {
-        if (typeof XLSX === 'undefined') {
-            alert('Excel export requires SheetJS (XLSX) library. Please include it in your HTML.');
-            console.error('[BOQ Export] XLSX library not found');
-            return;
-        }
-        // Create worksheet
-        const ws = XLSX.utils.aoa_to_sheet(rows);
-
-        // Apply rich text and borders
-        const range = XLSX.utils.decode_range(ws['!ref']);
-        for (let R = 1; R <= range.e.r; ++R) {
-            // Rich text for Description
-            if (ws[XLSX.utils.encode_cell({ r: R, c: 3 })] && Array.isArray(rows[R][3])) {
-                ws[XLSX.utils.encode_cell({ r: R, c: 3 })].r = rows[R][3];
-            }
-            // Borders for all cells
-            for (let C = 0; C <= 8; ++C) {
-                const cell = ws[XLSX.utils.encode_cell({ r: R, c: C })];
-                if (cell) {
-                    cell.s = cell.s || {};
-                    cell.s.border = {
-                        top:    { style: "thin", color: { rgb: "000000" } },
-                        bottom: { style: "thin", color: { rgb: "000000" } },
-                        left:   { style: "thin", color: { rgb: "000000" } },
-                        right:  { style: "thin", color: { rgb: "000000" } }
-                    };
-                    // Double border for outer columns and header
-                    if (C === 0 || C === 8 || R === 0) {
-                        cell.s.border.left = { style: "double", color: { rgb: "000000" } };
-                        cell.s.border.right = { style: "double", color: { rgb: "000000" } };
-                        if (R === 0) {
-                            cell.s.border.top = { style: "double", color: { rgb: "000000" } };
-                            cell.s.border.bottom = { style: "double", color: { rgb: "000000" } };
-                        }
-                    }
+            // Group by section
+            const sections = [];
+            let current = null;
+            for (const it of items) {
+                const secCode = it.sectionCode || 'Z';
+                if (!current || current.code !== secCode) {
+                    current = { code: secCode, title: it.sectionTitle || 'Unclassified', items: [] };
+                    sections.push(current);
                 }
+                current.items.push(it);
             }
-        }
 
-        // Set column widths for better appearance (wider Description)
-        ws['!cols'] = [
-            { wch: 10 }, // Bill No.
-            { wch: 25 }, // Bill Title
-            { wch: 8 },  // Item Code
-            { wch: 60 }, // Description (wider)
-            { wch: 8 },  // Qty
-            { wch: 8 },  // Unit
-            { wch: 12 }, // Rate
-            { wch: 14 }, // Amount
-            { wch: 10 }  // Type
-        ];
+            let billTotal = 0;
+            for (const sec of sections) {
+                rows.push(['', `SECTION ${sec.code}. ${sec.title}`, '', '', '', '', '']);
+                let idx = 0;
+                let sectionSubtotal = 0;
+                for (const it of sec.items) {
+                    const qty = (typeof it.quantity === 'number') ? it.quantity : '';
+                    const rate = (typeof it.rate === 'number') ? it.rate : '';
+                    const amt = (typeof it.amount === 'number') ? it.amount : (qty && rate ? qty * rate : '');
+                    sectionSubtotal += Number(amt || 0);
+                    billTotal += Number(amt || 0);
+                    rows.push([
+                        getItemCode(idx++),
+                        `${toTitleCase(it.category || '')}\n\n${it.description || ''}`,
+                        it.unit || '',
+                        qty,
+                        rate,
+                        amt,
+                        it.type || ''
+                    ]);
+                }
+                rows.push(['', `Subtotal for ${sec.code}`, '', '', '', sectionSubtotal, '']);
+            }
+            rows.push(['', `Bill ${bill.billNo} Total`, '', '', '', (typeof bill.total === 'number') ? bill.total : billTotal, '']);
+            rows.push([]);
+        });
 
-        // Create workbook and export
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "BOQ");
-        XLSX.writeFile(wb, `BOQ-${new Date().toISOString().slice(0,10)}.xlsx`);
-        console.log('[BOQ Export] Excel file generated and download triggered');
-    } else if (format === 'csv') {
-        // CSV: plain text, no formatting, but keep category and description separated
-        const csv = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\r\n');
+        const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
         const blob = new Blob([csv], { type: "text/csv" });
         const link = document.createElement("a");
         link.href = URL.createObjectURL(blob);
@@ -4522,8 +4113,274 @@ function generateBOQSpreadsheet(format) {
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        console.log('[BOQ Export] CSV file generated and download triggered');
-    } else {
-        console.warn(`[BOQ Export] Unknown format requested: ${format}`);
+        return;
     }
+
+    if (format !== 'xlsx') {
+        console.warn(`[BOQ Export] Unknown format requested: ${format}`);
+        return;
+    }
+
+    if (typeof XLSX === 'undefined') {
+        alert('Excel export requires SheetJS (XLSX) library. Please include it in your HTML.');
+        console.error('[BOQ Export] XLSX library not found');
+        return;
+    }
+
+    // Build one sheet "BOQ" with a bill-by-bill layout, like the PDF
+    const ws = {};
+    ws['!cols'] = [
+        { wch: 8 },   // A Item
+        { wch: 66 },  // B Description
+        { wch: 10 },  // C Unit
+        { wch: 10 },  // D Qty
+        { wch: 14 },  // E Rate (GHS)
+        { wch: 16 },  // F Amount (GHS)
+        { wch: 12 }   // G Type
+    ];
+    ws['!merges'] = [];
+    ws['!rows'] = [];
+
+    const A1 = XLSX.utils.encode_cell;
+    const decode = XLSX.utils.decode_cell;
+    const encode_range = XLSX.utils.encode_range;
+
+    // Column indices
+    const COL = {
+        ITEM: 0,        // A
+        DESC: 1,        // B
+        UNIT: 2,        // C
+        QTY: 3,         // D
+        RATE: 4,        // E
+        AMOUNT: 5,      // F
+        TYPE: 6         // G
+    };
+
+    // Helpers to write cells with number formats and minimal style
+    function setCell(r, c, v, opts = {}) {
+        const addr = A1({ r, c });
+        const cell = {};
+        if (typeof v === 'number') {
+            cell.t = 'n';
+            cell.v = v;
+        } else if (v && typeof v === 'object' && v.f) {
+            // formula object { f: 'E5*D5', v?: number, z?: string }
+            cell.t = (typeof v.v === 'number') ? 'n' : 'n';
+            cell.f = v.f;
+            if (typeof v.v === 'number') cell.v = v.v;
+        } else {
+            cell.t = 's';
+            cell.v = String(v ?? '');
+        }
+
+        if (opts.z) cell.z = opts.z;        // number format
+        if (opts.b) cell.s = Object.assign(cell.s || {}, { font: { bold: true } }); // bold
+        if (opts.halign || opts.valign) {
+            cell.s = cell.s || {};
+            cell.s.alignment = cell.s.alignment || {};
+            if (opts.halign) cell.s.alignment.horizontal = opts.halign;
+            if (opts.valign) cell.s.alignment.vertical = opts.valign;
+        }
+        ws[addr] = cell;
+        // track row height if specified
+        if (opts.height) ws['!rows'][r] = Object.assign(ws['!rows'][r] || {}, { hpt: opts.height });
+        return addr;
+    }
+
+    function merge(r1, c1, r2, c2) {
+        ws['!merges'].push({ s: { r: r1, c: c1 }, e: { r: r2, c: c2 } });
+    }
+
+    // Number formats
+    const fmtQty = '#,##0.00';
+    const fmtMoney = '"GHS" #,##0.00';
+
+    let row = 0;
+    const projectTitle = boqData.projectTitle || boqData.project || boqData.title || 'Project';
+
+    const billTotalCells = [];
+
+    (boqData.bills || []).forEach((bill, billIdx) => {
+        if (!bill || !Array.isArray(bill.items) || bill.items.length === 0) return;
+
+        if (billIdx > 0) row += 2; // spacing between bills
+
+        // Project Title heading across A:G
+        setCell(row, COL.ITEM, projectTitle, { b: true, halign: 'center' });
+        merge(row, 0, row, 6);
+        ws['!rows'][row] = { hpt: 20 };
+        row += 1;
+
+        // Bill header: "Bill No." and "Heading"
+        setCell(row, COL.ITEM, 'Bill No.:', { b: true });
+        setCell(row, COL.ITEM + 1, String(bill.billNo || ''), { b: true });
+        merge(row, COL.ITEM + 1, row, COL.ITEM + 2); // B:C
+        setCell(row, COL.UNIT + 1, 'Heading:', { b: true }); // D label position
+        setCell(row, COL.UNIT + 2, String(bill.title || ''), { b: true }); // E value
+        merge(row, COL.UNIT + 2, row, COL.TYPE); // E:G
+        row += 1;
+
+        // Column headers
+        setCell(row, COL.ITEM,   'Item',        { b: true });
+        setCell(row, COL.DESC,   'Description', { b: true });
+        setCell(row, COL.UNIT,   'Unit',        { b: true });
+        setCell(row, COL.QTY,    'Qty',         { b: true });
+        setCell(row, COL.RATE,   'Rate (GHS)',  { b: true });
+        setCell(row, COL.AMOUNT, 'Amount (GHS)',{ b: true });
+        setCell(row, COL.TYPE,   'Type',        { b: true });
+        const headerRow = row;
+        row += 1;
+
+        // Sort and group by section like PDF
+        const items = bill.items.slice().filter(Boolean).sort(
+            (a, b) => String(a.sectionCode || '').localeCompare(String(b.sectionCode || ''))
+        );
+
+        const sections = [];
+        let current = null;
+        for (const it of items) {
+            const code = it.sectionCode || 'Z';
+            if (!current || current.code !== code) {
+                current = {
+                    code,
+                    title: it.sectionTitle || 'Unclassified',
+                    items: []
+                };
+                sections.push(current);
+            }
+            current.items.push(it);
+        }
+
+        const sectionSubtotalCells = [];
+
+        for (const sec of sections) {
+            // Section header row (in Description)
+            setCell(row, COL.DESC, `SECTION ${sec.code}. ${sec.title}`, { b: true });
+            row += 1;
+
+            let itemIdx = 0;
+            const sectionItemAmountCells = [];
+            for (const it of sec.items) {
+                const thisRow = row;
+                // Item code
+                setCell(thisRow, COL.ITEM, getItemCode(itemIdx++));
+                // Description: Category title case + description
+                const cat = toTitleCase(it.category || '');
+                let desc = cat ? `${cat}\n\n${it.description || ''}` : (it.description || '');
+                setCell(thisRow, COL.DESC, desc);
+
+                // Unit
+                setCell(thisRow, COL.UNIT, it.unit || '');
+
+                // Qty
+                if (typeof it.quantity === 'number') {
+                    setCell(thisRow, COL.QTY, it.quantity, { z: fmtQty });
+                } else {
+                    setCell(thisRow, COL.QTY, '');
+                }
+
+                // Rate
+                if (typeof it.rate === 'number') {
+                    setCell(thisRow, COL.RATE, it.rate, { z: fmtMoney });
+                } else {
+                    setCell(thisRow, COL.RATE, '', { z: fmtMoney });
+                }
+
+                // Amount: prefer provided amount; else formula = Qty * Rate
+                let amtAddr;
+                if (typeof it.amount === 'number') {
+                    amtAddr = setCell(thisRow, COL.AMOUNT, it.amount, { z: fmtMoney });
+                } else {
+                    const qtyAddr = A1({ r: thisRow, c: COL.QTY });
+                    const rateAddr = A1({ r: thisRow, c: COL.RATE });
+                    amtAddr = A1({ r: thisRow, c: COL.AMOUNT });
+                    ws[amtAddr] = { t: 'n', f: `${qtyAddr}*${rateAddr}`, z: fmtMoney };
+                }
+
+                // Type
+                setCell(thisRow, COL.TYPE, it.type || '');
+
+                sectionItemAmountCells.push(amtAddr);
+                row += 1;
+            }
+
+            // Section subtotal row
+            const subRow = row;
+            setCell(subRow, COL.DESC, `Subtotal for ${sec.code}`, { b: true });
+            if (sectionItemAmountCells.length > 0) {
+                const start = decode(sectionItemAmountCells[0]);
+                const end = decode(sectionItemAmountCells[sectionItemAmountCells.length - 1]);
+                const rng = encode_range({ s: { r: start.r, c: COL.AMOUNT }, e: { r: end.r, c: COL.AMOUNT } });
+                const subAddr = A1({ r: subRow, c: COL.AMOUNT });
+                ws[subAddr] = { t: 'n', f: `SUM(${rng})`, z: fmtMoney };
+                sectionSubtotalCells.push(subAddr);
+            }
+            row += 1;
+        }
+
+        // Bill total row
+        const billTotalRow = row;
+        setCell(billTotalRow, COL.DESC, `Bill ${bill.billNo} Total`, { b: true });
+        if (sectionSubtotalCells.length > 0) {
+            const first = sectionSubtotalCells[0];
+            const last = sectionSubtotalCells[sectionSubtotalCells.length - 1];
+            const fStart = decode(first), fEnd = decode(last);
+            const rng = encode_range({ s: { r: fStart.r, c: COL.AMOUNT }, e: { r: fEnd.r, c: COL.AMOUNT } });
+            const billTotalAddr = A1({ r: billTotalRow, c: COL.AMOUNT });
+            if (typeof bill.total === 'number') {
+                ws[billTotalAddr] = { t: 'n', v: bill.total, z: fmtMoney };
+            } else {
+                ws[billTotalAddr] = { t: 'n', f: `SUM(${rng})`, z: fmtMoney };
+            }
+            billTotalCells.push(billTotalAddr);
+        }
+        row += 1;
+    });
+
+    // Grand total (if multiple bills)
+    if (billTotalCells.length > 1) {
+        row += 1;
+        setCell(row, COL.DESC, 'GRAND TOTAL', { b: true });
+        const parts = billTotalCells.map(addr => addr).join(',');
+        const grandAddr = A1({ r: row, c: COL.AMOUNT });
+        ws[grandAddr] = { t: 'n', f: `SUM(${parts})`, z: fmtMoney };
+        row += 1;
+    }
+
+    // Freeze panes at the first bill’s column header row if present
+    // (Excel only supports one freeze; this freezes top 3 rows)
+    ws['!freeze'] = { xSplit: 0, ySplit: 3, topLeftCell: 'A4', activePane: 'bottomLeft', state: 'frozen' };
+
+    // Define the sheet range
+    ws['!ref'] = `A1:${A1({ r: Math.max(row, 1), c: COL.TYPE })}`;
+
+    // Optional: light borders and header fill (requires styles-enabled SheetJS build)
+    try {
+        const range = XLSX.utils.decode_range(ws['!ref']);
+        for (let R = 0; R <= range.e.r; ++R) {
+            for (let C = 0; C <= range.e.c; ++C) {
+                const addr = A1({ r: R, c: C });
+                if (!ws[addr]) continue;
+                ws[addr].s = ws[addr].s || {};
+                ws[addr].s.border = {
+                    top: { style: 'thin', color: { rgb: '000000' } },
+                    bottom: { style: 'thin', color: { rgb: '000000' } },
+                    left: { style: 'thin', color: { rgb: '000000' } },
+                    right: { style: 'thin', color: { rgb: '000000' } }
+                };
+                // Make obvious header rows bold (already set) and with a light fill
+                if (R === 0 || (ws[A1({ r: R, c: COL.ITEM })]?.v === 'Item' && ws[A1({ r: R, c: COL.DESC })]?.v === 'Description')) {
+                    ws[addr].s.fill = { patternType: 'solid', fgColor: { rgb: 'F2F2F2' } };
+                }
+            }
+        }
+    } catch (e) {
+        // ignore styling if not supported
+    }
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'BOQ');
+    XLSX.writeFile(wb, `BOQ-${new Date().toISOString().slice(0,10)}.xlsx`);
+    console.log('[BOQ Export] Excel file generated and download triggered');
 }
+
