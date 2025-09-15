@@ -2,6 +2,12 @@
 let currencyRates = { GHS: 1 };
 let lastRateTimestamp = null;
 
+
+export function convertUSDToGHS(amount, rate) {
+  return amount * rate;
+}
+
+
 export async function fetchCurrencyRates(base = 'GHS') {
     try {
         const res = await fetch(`/api/fx-rates?base=${base}`);

@@ -1,3 +1,10 @@
+export const UNITS = {
+  "blockwork": "m²",
+  "trench excavation": "m³"
+  // add more units
+};
+
+
 // Central config: map input field names to their units
 export const INPUT_UNITS = {
     // D. Groundworks

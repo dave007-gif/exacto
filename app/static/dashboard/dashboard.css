@@ -1,10 +1,75 @@
-/* General Reset */
-body {
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-color: #f5f7fa;
+/* GENERAL STYLING */
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@200..700&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+* {
   margin: 0;
   padding: 0;
-  color: #333;
+  box-sizing: border-box;
+}
+body {
+  font-family: "Oswald", serif;
+  background-color: white;
+}
+html {
+  scroll-behavior: smooth;
+}
+p {
+  color: black;
+}
+
+/* Navbar Styling */
+.navbar-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 60px;
+  z-index: 1000;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 40px;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+}
+
+.navbar-transparent {
+  background-color: rgba(57, 61, 62, 0.4);
+  backdrop-filter: blur(5px);
+}
+
+.logo {
+  font-size: 28px;
+  font-weight: 600;
+  color: white;
+  display: flex;
+  align-items: center;
+}
+
+.menu-links {
+  display: flex;
+  list-style: none;
+  gap: 30px;
+  padding: 0;
+}
+
+.menu-links li a {
+  text-decoration: none;
+  font-size: 16px;
+  color: white;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: color 0.3s ease;
+}
+
+.menu-links li a:hover {
+  color: #f0f0f0;
+}
+
+.menu-links li .dropdown {
+  display: inline-block;
+  margin-left: 5px;
 }
 
 .main-container {
@@ -21,7 +86,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 1000;
-  background: linear-gradient(90deg, #1f2937, #111827); /* gradient dark navbar */
+  background: linear-gradient(90deg, #3f87ec, #111827); /* gradient dark navbar */
   padding: 12px 24px;
   display: flex;
   justify-content: space-between;
@@ -256,205 +321,70 @@ table td input {
   border: 1px solid #ccc;
 }
 
-/* Totals section */
-.totals-summary {
-  display: flex;
-  justify-content: space-between;
-  padding: 15px;
-  background-color: #f1f3f5;
-  border: 1px solid #dee2e6;
-  border-radius: 4px;
-  margin-top: 20px;
-}
 
-.totals-summary div {
-  font-weight: 600;
-}
+/* ===== Dashboard Overview (Table-Like) ===== */
 
-/* Save Button */
-.save-button {
-  margin-top: 10px;
-  background: #007bff;
-  color: white;
-  border: none;
-  padding: 8px 18px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.save-button:hover {
-  background: #0056b3;
-}
-
-
-/* Client Tab Styles */
-#client .tab-title {
-  font-size: 1.5rem;
-  margin-bottom: 1rem;
-}
-
-#client form fieldset {
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  padding: 1rem;
-  margin-bottom: 1.5rem;
-  background: #f9f9f9;
-}
-
-#client form legend {
-  font-weight: bold;
-  color: #333;
-}
-
-#client .form-group {
-  margin-bottom: 1rem;
-}
-
-#client label {
-  display: block;
-  font-weight: 500;
-  margin-bottom: 0.4rem;
-}
-
-#client input,
-#client textarea,
-#client select {
+.overview-tab {
+  display: table;
   width: 100%;
-  padding: 0.5rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
-#client .form-actions {
-  text-align: right;
-}
-
-#client .btn-primary {
-  background: #0077cc;
-  color: #fff;
-  padding: 0.6rem 1.2rem;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-#client .btn-primary:hover {
-  background: #005fa3;
-}
-
-/* ===== SETTINGS TAB ===== */
-#settings {
-  max-width: 1100px;
-  margin: 2rem auto;
-  padding: 2rem;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 1.5rem;
-}
-
-/* ===== CARD ===== */
-.settings-card {
+  border-collapse: collapse;
   background: #fff;
-  border-radius: 16px;
-  padding: 1.5rem;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-}
-
-.settings-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.12);
-}
-
-.settings-card h3 {
-  font-size: 1.2rem;
-  margin-bottom: 1rem;
-  font-weight: 600;
-  color: #333;
-}
-
-/* ===== LABEL + INPUT ===== */
-.settings-card label {
-  display: block;
-  margin-bottom: 1.2rem;
-  font-size: 0.9rem;
-  color: #444;
-}
-
-.settings-card input,
-.settings-card select {
-  width: 100%;
-  padding: 0.6rem 0.8rem;
-  margin-top: 0.3rem;
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  font-size: 0.9rem;
-  transition: 0.2s;
-  background: #f9f9fb;
-}
-
-.settings-card input:focus,
-.settings-card select:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 3px rgba(59,130,246,0.2);
-  outline: none;
-  background: #fff;
-}
-
-/* ===== BUTTONS ===== */
-.btn-primary,
-.btn-secondary,
-.btn-danger {
-  display: inline-block;
-  padding: 0.6rem 1.4rem;
-  border: none;
   border-radius: 12px;
-  font-size: 0.9rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.25s ease;
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
 }
 
-.btn-primary {
-  background: linear-gradient(135deg, #3b82f6, #2563eb);
-  color: #fff;
-}
-.btn-primary:hover {
-  background: linear-gradient(135deg, #2563eb, #1d4ed8);
-  transform: translateY(-2px);
-}
-
-.btn-secondary {
-  background: #f3f4f6;
-  color: #374151;
-}
-.btn-secondary:hover {
-  background: #e5e7eb;
-  transform: translateY(-2px);
-}
-
-.btn-danger {
-  background: #ef4444;
-  color: #fff;
-}
-.btn-danger:hover {
-  background: #dc2626;
-  transform: translateY(-2px);
-}
-
-/* ===== DANGER ZONE ===== */
-.danger-zone {
-  border: 1px solid #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
-.danger-zone h3 {
-  color: #991b1b;
-}
-
-/* ===== ACTIONS (Bottom Save Btn) ===== */
-.settings-actions {
-  margin-top: 2rem;
+/* Each card acts like a table cell */
+.overview-card {
+  display: table-cell;
+  padding: 1.5rem;
+  border: 1px solid #eee;
+  vertical-align: middle;
   text-align: center;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.overview-card:hover {
+  background: #f9f9fb;
+  transform: scale(1.02);
+}
+
+/* Headings */
+.overview-card h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Main value */
+.overview-card .value {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #333;
+  margin-bottom: 0.25rem;
+}
+
+/* Subtext */
+.overview-card .subtext {
+  font-size: 0.8rem;
+  color: #888;
+}
+
+/* Status colors */
+.value.success { color: #27ae60; }
+.value.warning { color: #f39c12; }
+.value.danger  { color: #e74c3c; }
+.value.info    { color: #2980b9; }
+
+/* Responsive stacking */
+@media (max-width: 768px) {
+  .overview-card {
+    display: block;
+    width: 100%;
+    border-left: none;
+    border-right: none;
+  }
 }

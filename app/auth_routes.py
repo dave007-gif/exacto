@@ -1,4 +1,4 @@
-from flask import Blueprint, request, redirect, url_for, flash
+from flask import Blueprint, request, redirect, url_for, flash, jsonify
 from flask_login import login_user, logout_user, login_required
 from urllib.parse import urlparse, urljoin
 from sqlalchemy import or_
@@ -8,21 +8,20 @@ from .models import db, User
 auth_routes = Blueprint('auth_routes', __name__)
 
 # ------------------ Helpers ------------------
-
 def is_safe_url(target):
     ref_url = urlparse(request.host_url)
     test_url = urlparse(urljoin(request.host_url, target))
     return test_url.scheme in ('http', 'https') and ref_url.netloc == test_url.netloc
 
-# ------------------ SIGNUP ------------------
 
+# ------------------ SIGNUP ------------------
 @auth_routes.route('/signup', methods=['POST'])
 def signup():
-    full_name = request.form['full_name']
-    username = request.form['username']
-    email = request.form['email']
-    password = request.form['password']
-    confirm_password = request.form['confirm_password']
+    full_name = request.form.get('full_name')
+    username = request.form.get('username')
+    email = request.form.get('email')
+    password = request.form.get('password')
+    confirm_password = request.form.get('confirm_password')
     next_page = request.args.get("next")
 
     if password != confirm_password:
@@ -52,16 +51,20 @@ def signup():
 
     if next_page and is_safe_url(next_page):
         return redirect(next_page)
-
     return redirect(url_for('main.index'))
 
-# ------------------ LOGIN ------------------
 
+# ------------------ LOGIN ------------------
 @auth_routes.route('/login', methods=['POST'])
 def login():
-    identifier = request.form['identifier']  # email or username
-    password = request.form['password']
+    # now matches your modal input fields
+    identifier = request.form.get('identifier')  # can be email or username
+    password = request.form.get('password')
     next_page = request.args.get("next")
+
+    if not identifier or not password:
+        flash("Please enter both fields.", "warning")
+        return redirect(url_for('main.index', show='login', next=next_page))
 
     user = User.query.filter(
         or_(User.email == identifier, User.username == identifier)
@@ -85,8 +88,8 @@ def login():
         flash("Incorrect password.", "danger")
         return redirect(url_for('main.index', show='login', next=next_page))
 
-# ------------------ LOGOUT ------------------
 
+# ------------------ LOGOUT ------------------
 @auth_routes.route('/logout')
 @login_required
 def logout():

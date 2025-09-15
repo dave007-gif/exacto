@@ -6,7 +6,6 @@ function toggleMenu() {
   menu.classList.toggle('show');
   burger.classList.toggle('open');
 }
-
 // ✅ Modal Controls
 function openModal(id) {
   const modal = document.getElementById(id);
@@ -33,8 +32,7 @@ function switchModal(currentId, targetId) {
 window.addEventListener('click', function (event) {
   document.querySelectorAll(".modal").forEach(modal => {
     if (event.target === modal) {
-      modal.style.display = "none";
-      document.body.classList.remove('modal-open');
+      closeModal(modal.id);
     }
   });
 });
@@ -43,26 +41,23 @@ window.addEventListener('click', function (event) {
 document.addEventListener("keydown", function (event) {
   if (event.key === "Escape") {
     document.querySelectorAll(".modal").forEach(modal => {
-      modal.style.display = "none";
-      document.body.classList.remove('modal-open');
+      closeModal(modal.id);
     });
   }
 });
 
-// ✅ Auto-open login/signup modal from URL (e.g. ?show=login)
+// ✅ Auto-open login/signup/reset modal from URL (?show=login / signup / reset)
 document.addEventListener("DOMContentLoaded", function () {
   const urlParams = new URLSearchParams(window.location.search);
   const show = urlParams.get("show");
   if (show === "login") openModal('login-modal');
   if (show === "signup") openModal('signup-modal');
+  if (show === "reset") openModal('resetPasswordModal');
 });
 
 // ✅ Scroll Fade-in Animation
 const faders = document.querySelectorAll('.fade-in');
-const appearOptions = {
-  threshold: 0.5,
-  rootMargin: "0px 0px -50px 0px"
-};
+const appearOptions = { threshold: 0.5, rootMargin: "0px 0px -50px 0px" };
 
 const appearOnScroll = new IntersectionObserver((entries, observer) => {
   entries.forEach(entry => {
@@ -74,7 +69,7 @@ const appearOnScroll = new IntersectionObserver((entries, observer) => {
 
 faders.forEach(fader => appearOnScroll.observe(fader));
 
-// ✅ Toast Notification (Optional Flash Placeholder)
+// ✅ Toast Notification
 function showToast(message, type = "success") {
   const toast = document.createElement("div");
   toast.className = `toast ${type}`;
@@ -88,48 +83,72 @@ function showToast(message, type = "success") {
   }, 3500);
 }
 
-document.querySelector('form').addEventListener('submit', function () {
-  document.getElementById('login-spinner').style.display = 'block';
+// ✅ Prevent errors if form not present
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.querySelector('form');
+  if (form) {
+    form.addEventListener('submit', function () {
+      const spinner = document.getElementById('login-spinner');
+      if (spinner) spinner.style.display = 'block';
+    });
+  }
 });
 
+// ✅ Validate signup form
 function validateSignupForm() {
-  const password = document.getElementById("password").value;
-  const confirm = document.getElementById("confirm_password").value;
+  const password = document.getElementById("password")?.value;
+  const confirm = document.getElementById("confirm_password")?.value;
 
-  if (password !== confirm) {
+  if (password && confirm && password !== confirm) {
     alert("Passwords do not match!");
     return false;
   }
   return true;
 }
 
+// ✅ User dropdown toggle
+document.addEventListener('DOMContentLoaded', () => {
+  const trigger = document.getElementById('userTrigger');
+  if (!trigger) return;
+
+  const container = trigger.closest('.user-dropdown-container');
+  document.addEventListener('click', (e) => {
+    if (container.contains(e.target)) {
+      container.classList.toggle('show');
+    } else {
+      container.classList.remove('show');
+    }
+  });
+});
+
+// ✅ Signup loader
 document.addEventListener("DOMContentLoaded", () => {
-  const params = new URLSearchParams(window.location.search);
-  const nextPage = params.get("next");
-  const show = params.get("show");
-
-  // Show login modal if redirected to login
-  if (nextPage) {
-    openModal("login-modal");
-  }
-
-  // Optionally show login or signup manually via ?show=login or ?show=signup
-  if (show === "login") {
-    openModal("login-modal");
-  } else if (show === "signup") {
-    openModal("signup-modal");
+  const signupForm = document.getElementById("signupForm");
+  if (signupForm) {
+    signupForm.addEventListener("submit", function () {
+      const btn = document.getElementById("signupBtn");
+      const loader = document.getElementById("signupLoader");
+      if (btn) btn.disabled = true;
+      if (loader) loader.style.display = "block";
+    });
   }
 });
 
-document.addEventListener('DOMContentLoaded', () => {
-    const trigger = document.getElementById('userTrigger');
-    const container = trigger.closest('.user-dropdown-container');
-
-    document.addEventListener('click', (e) => {
-      if (container.contains(e.target)) {
-        container.classList.toggle('show');
-      } else {
-        container.classList.remove('show');
-      }
+// ✅ Forgot Password from Login modal
+document.addEventListener("DOMContentLoaded", () => {
+  const forgotLink = document.getElementById("forgot-link"); 
+  if (forgotLink) {
+    forgotLink.addEventListener("click", (e) => {
+      e.preventDefault();
+      switchModal("login-modal", "forgotPasswordModal");
     });
-  });
+  }
+
+  const forgotBack = document.getElementById("forgot-back");
+  if (forgotBack) {
+    forgotBack.addEventListener("click", (e) => {
+      e.preventDefault();
+      switchModal("forgotPasswordModal", "login-modal");
+    });
+  }
+});

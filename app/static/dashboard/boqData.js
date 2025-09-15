@@ -1,7 +1,11 @@
 import { SMM7_CATEGORIES } from './smm7_categories.js';
-import { COMPONENT_TO_FORMULA_MAP } from './component_to_formula_map.js';
-import { SMM7_2023 } from './formulas.js'; // <-- ADD THIS LINE
+import { COMPONENT_TO_FORMULA_MAP } from '../../../static/js/component_to_formula_map.js';
+import { SMM7_2023 } from '../../../static/js/formulas.js'; // <-- ADD THIS LINE
 
+
+export const BOQ_DATA = {
+  sample: "Use for future expansion"
+};
 
 // Bill-centric BOQ data model
 export let boqData = {

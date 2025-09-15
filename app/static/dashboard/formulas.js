@@ -1,3 +1,9 @@
+export function calculateFormula(rate, qty) {
+  // simple passthrough for now
+  return rate;
+}
+
+
 export const SMM7_2023 = {
   // 1. Tree/Tree Stump Removal
   'tree cutting': {

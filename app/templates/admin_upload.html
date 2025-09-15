@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Upload Admin Data (CSV)</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      max-width: 750px;
+      margin: auto;
+      padding: 2rem;
+      background: #f9f9f9;
+      color: #333;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+    }
+
+    header h2 {
+      margin: 0;
+      font-size: 1.5rem;
+      color: #2c3e50;
+    }
+
+    nav a {
+      text-decoration: none;
+      margin-left: 1rem;
+      font-size: 0.95rem;
+      color: #2980b9;
+    }
+
+    nav a:hover {
+      text-decoration: underline;
+    }
+
+    p.note {
+      background: #eef6ff;
+      border-left: 4px solid #2980b9;
+      padding: 0.8rem;
+      font-size: 0.95rem;
+      margin-bottom: 1.5rem;
+      color: #444;
+    }
+
+    form {
+      background: #fff;
+      padding: 1.5rem;
+      border-radius: 8px;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    }
+
+    label {
+      font-weight: bold;
+      display: block;
+      margin-top: 1rem;
+      margin-bottom: 0.3rem;
+    }
+
+    select,
+    input[type="file"] {
+      width: 100%;
+      padding: 0.5rem;
+      font-size: 0.95rem;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+
+    button {
+      display: inline-block;
+      margin-top: 1.2rem;
+      background: #2980b9;
+      color: #fff;
+      border: none;
+      padding: 0.7rem 1.2rem;
+      border-radius: 6px;
+      font-size: 1rem;
+      cursor: pointer;
+      transition: background 0.2s ease;
+    }
+
+    button:hover {
+      background: #1f6391;
+    }
+
+    #upload-result {
+      margin-top: 2rem;
+      padding: 1rem;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      background: #fff;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+    }
+
+    #upload-result.success {
+      border-left: 4px solid #27ae60;
+    }
+
+    #upload-result.error {
+      border-left: 4px solid #e74c3c;
+    }
+
+    #upload-result details summary {
+      cursor: pointer;
+      font-weight: bold;
+      margin-top: 0.5rem;
+    }
+
+    #upload-result ul {
+      padding-left: 1.5rem;
+      margin: 0.5rem 0;
+    }
+
+    #upload-result li {
+      color: crimson;
+      margin-bottom: 0.3rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h2>Upload Admin Data (CSV)</h2>
+    <nav>
+      <a href="/dashboard">🏠 Dashboard</a>
+      <a href="/logout">🚪 Logout</a>
+    </nav>
+  </header>
+
+  <p class="note">
+    ⚠️ Note: When <code>ADMIN_AUTO_APPLY = false</code>, uploads from non-admin
+    accounts are staged for review. After uploading you'll see a <strong>Staging ID</strong>.  
+    Admins can review at <a href="/admin_review">Staged Uploads</a>.
+  </p>
+
+  <form id="upload-form">
+    <label for="upload-category">Select Category:</label>
+    <select name="category" id="upload-category" required>
+      <option value="">-- Choose a category --</option>
+      <option value="materials">Materials</option>
+      <option value="labor">Labor</option>
+      <option value="plants">Plants</option>
+      <option value="adjustments">Adjustments</option>
+      <option value="sources">Sources</option>
+      <option value="locations">Locations</option>
+      <option value="haulage_bands">Haulage Bands</option>
+    </select>
+
+    <label for="csvFile">Select CSV file:</label>
+    <input type="file" id="csvFile" accept=".csv" required />
+
+    <button type="submit">⬆️ Upload CSV</button>
+  </form>
+
+  <div id="upload-result"></div>
+
+  <script>
+    document
+      .getElementById("upload-form")
+      .addEventListener("submit", async function (e) {
+        e.preventDefault();
+
+        const category = document.getElementById("upload-category").value;
+        const fileInput = document.getElementById("csvFile");
+        const resultDiv = document.getElementById("upload-result");
+        resultDiv.innerHTML = "";
+        resultDiv.className = "";
+
+        if (!category || fileInput.files.length === 0) {
+          resultDiv.classList.add("error");
+          resultDiv.innerText = "❗ Please select a category and CSV file.";
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("file", fileInput.files[0]);
+
+        try {
+          const response = await fetch(`/api/upload-prices/${category}`, {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+          });
+
+          let result;
+          try {
+            result = await response.json();
+          } catch (err) {
+            resultDiv.classList.add("error");
+            resultDiv.innerHTML = `❌ Server returned an invalid response.`;
+            return;
+          }
+
+          if (response.ok) {
+            resultDiv.classList.add("success");
+            const errors = result.errors || [];
+            let html = `
+              ✅ <strong>${result.message}</strong><br>
+              ✔️ Inserted: ${result.inserted}<br>
+              ⚠️ Skipped: ${result.skipped}<br>
+              🗂️ Category: ${result.category}<br>
+            `;
+
+            if (errors.length > 0) {
+              html += `
+                <details>
+                  <summary>🔍 View ${errors.length} skipped rows with issues</summary>
+                  <ul>
+                    ${errors.map((e) => `<li>${e}</li>`).join("")}
+                  </ul>
+                </details>
+              `;
+            }
+
+            resultDiv.innerHTML = html;
+          } else {
+            resultDiv.classList.add("error");
+            resultDiv.innerHTML = `❌ Upload failed: ${
+              result.message || response.statusText
+            }`;
+          }
+        } catch (err) {
+          console.error("Upload failed:", err);
+          resultDiv.classList.add("error");
+          resultDiv.innerText = `❌ Upload failed: ${err.message}`;
+        }
+      });
+  </script>
+</body>
+</html>

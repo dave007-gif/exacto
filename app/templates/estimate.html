@@ -3,53 +3,148 @@
 {% block title %}Estimates | Exacto{% endblock %}
 
 {% block head_extra %}
-<script src="{{ url_for('static', filename='dashboard/estscript.js') }}"></script>
+<script type="module" src="{{ url_for('static', filename='dashboard/estimate.js') }}"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 {% endblock %}
 
 {% block content %}
 <main class="main-content">
 
-  <!-- Topbar -->
-  <header class="topbar">
-    <div class="greeting">
-      <h3>Estimate Page</h3>
+  <h1>Welcome to the Calculation & Estimation Page</h1>
+  <p>Here you can calculate building costs.</p>
+
+  <!-- Project Details Banner (hidden by default) -->
+  <div id="project-details-banner" style="display:none; background:#fff3cd; color:#856404; border:1px solid #ffeeba; padding:10px; margin-bottom:15px; border-radius:5px;">
+    <span id="project-details-banner-text">
+      Project details are missing.
+      <button id="edit-project-details-btn" style="margin-left:10px; background:#2196f3; color:#fff; border:none; border-radius:4px; padding:5px 15px; cursor:pointer;">
+        Add Project Details
+      </button>
+    </span>
+  </div>
+
+  <!-- Project Details Summary (shown if details exist) -->
+  <div id="project-details-summary" style="display:none; background:#e3f2fd; color:#0d47a1; border:1px solid #90caf9; padding:10px; margin-bottom:15px; border-radius:5px;">
+    <strong>Project:</strong> <span id="summary-project-title"></span> |
+    <strong>Client:</strong> <span id="summary-client-name"></span> |
+    <strong>Company:</strong> <span id="summary-company-name"></span>
+    <button id="edit-project-details-btn2" style="margin-left:10px; background:#2196f3; color:#fff; border:none; border-radius:4px; padding:5px 15px; cursor:pointer;">
+      Edit
+    </button>
+  </div>
+
+  <div id="fallback-warning" style="display:none; color:orange; font-weight:bold; margin-top:10px"></div>
+
+  <!-- Currency Selector -->
+  {% if 'admin' in current_user.roles or 'professional' in current_user.roles or 'firm' in current_user.roles %}
+  <div id="currency-controls">
+    <label for="currency-select">Display Currency:</label>
+    <select id="currency-select">
+      <option value="GHS">GHS (Base)</option>
+      <option value="USD">USD</option>
+      <option value="EUR">EUR</option>
+    </select>
+    <button id="refresh-rates-btn">Refresh Rates</button>
+    <span id="rate-timestamp"></span>
+  </div>
+  {% else %}
+  <div id="currency-controls" style="display:none">
+    <select id="currency-select">
+      <option value="GHS">GHS (Base)</option>
+    </select>
+    <button id="refresh-rates-btn" style="display:none">Refresh Rates</button>
+    <span id="rate-timestamp"></span>
+  </div>
+  {% endif %}
+
+  <div id="version-warning" style="display:none"></div>
+
+  <!-- Project Details Modal -->
+  <div id="project-details-modal" class="modal" style="display:none">
+    <div class="modal-content">
+      <h3>Project Details</h3>
+      <label>Company Name: <input id="company-name" type="text" required></label><br>
+      <label>Company Address: <textarea id="company-address" required></textarea></label><br>
+      <label>Contact Info: <input id="contact-info" type="text" required></label><br>
+      <label>Project Title: <input id="project-title" type="text" required></label><br>
+      <label>Client Name: <input id="client-name" type="text" required></label><br>
+      <label>Project Phase: <input id="project-phase" type="text"></label><br>
+      <button id="save-project-details">Save</button>
+      <button id="save-and-continue-project-details">Save &amp; Continue</button>
     </div>
-    <div class="user-profile">
-      <img src="{{ url_for('static', filename='uploads/avatar.png') }}" alt="User Avatar" class="avatar"/>
-      <span>{{ current_user.full_name.split()[0] }}</span>
+  </div>
+
+  <!-- Loading Spinner -->
+  <div id="loading" class="loading-spinner" style="display:none">
+    <div class="spinner"></div>
+    <p>Loading project details...</p>
+  </div>
+
+  <!-- Location Selectors -->
+  <div id="location-fields" data-role="professional,firm,admin" style="display:none">
+    <label for="project-location">Project Location:</label>
+    <select id="project-location"></select>
+
+    <label for="supplier-location">Supplier Location:</label>
+    <select id="supplier-location"></select>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="estimate-sidebar">
+    <fieldset>
+      <legend>Category</legend>
+      <button data-category="groundwork">Groundwork</button>
+      <button data-category="reinforcement">Reinforcement</button>
+      <button data-category="concrete">Concrete</button>
+      <button data-category="masonry">Masonry</button>
+      <button data-category="roofing">Roofing</button>
+      <button data-category="finishes">Finishes</button>
+    </fieldset>
+  </aside>
+
+  <!-- Form + Calculation Area -->
+  <section class="estimate-form-area" id="estimate-form-area">
+    <p>Select a category to start estimation.</p>
+
+    <div class="calculation-tables" style="margin-top:20px;">
+      <h3>Material & Cost Calculations</h3>
+      <table id="calcTable">
+        <thead>
+          <tr>
+            <th>Item</th>
+            <th>Unit</th>
+            <th>Qty</th>
+            <th>Rate</th>
+            <th>Total</th>
+          </tr>
+        </thead>
+        <tbody id="calcBody"></tbody>
+        <tfoot>
+          <tr>
+            <td colspan="4" class="text-right"><strong>Grand Total:</strong></td>
+            <td id="grandTotal">0.00</td>
+          </tr>
+        </tfoot>
+      </table>
+      <button type="button" id="finalizeEstimate">🧾 Finalize Estimate</button>
     </div>
-  </header>
-
-  <!-- Estimate Tool -->
-  <section class="estimates-wrapper">
-
-    <!-- Estimate Sidebar -->
-    <aside class="estimate-sidebar">
-      <fieldset>
-        <legend>Category</legend>
-        <button data-category="groundwork">Groundwork</button>
-        <button data-category="reinforcement">Reinforcement</button>
-        <button data-category="concrete">Concrete</button>
-        <button data-category="masonry">Masonry</button>
-        <button data-category="roofing">Roofing</button>
-        <button data-category="finishes">Finishes</button>
-      </fieldset>
-    </aside>
-
-    <!-- Estimate Forms Area -->
-    <section class="estimate-form-area" id="estimate-form-area">
-      <p>Select a category to start estimation.</p>
-    </section>
-
   </section>
 
   <!-- Summary Section -->
   <section class="summary-section">
     <h4>Project Summary</h4>
     <div id="summary-output">
-      <p>No calculations yet.</p>
+      <div id="summary-list"></div>
+      <div>Grand Total (USD): $<span id="grand-total-usd">0.00</span></div>
+      <div id="grand-total-ghs" style="display:none;">GHS: <span id="grand-total-ghs-val">0.00</span></div>
+      <div>
+        <label for="fx-rate">USD → GHS rate:</label>
+        <input type="number" id="fx-rate" step="0.01" value="12">
+        <button id="convert-btn">Convert</button>
+      </div>
     </div>
-    <button id="finalize-btn">🧾 Finalize & Get Total</button>
+    <button id="save-estimate">💾 Save Estimate</button>
+    <button id="export-pdf">📄 Export PDF</button>
   </section>
 
   <footer class="footer">
