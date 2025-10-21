@@ -1,6 +1,6 @@
 # app.py
 
-from flask import Flask, request, jsonify, render_template, redirect, make_response
+from flask import Flask, Blueprint, request, jsonify, render_template, redirect, make_response, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
 import jwt
@@ -15,6 +15,7 @@ from dynaconf import FlaskDynaconf
 from dynaconf import settings
 import re
 from flask_admin import Admin
+from urllib.parse import quote_plus
 
 # Local helpers
 from geo_utils import get_anchor_city, get_distance_km, validate_plant_geo_config as validate_geo_config
@@ -22,24 +23,76 @@ from pricing_utils import calculate_haulage_cost
 
 import os
 
+# Create a single Blueprint instance instead of two
+main = Blueprint('main', __name__)
+
+# Define all routes for the main Blueprint
+@main.route('/')
+def index():
+    return render_template('index.html')
+
+@main.route('/about')
+def about():
+    return render_template('about.html')
+
+@main.route('/contact')
+def contact():
+    return render_template('contact.html')
+
+@main.route('/projects')
+def projects():
+    return render_template('projects.html')
+
+# Add this estimate route to your main Blueprint
+@main.route('/estimate')
+def estimate():
+    # Redirect to your calculation page
+    return redirect(url_for('main.calculation_page'))
+
+# Auth-related routes
+#@main.route('/login', methods=['GET'])
+#def login_page():
+#    return render_template('login.html')
+
+#@main.route('/login', methods=['POST'])
+#def login():
+    # Your existing login logic - no changes needed
+#    data = request.json
+#    email = data.get('email')
+#    password = data.get('password')
+    # ... rest of your login code
+
+#@main.route('/dashboard')
+#@token_required  # Keep your authentication decorator
+#def dashboard():
+    # Your dashboard logic
+#    return render_template('dashboard.html')
+
+#@main.route('/calculation')
+#@token_required  # Ensure protection
+#def calculation_page():
+    # Your calculation page logic
+#    return render_template('calculation.html')
+
+# Create and configure the app
 # --- Flask app setup ---
 app = Flask(__name__)
 
+#app.config['API_BASE'] = '/exacto'  # keep this for client usage
 # Attach Dynaconf config
 #FlaskDynaconf(app, extensions_list="EXTENSIONS")
 #FlaskDynaconf(app)   # no extensions_list.
 
-FlaskDynaconf(app, settings_files=['settings.toml', '.secrets.toml'])
+# 1) Absolute DB path under this package
+app.config['DATABASE'] = os.path.join(app.root_path, 'users.db')
 
-# After initializing FlaskDynaconf, add this debug code
-print("🔍 Checking if settings are loaded correctly:")
-print(f"LOCATIONS config: {app.config.get('LOCATIONS')}")
-print(f"HAULAGE_BANDS config: {app.config.get('HAULAGE_BANDS')}")
 
-#print("settings.BASE_URL:", settings.get("BASE_URL"))
 
-#print("Loaded config keys:", list(app.config.keys()))
-#print("BASE_URL:", app.config.get("BASE_URL"))
+FlaskDynaconf(app, settings_files=[
+    os.path.join(app.root_path, 'settings.toml'),
+    os.path.join(app.root_path, '.secrets.toml'),
+])
+
 
 # Always register Flask-Admin manually
 admin = Admin(app)
@@ -58,6 +111,7 @@ CORS(app, supports_credentials=True)
 # Secret key and API configs
 secret_key = app.config.SECRET_KEY
 SENDGRID_KEY = app.config.get("SENDGRID_API_KEY", None)
+
 
 # --- Geo config validation on startup ---
 with app.app_context():
@@ -79,11 +133,52 @@ def normalize_region(region: str) -> str:
 import certifi
 os.environ['SSL_CERT_FILE'] = certifi.where()
 
+def get_db():
+    return sqlite3.connect(app.config['DATABASE'])
+
+print("🔍 Checking if settings are loaded correctly:")
+print(f"LOCATIONS config: {app.config.get('LOCATIONS')}")
+print(f"HAULAGE_BANDS config: {app.config.get('HAULAGE_BANDS')}")
+print(f"SENDGRID_API_KEY set: {bool(app.config.get('SENDGRID_API_KEY'))}")
+
+def _teammate_home():
+    # Try common homepage endpoints via url_for, but avoid /exacto-prefixed paths
+    #candidates = ['main.index', 'teammate.index', 'main.home', 'index', 'home']
+    #for ep in candidates:
+    #    try:
+    #        p = url_for(ep)
+    #        if not p.startswith('/exacto'):
+    #            return p
+    #    except Exception:
+    #        continue
+    # Fallback: root
+    return '/'
+
+# Make teammate_home available in all templates
+@app.context_processor
+def inject_teammate_home():
+    try:
+        return {'teammate_home': _teammate_home()}
+    except Exception:
+        return {'teammate_home': '/'}
+
+
+def _logout_response():
+    # Use teammate home if available; else root
+    try:
+        dest = _teammate_home()
+    except Exception:
+        dest = '/'
+    resp = make_response(redirect(dest + f'?toast=info&msg={quote_plus("Signed out")}'))
+    # Clear auth cookie for the whole site
+    resp.set_cookie('authToken', '', expires=0, path='/')
+    return resp
+
 
 # Initialize SQLite database
 def init_db():
     try:
-        conn = sqlite3.connect('users.db')
+        conn = get_db()
         cursor = conn.cursor()
 
         # Users table
@@ -328,7 +423,7 @@ def init_db():
 # Database population with proper Dynaconf config access
 def populate_initial_data():
     try:
-        conn = sqlite3.connect('users.db')
+        conn = get_db()
         cursor = conn.cursor()
 
         # --- Add this block to ensure roles exist ---
@@ -406,12 +501,28 @@ def populate_initial_data():
     except sqlite3.Error as e:
         print(f"❌ Error populating initial data: {e}")
         raise
-    
+
+# --- Ensure DB exists and is initialized at import time (works when mounted via server.py) ---
+def _bootstrap_db_if_needed():
+    db_path = app.config['DATABASE']
+    need_bootstrap = not os.path.exists(db_path)
+    try:
+        with app.app_context():
+            if need_bootstrap:
+                print(f"📦 Creating new SQLite database at {db_path}")
+            # Idempotent: CREATE TABLE IF NOT EXISTS and INSERT OR IGNORE are used
+            init_db()
+            populate_initial_data()
+    except Exception as e:
+        print(f"⚠️ DB bootstrap warning: {e}")
+
+_bootstrap_db_if_needed()
+
 # Database Population Status Check
 @app.route('/api/status/data-population')
 def data_population_status():
     try:
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
             
             # Check locations
@@ -443,7 +554,7 @@ def data_population_status():
 @app.route('/api/health')
 def health_check():
     try:
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
             
             # Check if admin exists
@@ -479,7 +590,7 @@ def initialize_app():
         email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
         raw_password = app.config.get('ADMIN_PASSWORD', '1234')
 
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
 
             # Ensure admin role exists
@@ -521,7 +632,7 @@ def initialize_app():
 
 # JWT Helpers
 def get_user_roles(user_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT r.name FROM roles r
@@ -530,25 +641,35 @@ def get_user_roles(user_id):
         ''', (user_id,))
         return [row[0] for row in cursor.fetchall()]
 
+def _is_api_request():
+    accept = (request.headers.get('Accept') or '').lower()
+    # Treat /api/* as API or when caller prefers JSON
+    return request.path.startswith('/api/') or 'application/json' in accept
+
+
 def role_required(*required_roles):
     def decorator(f):
         @wraps(f)
         def wrapped(*args, **kwargs):
             token = request.cookies.get('authToken')
             if not token:
-                return jsonify({'message': 'Missing token'}), 401
+                if _is_api_request():
+                    return jsonify({'message': 'Missing token'}), 401
+                return redirect(url_for('main.login_page'))
             try:
                 data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
                 user_roles = data.get('roles', [])
                 if not any(role in user_roles for role in required_roles):
-                    print(f"[AUTH] 403 role_required required={required_roles} actual={user_roles} user_id={data.get('user_id')}")
-                    return jsonify({'message': 'Insufficient permissions'}), 403
+                    if _is_api_request():
+                        return jsonify({'message': 'Insufficient permissions'}), 403
+                    return redirect(url_for('main.login_page'))
                 request.user_id = data['user_id']
-                request.user_roles = user_roles  # make roles available downstream
+                request.user_roles = user_roles
+                request.user_email = data.get('email')
             except jwt.ExpiredSignatureError:
-                return jsonify({'message': 'Token expired'}), 401
+                return (jsonify({'message': 'Token expired'}), 401) if _is_api_request() else redirect(url_for('main.login_page'))
             except jwt.InvalidTokenError:
-                return jsonify({'message': 'Invalid token'}), 401
+                return (jsonify({'message': 'Invalid token'}), 401) if _is_api_request() else redirect(url_for('main.login_page'))
             return f(*args, **kwargs)
         return wrapped
     return decorator
@@ -559,16 +680,19 @@ def admin_required(f):
     def wrapper(*args, **kwargs):
         token = request.cookies.get('authToken')
         if not token:
-            return "Unauthorized", 401
+            return (jsonify({'message': 'Missing token'}), 401) if _is_api_request() else ("Unauthorized", 401)
         try:
             payload = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
             roles = payload.get('roles', [])
             if 'admin' not in roles:
-                return "Forbidden: Admins only", 403
+                return (jsonify({'message': 'Forbidden'}), 403) if _is_api_request() else ("Forbidden: Admins only", 403)
+            request.user_id = payload.get('user_id')
+            request.user_roles = roles
+            request.user_email = payload.get('email')
         except jwt.ExpiredSignatureError:
-            return "Session expired", 401
+            return (jsonify({'message': 'Token expired'}), 401) if _is_api_request() else ("Session expired", 401)
         except jwt.InvalidTokenError:
-            return "Invalid token", 401
+            return (jsonify({'message': 'Invalid token'}), 401) if _is_api_request() else ("Invalid token", 401)
         return f(*args, **kwargs)
     return wrapper
 
@@ -576,21 +700,23 @@ def admin_required(f):
 # Helper function to validate tokens
 def token_required(f):
     @wraps(f)
-    def decorated(*args, **kwargs):
+    def wrapped(*args, **kwargs):
         token = request.cookies.get('authToken')
         if not token:
-            return redirect('/login')
-
+            return (jsonify({'message': 'Missing token'}), 401) if _is_api_request() else redirect(url_for('main.login_page'))
         try:
-            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=["HS256"])
-            request.user_id = data['user_id']
-            request.user_email = data['email']
-            request.user_roles = data['roles']
-        except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
-            return redirect('/login')
-            
+            data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
+            request.user_id = data.get('user_id')
+            request.user_email = data.get('email')
+            request.user_roles = data.get('roles', [])
+        except jwt.ExpiredSignatureError:
+            return (jsonify({'message': 'Token expired'}), 401) if _is_api_request() else redirect(url_for('main.login_page'))
+        except jwt.InvalidTokenError:
+            return (jsonify({'message': 'Invalid token'}), 401) if _is_api_request() else redirect(url_for('main.login_page'))
         return f(*args, **kwargs)
-    return decorated
+    return wrapped
+
+
 
 # Activity logging decorator
 def log_activity(description):
@@ -598,7 +724,7 @@ def log_activity(description):
         @wraps(f)
         def wrapper(*args, **kwargs):
             result = f(*args, **kwargs)
-            with sqlite3.connect('users.db') as conn:
+            with get_db() as conn:
                 conn.execute('''
                     INSERT INTO user_activity (user_id, activity_type, description)
                     VALUES (?, ?, ?)
@@ -619,7 +745,7 @@ def handle_material_upload(csv_data):
 
     inserted, skipped, errors = 0, 0, []
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         for i, row in enumerate(csv_data, 1):
             if not all(field in row and row[field].strip() for field in required_fields):
@@ -686,7 +812,7 @@ def handle_labor_upload(rows):
 
     inserted, skipped, errors = 0, 0, []
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         for i, row in enumerate(rows, 1):
@@ -751,7 +877,7 @@ def handle_plant_upload(rows):
 
     inserted, skipped, errors = 0, 0, []
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         for i, row in enumerate(rows, 1):
@@ -819,7 +945,7 @@ def handle_adjustment_upload(rows):
 
     inserted, skipped, errors = 0, 0, []
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         for i, row in enumerate(rows, 1):
             if not required.issubset(row.keys()):
@@ -872,7 +998,7 @@ def handle_source_upload(rows):
 
     inserted, skipped, errors = 0, 0, []
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         for i, row in enumerate(rows, 1):
@@ -937,7 +1063,7 @@ def handle_location_upload(rows, is_admin=False):
 
     inserted, skipped, errors = 0, 0, []
 
-    with sqlite3.connect("users.db") as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         for i, row in enumerate(rows, 1):
@@ -997,7 +1123,7 @@ def handle_haulage_band_upload(rows, is_admin=False):
 
     inserted, skipped, errors = 0, 0, []
 
-    with sqlite3.connect("users.db") as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         for i, row in enumerate(rows, 1):
@@ -1050,7 +1176,7 @@ def handle_haulage_band_upload(rows, is_admin=False):
 
 def log_admin_upload(admin_id, category, filename, inserted, skipped):
     description = f'Uploaded {category} file: {filename} (inserted={inserted}, skipped={skipped})'
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO user_activity (user_id, activity_type, description)
@@ -1061,7 +1187,7 @@ def log_admin_upload(admin_id, category, filename, inserted, skipped):
 # --- NEW helper utilities for staging + audit ---
 
 def _create_staging(uploader_id, category, filename, raw_csv, rows_count):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO UploadStaging (uploader_id, category, filename, raw_csv, rows_count, status)
@@ -1071,7 +1197,7 @@ def _create_staging(uploader_id, category, filename, raw_csv, rows_count):
         return cursor.lastrowid
 
 def _append_approval_log(staging_id, action, actor_id, message=None):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO ApprovalLog (staging_id, action, actor_id, message)
@@ -1080,7 +1206,7 @@ def _append_approval_log(staging_id, action, actor_id, message=None):
         conn.commit()
 
 def _update_staging_status(staging_id, status, validation_messages=None, processed_by=None):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         if validation_messages is not None:
             cursor.execute('''
@@ -1230,13 +1356,13 @@ def validate_rows_dryrun(category, rows):
     return inserted_est, skipped, errors
 
 def has_role(user_id, role_name):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         c.execute('SELECT r.id FROM roles r JOIN user_roles ur ON ur.role_id=r.id WHERE ur.user_id=? AND r.name=?', (user_id, role_name))
         return c.fetchone() is not None
 
 def grant_role(user_id, role_name):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         c.execute('SELECT id FROM roles WHERE name=?', (role_name,))
         row = c.fetchone()
@@ -1248,7 +1374,7 @@ def grant_role(user_id, role_name):
         return True
 
 def revoke_role(user_id, role_name):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         c.execute('SELECT id FROM roles WHERE name=?', (role_name,))
         row = c.fetchone()
@@ -1262,18 +1388,24 @@ def revoke_role(user_id, role_name):
 
 
 # Password Reset Routes
+#@app.route('/exacto/forgot-password', methods=['GET'])
 @app.route('/forgot-password', methods=['GET'])
 def forgot_password_page():
-    return render_template('forgot-password.html')
+    # Redirect to teammate home and open the Forgot modal with a toast
+    info = quote_plus('Enter your email to get a reset link.')
+    return redirect(_teammate_home() + f'?open=forgot&toast=info&msg={info}')
 
+# Forgot password (POST) – add /exacto alias first
+#@app.route('/exacto/forgot-password', methods=['POST'])
 @app.route('/forgot-password', methods=['POST'])
 def forgot_password():
     data = request.get_json(silent=True) or {}
-    email = data.get('email') or request.form.get('email')
+    email = (data.get('email') or request.form.get('email') or '').strip().lower()
     if not email:
         return jsonify({'message': 'Email is required'}), 400
 
-    with sqlite3.connect('users.db') as conn:
+    # Check user existence (don’t leak)
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT 1 FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
@@ -1281,51 +1413,71 @@ def forgot_password():
     if not user:
         return jsonify({'message': 'If this email exists, we will send a reset link'}), 200
 
+    # Issue new token (replace any existing)
     import secrets
     token = secrets.token_urlsafe(32)
     expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('PASSWORD_RESET_EXPIRATION_HOURS', 1))
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('DELETE FROM password_resets WHERE email = ?', (email,))
         cursor.execute('INSERT INTO password_resets (email, token, expiration) VALUES (?, ?, ?)', (email, token, expiration))
         conn.commit()
 
-    base_url = app.config.get('BASE_URL', 'http://127.0.0.1:5000')
+    # Build link with url_for (will use /exacto because of route registration order)
+    try:
+        reset_link = url_for('reset_password_page', token=token, _external=True)
+        print(f"[EMAIL] reset_link = {reset_link}")
+    except Exception as e:
+        print(f"❌ Could not build reset link: {e}")
+
+    # Send (or log) email
     if app.config.get('SENDGRID_API_KEY'):
         try:
             send_password_reset_email(email, token)
         except Exception as e:
             print(f"❌ Error sending reset email: {e}")
-            print(f"Password reset link: {base_url}/reset-password/{token}")
     else:
-        print(f"Password reset link: {base_url}/reset-password/{token}")
+        base_url = app.config.get('BASE_URL', 'http://127.0.0.1:5000')
+        print(f"[DEV] Password reset link: {base_url}/exacto/reset-password/{token}")
 
     return jsonify({'message': 'Reset link sent if email exists'})
 
+# Reset password (GET) – open teammate modal; add /exacto alias first
+#@app.route('/exacto/reset-password/<token>', methods=['GET'])
 @app.route('/reset-password/<token>', methods=['GET'])
 def reset_password_page(token):
-    return render_template('reset-password.html', token=token)
+    info = quote_plus('Enter a new password to finish resetting your account.')
+    return redirect(_teammate_home() + f'?open=reset&reset_token={token}&toast=info&msg={info}')
 
+
+# Reset password (POST) – add /exacto alias first, reuse existing logic
+#@app.route('/exacto/reset-password/<token>', methods=['POST'])
 @app.route('/reset-password/<token>', methods=['POST'])
 def reset_password(token):
     data = request.get_json(silent=True) or {}
-    new_password = data.get('password') or request.form.get('password')
+    new_password = (data.get('password') or request.form.get('password') or '').strip()
     if not new_password:
         return jsonify({'message': 'Password is required'}), 400
+    if len(new_password) < 8:
+        return jsonify({'message': 'Password must be at least 8 characters.'}), 400
 
-    with sqlite3.connect('users.db') as conn:
+    # Validate token
+    with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT email FROM password_resets WHERE token = ? AND expiration > ?', (token, datetime.now(timezone.utc)))
+        cursor.execute(
+            'SELECT email FROM password_resets WHERE token = ? AND expiration > ?',
+            (token, datetime.now(timezone.utc))
+        )
         reset_request = cursor.fetchone()
 
     if not reset_request:
         return jsonify({'message': 'Invalid or expired token'}), 400
 
+    # Update password and clear token
     email = reset_request[0]
     hashed_password = generate_password_hash(new_password, method='pbkdf2:sha256')
-
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('UPDATE users SET password = ? WHERE email = ?', (hashed_password, email))
         cursor.execute('DELETE FROM password_resets WHERE email = ?', (email,))
@@ -1344,7 +1496,7 @@ def get_formula_version():
 def get_adjustments():
     region = request.args.get('region', 'default').lower()
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT concrete_waste_factor, labor_efficiency, thickness
@@ -1375,9 +1527,19 @@ from sendgrid import SendGridAPIClient
 from sendgrid.helpers.mail import Mail
 
 def send_verification_email(to_email, token):
-    base_url = app.config.get('BASE_URL', 'http://127.0.0.1:5000')
+    print(f"[EMAIL] send_verification_email → {to_email}")
+    key = app.config.get("SENDGRID_API_KEY")
+    if not key:
+        print("❌ SENDGRID_API_KEY not configured; cannot send verification email.")
+        return False
+    # No need for special handling now - plain URLs
+    try:
+        verify_link = url_for('verify_email', token=token, _external=True)
+    except RuntimeError:
+        with app.app_context():
+            verify_link = url_for('verify_email', token=token, _external=True)
+    print(f"[EMAIL] verify_link = {verify_link}")
     sender_email = app.config.get('SENDER_EMAIL', 'middle_child13555@protonmail.com')
-    verify_link = f"{base_url}/verify-email/{token}"
     message = Mail(
         from_email=sender_email,
         to_emails=to_email,
@@ -1385,16 +1547,22 @@ def send_verification_email(to_email, token):
         html_content=f'<p>Click <a href="{verify_link}">here</a> to verify your account.</p>'
     )
     try:
-        sg = SendGridAPIClient(app.config.get("SENDGRID_API_KEY"))
-        sg.send(message)
+        sg = SendGridAPIClient(key)
+        resp = sg.send(message)
+        print(f"[EMAIL] sendgrid response status={resp.status_code}")
+        return True
     except Exception as e:
         print(f"❌ Error sending verification email: {e}")
-
+        return False
 
 def send_password_reset_email(to_email, token):
-    base_url = app.config.get('BASE_URL', 'http://127.0.0.1:5000')
+    try:
+        reset_link = url_for('reset_password_page', token=token, _external=True)
+    except RuntimeError:
+        with app.app_context():
+            reset_link = url_for('reset_password_page', token=token, _external=True)
+    print(f"[EMAIL] reset_link = {reset_link}")
     sender_email = app.config.get('SENDER_EMAIL', 'middle_child13555@protonmail.com')
-    reset_link = f"{base_url}/reset-password/{token}"
     message = Mail(
         from_email=sender_email,
         to_emails=to_email,
@@ -1427,7 +1595,7 @@ def signup():
     hashed_password = generate_password_hash(password, method='pbkdf2:sha256')
 
     try:
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('INSERT INTO users (email, password, verified) VALUES (?, ?, 0)', (email, hashed_password))
             user_id = cursor.lastrowid
@@ -1450,25 +1618,27 @@ def signup():
             ''', (email, token, expires_at))
             conn.commit()
 
-        send_verification_email(email, token)
-        return jsonify({'message': 'Signup successful! Check your email to verify your account.'})
+        send_ok = send_verification_email(email, token)
+        if not send_ok:
+            print(f"[EMAIL] Verification email NOT sent for {email}")
+        return jsonify({'message': 'Signup successful! Check your email to verify your account. Check spam if not found in inbox.'})
 
     except sqlite3.IntegrityError:
         return jsonify({'message': 'User already exists'}), 400
 
 
 # GET /login
-@app.route('/login', methods=['GET'])
+@main.route('/login', methods=['GET'])
 def login_page():
     return render_template('login.html')
 
-@app.route('/login', methods=['POST'])
+@main.route('/login', methods=['POST'])
 def login():
     data = request.json
     email = data.get('email')
     password = data.get('password')
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT id, password, verified FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
@@ -1482,7 +1652,7 @@ def login():
     user_id = user[0]
 
     # Fetch roles
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT r.name FROM roles r
@@ -1499,42 +1669,43 @@ def login():
         'exp': datetime.now(timezone.utc) + timedelta(hours=app.config.get('JWT_EXPIRATION_HOURS', 1))
     }, app.config['SECRET_KEY'], algorithm="HS256")
 
-    # 🔁 Redirect based on role
-    if 'admin' in roles:
-        redirect_url = '/admin_upload'
-    else:
-        redirect_url = '/dashboard'
+    # 🔁 Mount-safe redirect target
+    redirect_url = url_for('admin_upload_page') if 'admin' in roles else url_for('dashboard')
 
     response = make_response(jsonify({
         'message': 'Login successful!',
         'redirect': redirect_url
     }))
-    #response.set_cookie('authToken', token, httponly=True, #samesite='Strict', secure=True)
-    #return response
-
-    # In development allow non-secure cookie on http; in production request.is_secure will be True.
     secure_cookie = request.is_secure if request else False
-    response.set_cookie('authToken', token, httponly=True, samesite='Strict', secure=secure_cookie)
+    # Make cookie visible to entire site; Lax is friendlier for top-level nav
+    response.set_cookie('authToken', token, httponly=True, samesite='Lax', secure=secure_cookie, path='/')
     return response
 
 
 
+#@app.route('/exacto/verify-email/<token>', methods=['GET'])
 @app.route('/verify-email/<token>', methods=['GET'])
 def verify_email(token):
-    with sqlite3.connect('users.db') as conn:
+    now = datetime.now(timezone.utc)
+    with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute('SELECT email FROM verification_tokens WHERE token = ? AND expires_at > ?', (token, datetime.now()))
+        cursor.execute(
+            'SELECT email FROM verification_tokens WHERE token = ? AND expires_at > ?',
+            (token, now)
+        )
         result = cursor.fetchone()
 
         if not result:
-            return 'Invalid or expired verification link.', 400
+            msg = quote_plus('Verification link is invalid or expired.')
+            return redirect(_teammate_home() + f'?toast=error&msg={msg}')
 
         email = result[0]
         cursor.execute('UPDATE users SET verified = 1 WHERE email = ?', (email,))
         cursor.execute('DELETE FROM verification_tokens WHERE token = ?', (token,))
         conn.commit()
 
-    return 'Email verified successfully! You may now log in.', 200
+    msg = quote_plus('Your email has been verified. You can now log in.')
+    return redirect(_teammate_home() + f'?toast=success&msg={msg}')
 
 
 # GET /protected (Example of a protected route)
@@ -1552,65 +1723,74 @@ def refresh_token():
     return jsonify({'token': new_token})
 
 # Resend Reset Link Endpoint
+# Resend verification – add /exacto alias to match frontend API_BASE
+#@app.route('/exacto/resend-verification', methods=['POST'])
 @app.route('/resend-verification', methods=['POST'])
 def resend_verification():
-    email = request.json.get('email')
-
-    with sqlite3.connect('users.db') as conn:
+    email = (request.get_json(silent=True) or {}).get('email')
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT id, verified FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
 
     if not user:
         return jsonify({'message': 'If your email exists, a new verification will be sent.'}), 200
-
-    if user[1]:  # Already verified
+    if user[1]:
         return jsonify({'message': 'Account already verified.'}), 200
 
-    # Generate verification token
     import secrets
     token = secrets.token_urlsafe(32)
     expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('EMAIL_VERIFICATION_EXPIRATION_HOURS', 24))
-
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO verification_tokens (email, token, expires_at)
-            VALUES (?, ?, ?)
-        ''', (email, token, expiration))
+        cursor.execute('INSERT INTO verification_tokens (email, token, expires_at) VALUES (?, ?, ?)', (email, token, expiration))
         conn.commit()
 
     send_verification_email(email, token)
-
     return jsonify({'message': 'Verification email sent if account exists.'})
 
 
-
 # Resend Password Reset Link
+#@app.route('/exacto/resend-reset-link', methods=['POST'])
 @app.route('/resend-reset-link', methods=['POST'])
 def resend_reset_link():
-    email = (request.get_json(silent=True) or {}).get('email') or request.form.get('email')
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or request.form.get('email') or '').strip().lower()
+    if not email:
+        return jsonify({'message': 'Email is required'}), 400
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
         user = cursor.fetchone()
 
+    # Always respond generically to avoid leaking
     if not user:
-        return jsonify({'message': 'If your email exists, a reset link will be sent.'}), 200
+        return jsonify({'message': 'Reset link sent if account exists.'}), 200
 
     import secrets
     token = secrets.token_urlsafe(32)
-    expiration = datetime.now(timezone.utc) + timedelta(hours=app.config.get('PASSWORD_RESET_EXPIRATION_HOURS', 1))
+    expiration = datetime.now(timezone.utc) + timedelta(
+        hours=app.config.get('PASSWORD_RESET_EXPIRATION_HOURS', 1)
+    )
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('DELETE FROM password_resets WHERE email = ?', (email,))
-        cursor.execute('INSERT INTO password_resets (email, token, expiration) VALUES (?, ?, ?)', (email, token, expiration))
+        cursor.execute(
+            'INSERT INTO password_resets (email, token, expiration) VALUES (?, ?, ?)',
+            (email, token, expiration)
+        )
         conn.commit()
 
-    send_password_reset_email(email, token)
-    return jsonify({'message': 'Reset link sent if account exists.'})
+    # send_password_reset_email builds url_for('reset_password_page', ...) which respects /exacto
+    try:
+        send_password_reset_email(email, token)
+    except Exception as e:
+        print(f"❌ Error sending reset email: {e}")
+
+    return jsonify({'message': 'Reset link sent if account exists.'}), 200
+
 
 @app.route('/api/upload-prices/<category>', methods=['POST'])
 @role_required('admin', 'uploader')  # tighten: pros/firms must be approved (uploader) to upload
@@ -1724,7 +1904,7 @@ def request_uploader_access():
     if has_role(request.user_id, 'uploader'):
         return jsonify({'message': 'Already approved as uploader', 'status': 'approved'}), 200
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         # Existing pending?
         c.execute('SELECT id, status FROM UploaderRequests WHERE user_id=? ORDER BY created_at DESC LIMIT 1', (request.user_id,))
@@ -1736,7 +1916,7 @@ def request_uploader_access():
         conn.commit()
 
     # Activity log (optional)
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
                      (request.user_id, 'uploader_request', f'Uploader access requested: {reason[:200]}'))
         conn.commit()
@@ -1747,7 +1927,7 @@ def request_uploader_access():
 @app.route('/api/uploader/status', methods=['GET'])
 @token_required
 def uploader_status():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         c.execute('SELECT status, created_at, admin_note FROM UploaderRequests WHERE user_id=? ORDER BY created_at DESC LIMIT 1', (request.user_id,))
         req = c.fetchone()
@@ -1756,6 +1936,7 @@ def uploader_status():
         'latest_request': {'status': req[0], 'created_at': req[1], 'admin_note': req[2]} if req else None
     }), 200
 
+#@app.route('/exacto/admin/uploader/requests-ui')
 @app.route('/admin/uploader/requests-ui')
 @role_required('admin')
 def admin_uploader_requests_page():
@@ -1767,7 +1948,7 @@ def admin_uploader_requests_page():
 @role_required('admin')
 def admin_list_uploader_requests():
     status = request.args.get('status')  # pending/approved/rejected/revoked or None
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         if status:
@@ -1789,7 +1970,7 @@ def admin_list_uploader_requests():
 @app.route('/api/admin/uploader/requests/<int:req_id>/approve', methods=['POST'])
 @role_required('admin')
 def admin_approve_uploader(req_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         c.execute('SELECT user_id, status FROM UploaderRequests WHERE id=?', (req_id,))
         row = c.fetchone()
@@ -1803,7 +1984,7 @@ def admin_approve_uploader(req_id):
         conn.commit()
 
     grant_role(user_id, 'uploader')
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
                      (request.user_id, 'uploader_approve', f'Approved uploader for user_id={user_id} (req={req_id})'))
         conn.commit()
@@ -1815,7 +1996,7 @@ def admin_approve_uploader(req_id):
 @role_required('admin')
 def admin_reject_uploader(req_id):
     note = (request.json or {}).get('note', '')
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         c.execute('SELECT user_id, status FROM UploaderRequests WHERE id=?', (req_id,))
         row = c.fetchone()
@@ -1829,7 +2010,7 @@ def admin_reject_uploader(req_id):
                   (note, request.user_id, req_id))
         conn.commit()
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
                      (request.user_id, 'uploader_reject', f'Rejected uploader for user_id={user_id} (req={req_id})'))
         conn.commit()
@@ -1844,12 +2025,12 @@ def admin_revoke_uploader(user_id):
     # remove role
     ok = revoke_role(user_id, 'uploader')
     # log revocation as a request record for audit
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         c = conn.cursor()
         c.execute('INSERT INTO UploaderRequests (user_id, status, admin_note, decided_at, decided_by) VALUES (?, "revoked", ?, CURRENT_TIMESTAMP, ?)',
                   (user_id, note, request.user_id))
         conn.commit()
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         conn.execute('INSERT INTO user_activity (user_id, activity_type, description) VALUES (?, ?, ?)',
                      (request.user_id, 'uploader_revoke', f'Revoked uploader from user_id={user_id}: {note[:200]}'))
         conn.commit()
@@ -1862,7 +2043,7 @@ def admin_revoke_uploader(user_id):
 @role_required('admin')
 def list_staged_uploads():
     status = request.args.get('status', None)
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         if status:
             cursor.execute('SELECT id, uploader_id, category, filename, rows_count, status, validation_messages, created_at FROM UploadStaging WHERE status = ? ORDER BY created_at DESC', (status,))
@@ -1876,7 +2057,7 @@ def list_staged_uploads():
 @app.route('/api/admin/uploads/<int:staging_id>/validate', methods=['POST'])
 @role_required('admin')
 def validate_staged_upload(staging_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT category, raw_csv FROM UploadStaging WHERE id = ?', (staging_id,))
         row = cursor.fetchone()
@@ -1895,7 +2076,7 @@ def validate_staged_upload(staging_id):
 @app.route('/api/admin/uploads/<int:staging_id>/approve', methods=['POST'])
 @role_required('admin')
 def approve_staged_upload(staging_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(
             'SELECT category, raw_csv, status FROM UploadStaging WHERE id = ?',
@@ -1973,7 +2154,7 @@ def approve_staged_upload(staging_id):
 @role_required('admin')
 def reject_staged_upload(staging_id):
     payload = request.json.get('message', 'Rejected by admin')
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT id FROM UploadStaging WHERE id = ?', (staging_id,))
         if not cursor.fetchone():
@@ -1990,7 +2171,7 @@ def setup_admin():
         email = app.config.get('ADMIN_EMAIL', 'admin@gmail.com')
         raw_password = app.config.get('ADMIN_PASSWORD', '1234')
 
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
 
             # Ensure admin role exists
@@ -2046,10 +2227,10 @@ def admin_review_page():
 
 
 # app.py - calculation_page route
-@app.route('/calculation', methods=['GET'])
+@main.route('/calculation', methods=['GET'])
 @token_required
 def calculation_page():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT r.name FROM roles r
@@ -2066,14 +2247,6 @@ def calculation_page():
         }
     )
 
-# app.py - Add profile endpoint
-@app.route('/api/profile', methods=['GET'])
-@token_required
-def get_profile():
-    return jsonify({
-        'email': request.user_email,
-        'roles': request.user_roles
-    })
 
 @app.route('/')
 def home():
@@ -2082,7 +2255,7 @@ def home():
 # Location and Haulage Endpoints
 @app.route('/api/locations', methods=['GET'])
 def get_locations():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT zone, region FROM Locations')
         rows = cursor.fetchall()
@@ -2106,7 +2279,7 @@ def calculate_haulage():
     supplier_loc = data.get('supplier_location')
 
     # --- Load locations (DB > settings) ---
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT zone, region FROM Locations')
         rows = cursor.fetchall()
@@ -2131,7 +2304,7 @@ def calculate_haulage():
         distance = 20
 
     # --- Load haulage bands (DB > settings) ---
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT label, min_km, max_km, multiplier FROM HaulageBands')
         rows = cursor.fetchall()
@@ -2170,7 +2343,7 @@ def api_create_project():
     calculation_data = data.get('calculation_data', '{}')
     total_cost = data.get('total_cost', 0)
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             INSERT INTO Projects (
@@ -2193,7 +2366,7 @@ def api_create_project():
 @app.route('/api/projects/<int:project_id>', methods=['GET'])
 @token_required
 def api_get_project(project_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT P.id, P.project_name, P.project_location, P.supplier_location,
@@ -2237,7 +2410,7 @@ def api_update_project(project_id):
     formula_version = data.get('formula_version', '2023.1')
     rates_snapshot = data.get('rates_snapshot')  # NEW
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE Projects
@@ -2260,8 +2433,8 @@ def api_update_project(project_id):
 
 # --- Supplier Management Endpoints ---
 
-@app.route('/suppliers')
-@role_required('professional', 'firm', 'admin')
+@app.route('/suppliers', endpoint='supplier_page')
+#@app.route('/exacto/suppliers', endpoint='suppliers_page')  # alias for templates using plural
 def supplier_page():
     return render_template('suppliers.html')
 
@@ -2269,7 +2442,7 @@ def supplier_page():
 @app.route('/api/suppliers', methods=['GET'])
 @token_required
 def list_suppliers():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         cursor.execute('SELECT id, name, region, contact FROM Sources WHERE type = "supplier"')
@@ -2289,7 +2462,7 @@ def add_supplier():
     if not name or not region:
         return jsonify({'message': 'Name and region are required'}), 400
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # Check for existing supplier with same name and region
@@ -2318,7 +2491,7 @@ def add_supplier():
 @app.route('/materials', methods=['GET'])
 @token_required
 def get_materials():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM MaterialPrices')
         materials = cursor.fetchall()
@@ -2327,7 +2500,7 @@ def get_materials():
 @app.route('/labor-rates', methods=['GET'])
 @token_required
 def get_labor_rates():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM LaborRates')
         labor_rates = cursor.fetchall()
@@ -2359,7 +2532,7 @@ def get_pricing_bundle():
 
     def fetch_materials_and_labor(region_option):
         region_option = normalize_region(region_option)
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT material, unit_cost FROM MaterialPrices
@@ -2378,7 +2551,7 @@ def get_pricing_bundle():
 
     def fetch_plants(region_option):
         region_option = normalize_region(region_option)
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT equipment, daily_rate, duration_per_unit
@@ -2462,7 +2635,7 @@ def get_pricing_bundle():
     def latest_dates_for_region(rname):
         if not rname:
             return None
-        with sqlite3.connect('users.db') as conn:
+        with get_db() as conn:
             cursor = conn.cursor()
             # Materials latest valid_to in region
             cursor.execute('''
@@ -2526,7 +2699,7 @@ def get_pricing_bundle():
 @app.route('/smm-rules', methods=['GET'])
 @token_required
 def get_smm_rules():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('SELECT * FROM SMMRules')
         smm_rules = cursor.fetchall()
@@ -2539,7 +2712,7 @@ def get_material_price(material):
     region = request.args.get('region', '').strip().lower()
     fallback_used = None
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         fallback_enabled = app.config.get("FALLBACK_ENABLED", True)
@@ -2604,7 +2777,7 @@ def get_labor_rate(trade):
     region = request.args.get('region', '').strip().lower()
     fallback_used = None
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         fallback_enabled = app.config.get("FALLBACK_ENABLED", True)
@@ -2669,7 +2842,7 @@ def get_plants():
     if not requested_region:
         return jsonify({'message': 'Region is required'}), 400
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # 1. Direct region match
@@ -2750,10 +2923,21 @@ def get_plants():
         # 4. Not found
         return jsonify({'message': f'No plant data found for {requested_region}'}), 404
 
+#@app.route('/exacto/api/verify-auth', methods=['GET'])
 @app.route('/api/verify-auth', methods=['GET'])
 @token_required
 def verify_auth():
     return jsonify({'valid': True})
+
+# app.py - Add profile endpoint (alias under /exacto for teammate UI)
+#@app.route('/exacto/api/profile', methods=['GET'])
+@app.route('/api/profile', methods=['GET'])
+@token_required
+def get_profile():
+    return jsonify({
+        'email': request.user_email,
+        'roles': request.user_roles
+    })
 
 #@app.route('/logout', methods=['POST'])
 #def logout():
@@ -2762,10 +2946,11 @@ def verify_auth():
    # return response
 
 # app.py updates
-@app.route('/dashboard')
+#@app.route('/exacto/dashboard')  # allow teammate UI to hit /exacto/dashboard
+@main.route('/dashboard')
 @token_required
 def dashboard():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         # Get user profile
         cursor.execute('SELECT verified FROM users WHERE id = ?', (request.user_id,))
@@ -2799,23 +2984,27 @@ def dashboard():
         activities=activities
     )
 
+#@app.route('/exacto/api/activity', methods=['GET'])  # add alias
 @app.route('/api/activity', methods=['GET'])
 @token_required
 def get_activity():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT activity_type, description, timestamp 
             FROM user_activity WHERE user_id = ? ORDER BY timestamp DESC LIMIT 5
         ''', (request.user_id,))
         activities = [dict(zip(('type', 'description', 'timestamp'), row)) for row in cursor.fetchall()]
-    return jsonify(activities)
+     # Return empty list for now to stop 404 spam
+    return jsonify([]), 200
+ 
 
-@app.route('/logout', methods=['POST'])
+
+#@app.route('/exacto/logout', methods=['GET', 'POST'])
+@app.route('/logout', methods=['GET', 'POST'])
 def logout():
-    response = make_response(jsonify({'message': 'Logged out successfully'}))
-    response.set_cookie('authToken', '', expires=0)
-    return response
+    return _logout_response()
+
 
 @app.route('/api/fx-rates', methods=['GET'])
 def get_fx_rates():
@@ -2861,7 +3050,7 @@ def api_list_projects():
     sort_field = sort_fields.get(sort, 'last_modified')
     order = 'ASC' if order == 'asc' else 'DESC'
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute(f'''
             SELECT id, project_name, total_cost, last_modified, formula_version, starred, archived
@@ -2890,7 +3079,7 @@ def update_project_details(project_id):
     if not all(data.get(k) for k in required):
         return jsonify({'message': 'Missing required project/company details'}), 400
 
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             UPDATE Projects
@@ -2904,7 +3093,7 @@ def update_project_details(project_id):
 @app.route('/api/projects/<int:project_id>/details', methods=['GET'])
 @token_required
 def get_project_details(project_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('''
             SELECT project_details FROM Projects
@@ -2919,7 +3108,7 @@ def get_project_details(project_id):
 @app.route('/api/projects/<int:project_id>/star', methods=['POST'])
 @token_required
 def star_project(project_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('UPDATE Projects SET starred = 1 WHERE id = ? AND user_id = ?', (project_id, request.user_id))
         conn.commit()
@@ -2928,15 +3117,36 @@ def star_project(project_id):
 @app.route('/api/projects/<int:project_id>/archive', methods=['POST'])
 @role_required('professional', 'firm', 'admin')
 def archive_project(project_id):
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
         cursor.execute('UPDATE Projects SET archived = 1 WHERE id = ? AND user_id = ?', (project_id, request.user_id))
         conn.commit()
     return jsonify({'message': 'Project archived'})
 
+
+@app.route('/api/projects/<int:project_id>', methods=['DELETE'])
+@role_required('professional', 'firm', 'admin')  # Same permissions as other project modifications
+@log_activity("Deleted project")
+def api_delete_project(project_id):
+    with get_db() as conn:
+        cursor = conn.cursor()
+        
+        # Verify project exists and belongs to the user
+        cursor.execute('SELECT id FROM Projects WHERE id = ? AND user_id = ?', (project_id, request.user_id))
+        project = cursor.fetchone()
+        
+        if not project:
+            return jsonify({'message': 'Project not found or you do not have permission to delete it'}), 404
+        
+        # Delete the project
+        cursor.execute('DELETE FROM Projects WHERE id = ?', (project_id,))
+        conn.commit()
+    
+    return jsonify({'message': 'Project deleted successfully'}), 200
+
 @app.route('/admin/normalize-regions')
 def normalize_regions():
-    with sqlite3.connect('users.db') as conn:
+    with get_db() as conn:
         cursor = conn.cursor()
 
         # Normalize region fields in various tables
@@ -2951,6 +3161,19 @@ def normalize_regions():
         conn.commit()
 
     return 'All region fields normalized to lowercase.', 200
+
+# Register the single blueprint without a prefix
+app.register_blueprint(main)
+
+# For backward compatibility with /exacto paths in your teammate's code
+@app.route('/exacto/login')
+def redirect_to_login():
+    return redirect(url_for('main.login_page'))
+
+@app.route('/exacto/dashboard')
+def redirect_to_dashboard():
+    return redirect(url_for('main.dashboard'))
+
 
 
 if __name__ == '__main__':

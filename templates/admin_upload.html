@@ -48,6 +48,30 @@
         margin-top: 0.3rem;
       }
     </style>
+
+    <!-- Mount-aware shim -->
+    <script>
+      // Simplified mount-aware script for root deployment
+      (function () {
+        // No need to detect BASE or API_BASE - we're at the root
+        window.API_BASE = "";
+
+        // Simplified URL normalization that just ensures leading slash
+        const toAbs = (url) => {
+          if (typeof url !== "string") return url;
+          if (url.startsWith("/")) return url;
+          return "/" + url.replace(/^\.?\/+/, "");
+        };
+
+        // Keep the redirect patching for relative URLs
+        const assignOrig = window.location.assign.bind(window.location);
+        const replaceOrig = window.location.replace.bind(window.location);
+        window.location.assign = (url) => assignOrig(toAbs(String(url)));
+        window.location.replace = (url) => replaceOrig(toAbs(String(url)));
+
+        // No need to rewrite anchors/forms since we're at root
+      })();
+    </script>
   </head>
   <body>
     <header
@@ -60,9 +84,12 @@
     >
       <h2>Upload Admin Data (CSV)</h2>
       <nav>
-        <a href="/dashboard">🏠 Go to Dashboard</a> |
-        <a href="/admin/uploader/requests-ui">👤 Uploader Requests</a> |
-        <a href="/logout">🚪 Logout</a>
+        <a href="{{ url_for('main.dashboard') }}">🏠 Go to Dashboard</a> |
+        <a href="{{ url_for('admin_uploader_requests_page') }}"
+          >👤 Uploader Requests</a
+        >
+        |
+        <a href="{{ url_for('logout') }}">🚪 Logout</a>
       </nav>
     </header>
 

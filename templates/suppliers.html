@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <title>Select Preferred Supplier</title>
-    <link rel="stylesheet" href="/static/css/style.css" />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
     <style>
       #go-dashboard {
         margin-top: 20px;
@@ -34,14 +37,26 @@
     <button id="go-dashboard">Go to Dashboard</button>
 
     <script>
-      // Optional: for display purposes only
+      // Replace this:
+      // const APP_ROOT = location.pathname.match(/^\/[^/]+/)?.[0] || "";
+      // const toPage = (p) => `${APP_ROOT}${p.startsWith("/") ? p : "/" + p}`;
+
+      // With this simplified version:
+      const toPage = (p) => (p.startsWith("/") ? p : "/" + p);
+
       function getPreferredRegionDisplayName() {
         const supplier = JSON.parse(localStorage.getItem("preferred_supplier"));
         return supplier?.region || "Default Region";
       }
 
       async function loadSuppliers() {
-        const res = await fetch("/api/suppliers", { credentials: "include" });
+        const res = await fetch(toPage("/api/suppliers"), {
+          credentials: "include",
+        });
+        if (!res.ok) {
+          console.error("Failed to load suppliers", res.status);
+          return;
+        }
         const suppliers = await res.json();
 
         populateRegionFilter(suppliers);
@@ -64,8 +79,8 @@
         const regions = [...new Set(suppliers.map((s) => s.region))].sort();
         for (const region of regions) {
           const opt = document.createElement("option");
-          opt.value = region.toLowerCase();
-          opt.textContent = region; // or capitalize(region)
+          opt.value = (region || "").toLowerCase();
+          opt.textContent = region || "";
           regionFilter.appendChild(opt);
         }
       }
@@ -76,8 +91,8 @@
         suppliers.forEach((s) => {
           const row = document.createElement("tr");
           row.innerHTML = `
-            <td>${s.name}</td>
-            <td>${s.region}</td>
+            <td>${s.name || ""}</td>
+            <td>${s.region || ""}</td>
             <td>${s.contact || ""}</td>
             <td>
               <button onclick='selectSupplier(${JSON.stringify(
@@ -101,7 +116,7 @@
       }
 
       document.getElementById("go-dashboard").addEventListener("click", () => {
-        window.location.href = "/dashboard";
+        location.assign(toPage("/dashboard"));
       });
 
       loadSuppliers();

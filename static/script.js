@@ -1,8 +1,9 @@
+// --- Navigation and Menu Toggle --- from teammate/app/static/script.js
+
 // ✅ Burger Menu Toggle
 function toggleMenu() {
   const menu = document.getElementById('menu-links');
   const burger = document.getElementById('burger');
-
   menu.classList.toggle('show');
   burger.classList.toggle('open');
 }
@@ -88,35 +89,3 @@ function showToast(message, type = "success") {
   }, 3500);
 }
 
-document.querySelector('form').addEventListener('submit', function () {
-  document.getElementById('login-spinner').style.display = 'block';
-});
-
-function validateSignupForm() {
-  const password = document.getElementById("password").value;
-  const confirm = document.getElementById("confirm_password").value;
-
-  if (password !== confirm) {
-    alert("Passwords do not match!");
-    return false;
-  }
-  return true;
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  const params = new URLSearchParams(window.location.search);
-  const nextPage = params.get("next");
-  const show = params.get("show");
-
-  // Show login modal if redirected to login
-  if (nextPage) {
-    openModal("login-modal");
-  }
-
-  // Optionally show login or signup manually via ?show=login or ?show=signup
-  if (show === "login") {
-    openModal("login-modal");
-  } else if (show === "signup") {
-    openModal("signup-modal");
-  }
-});

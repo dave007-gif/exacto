@@ -9,6 +9,17 @@ import { boqData, addToBOQ, addBill, setProjectDetails, calculateSummary, initBi
 // --- Debug: Script loaded ---
 console.log("script.js loaded");
 
+// --- Per-user draft namespace ---
+let currentUserEmail = null;
+const getDraftKey = () => `boq_autosave_draft_v1:${currentUserEmail || 'anon'}`;
+
+
+// Replace the mount-aware helpers with simplified versions
+// Mount-aware helpers (shim sets window.API_BASE)
+const API_BASE = ""; // Remove path matching logic, just use empty string
+const toPage = (p) => `${p.startsWith('/') ? p : '/' + p}`; // Simplify to just ensure leading slash
+
+
 document.getElementById('project-details-modal').style.display = 'none';
 // --- Project Context Enforcement ---
 // Extract project_id from URL and set currentProjectId
@@ -53,6 +64,29 @@ let projectFormulaVersion = null;
 let autoSaveTimer = null;
 let lastSavedData = null;
 let suppressFallbackUI = true;
+let userExplicitlySaved = false;
+let userProvidedProjectName = null;
+
+// Centralize how we pick a project’s display name
+function resolveProjectDisplayName(project) {
+    if (!project || typeof project !== 'object') return 'Untitled Project';
+    const nameCandidates = [
+        project.project_name,
+        project.projectName,
+        project.name,
+        project.title,
+        project.projectTitle,
+        project?.project_details?.projectTitle,
+        project?.project_details?.name
+    ];
+    const name = nameCandidates.find(candidate => {
+        const value = typeof candidate === 'string' ? candidate.trim() : '';
+        return value && value.length;
+    });
+    return name || 'Untitled Project';
+}
+
+
 
 // For all pricing logic — normalized, lowercase
 function getNormalizedRegion() {
@@ -247,13 +281,10 @@ const billTemplate = [
 // Initialize bills at project start or when starting a new project
 initBillsFromTemplate(billTemplate);
 
-const DRAFT_KEY = 'boq_autosave_draft_v1';
+//const DRAFT_KEY = 'boq_autosave_draft_v1';
 
 // --- New session/draft helpers ---
-function isNewCalculationRequested() {
-    const params = new URLSearchParams(window.location.search);
-    return params.get('new') === '1' || window.location.hash.includes('new');
-}
+
 function cameFromDashboard() {
     try {
         const ref = document.referrer || '';
@@ -261,6 +292,25 @@ function cameFromDashboard() {
         return ref.includes('/dashboard') && !new URLSearchParams(window.location.search).get('project_id');
     } catch { return false; }
 }
+
+// Update fetchUserRoles to capture email for namespacing
+async function fetchUserRoles() {
+    try {
+        const res = await fetch('/api/profile', { credentials: 'include' });
+        if (!res.ok) throw new Error("Profile fetch failed");
+        const profile = await res.json();
+        console.log("Fetched profile:", profile);
+        // NEW: set current user email for per-user storage
+        currentUserEmail = profile.email || null;
+        return profile.roles || [];
+    } catch (error) {
+        console.error('Error fetching profile:', error);
+        currentUserEmail = null;
+        return [];
+    }
+}
+
+
 function hasMeaningfulProgress(calculationData, totalCost = null) {
     try {
         // Any rendered result item
@@ -275,15 +325,44 @@ function hasMeaningfulProgress(calculationData, totalCost = null) {
         return false;
     } catch { return false; }
 }
-async function fetchUserProjectsSimple(pageSize = 200) {
+
+/*async function fetchUserProjectsSimple(pageSize = 200) {
     try {
         const res = await fetch(`/api/projects?filter=all&sort=date&order=desc&page=1&page_size=${pageSize}`, { credentials: 'include' });
         if (!res.ok) return [];
         const data = await res.json();
         return Array.isArray(data) ? data : (data.projects || []);
     } catch { return []; }
+}*/
+
+async function fetchUserProjectsSimple(pageSize = 200) {
+    try {
+        const res = await fetch(`/api/projects?filter=all&sort=date&order=desc&page=1&page_size=${pageSize}`, { credentials: 'include' });
+        if (!res.ok) return [];
+        const data = await res.json();
+        
+        // More robust response handling
+        let projectsList = [];
+        if (Array.isArray(data)) {
+            projectsList = data;
+        } else if (data && typeof data === 'object') {
+            // Try various common API formats
+            projectsList = data.projects || data.data || data.results || 
+                          (data.content && Array.isArray(data.content) ? data.content : []);
+        }
+        
+        console.log('[fetchUserProjectsSimple] Found projects:', projectsList.length, 
+                   'Names:', projectsList.map(p => p.project_name));
+        
+        return projectsList;
+    } catch (e) {
+        console.error('[fetchUserProjectsSimple] Error:', e);
+        return []; 
+    }
 }
-async function generateUntitledName() {
+
+
+/*async function generateUntitledName() {
     const projects = await fetchUserProjectsSimple();
     const names = new Set(projects.map(p => String(p.project_name || '').trim().toLowerCase()));
     // Find max suffix used
@@ -297,8 +376,46 @@ async function generateUntitledName() {
     });
     if (!names.has('untitled project')) return 'Untitled Project';
     return `Untitled Project ${max + 1}`;
+}*/
+
+async function generateUntitledName() {
+    const projects = await fetchUserProjectsSimple();
+    console.log('[generateUntitledName] Projects found:', projects.length);
+    
+    // Find max suffix used
+    let max = 0;
+    const re = /^untitled project(?:\s*(\d+))?$/i;
+    let hasBaseUntitled = false;
+    
+    projects.forEach(p => {
+        const name = String(p.project_name || '').trim();
+        const m = name.match(re);
+        if (m) {
+            if (!m[1]) {
+                // Found "Untitled Project" with no number
+                hasBaseUntitled = true;
+                max = Math.max(max, 1); 
+            } else {
+                // Found "Untitled Project X" with a number
+                max = Math.max(max, parseInt(m[1], 10));
+            }
+        }
+    });
+    
+    console.log('[generateUntitledName] Max number found:', max);
+    console.log('[generateUntitledName] Has base untitled:', hasBaseUntitled);
+    
+    // If we found any untitled projects (with or without numbers),
+    // always return the next number in sequence
+    const result = (max > 0 || hasBaseUntitled) ? 
+        `Untitled Project ${max + 1}` : 'Untitled Project';
+    
+    console.log('[generateUntitledName] Generated name:', result);
+    return result;
 }
-async function ensureDraftProjectUnique(totalCost = 0) {
+
+
+/*async function ensureDraftProjectUnique(totalCost = 0) {
     if (currentProjectId) return currentProjectId;
     try {
         const project_name = await generateUntitledName();
@@ -313,6 +430,21 @@ async function ensureDraftProjectUnique(totalCost = 0) {
         console.warn('[Autosave] Could not create draft project on backend (offline or error). Falling back to local draft only.');
     }
     return null;
+}*/
+
+async function ensureDraftProjectUnique(totalCost = 0) {
+    if (currentProjectId) return currentProjectId;
+    try {
+        // Force a fresh projects list fetch before generating name
+        await fetchUserProjectsSimple(200); // Pre-fetch to warm cache
+        const project_name = await generateUntitledName();
+        console.log('[ensureDraftProjectUnique] Generated name:', project_name);
+        
+        const resp = await saveProject({ project_name, total_cost: totalCost });
+        // Rest of your code...
+    } catch (e) {
+        console.warn('[Autosave] Could not create draft project:', e);
+    }
 }
 
 
@@ -369,6 +501,7 @@ function persistDraftLocally(calculationData, snapshot, totalCost) {
     try {
         const details = boqData?.projectDetails || {};
         const draft = {
+            owner: currentUserEmail || null,            // NEW owner metadata
             project_name: details.projectTitle || 'Untitled Project',
             calculation_data: calculationData,
             calculation_snapshot: snapshot,
@@ -376,7 +509,7 @@ function persistDraftLocally(calculationData, snapshot, totalCost) {
             formula_version: currentFormulaVersion,
             saved_at: new Date().toISOString()
         };
-        localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
+        localStorage.setItem(getDraftKey(), JSON.stringify(draft)); // per-user key
         console.log('[Autosave] Draft persisted locally');
     } catch (e) {
         console.warn('[Autosave] Failed to persist draft locally:', e);
@@ -385,37 +518,31 @@ function persistDraftLocally(calculationData, snapshot, totalCost) {
 
 function loadDraftFromLocal() {
     try {
-        const raw = localStorage.getItem(DRAFT_KEY);
+        const raw = localStorage.getItem(getDraftKey());
         if (!raw) return null;
-        return JSON.parse(raw);
+        const draft = JSON.parse(raw);
+        // Guard: only restore if draft belongs to current user
+        if (draft && draft.owner && currentUserEmail && draft.owner !== currentUserEmail) {
+            console.warn('[Autosave] Draft owner mismatch. Skipping restore.');
+            return null;
+        }
+        return draft;
     } catch {
         return null;
     }
-}
-
-async function ensureDraftProject(totalCost = 0) {
-    if (currentProjectId) return currentProjectId;
-    try {
-        const resp = await saveProject({
-            project_name: 'Untitled Project',
-            total_cost: totalCost
-        });
-        const newId = resp?.project_id || resp?.id || resp?.projectId || null;
-        if (newId) {
-            currentProjectId = newId;
-            console.log('[Autosave] Created draft project on backend:', currentProjectId);
-            return currentProjectId;
-        }
-    } catch (e) {
-        console.warn('[Autosave] Could not create draft project on backend (offline or error). Falling back to local draft only.');
-    }
-    return null;
 }
 
 // Ensure we await restore when resuming local drafts so banner logic can run in sequence
 async function tryResumeDraftFromLocal() {
     const draft = loadDraftFromLocal();
     if (!draft) return;
+
+    // Extra guard if owner missing or mismatch
+    if (currentUserEmail && draft.owner && draft.owner !== currentUserEmail) {
+        console.warn('[Autosave] Refusing to restore cross-user draft. Deleting stale draft.');
+        localStorage.removeItem(getDraftKey());
+        return;
+    }
 
     console.log('[Autosave] Local draft found. Restoring UI...');
     try {
@@ -428,18 +555,33 @@ async function tryResumeDraftFromLocal() {
         console.warn('[Autosave] Failed to restore draft UI:', e);
     }
 
+    // Only promote draft to backend if it belongs to this user
     if (!currentProjectId) {
-        try {
-            const resp = await saveProject({
-                project_name: draft.project_name || 'Untitled Project',
-                total_cost: draft.total_cost || 0
-            });
-            currentProjectId = resp?.project_id || resp?.id || resp?.projectId || null;
-            console.log('[Autosave] Draft promoted to backend with id:', currentProjectId);
-        } catch (e) {
-            console.warn('[Autosave] Could not promote draft to backend yet.');
+        if (!draft.owner || (currentUserEmail && draft.owner === currentUserEmail)) {
+            try {
+                const resp = await saveProject({
+                    project_name: draft.project_name || 'Untitled Project',
+                    total_cost: draft.total_cost || 0
+                });
+                currentProjectId = resp?.project_id || resp?.id || resp?.projectId || null;
+                console.log('[Autosave] Draft promoted to backend with id:', currentProjectId);
+            } catch (e) {
+                console.warn('[Autosave] Could not promote draft to backend yet.');
+            }
+        } else {
+            console.warn('[Autosave] Skipping backend promotion for cross-user draft.');
         }
     }
+}
+
+// Clear per-user draft when “new” calc explicitly requested
+function isNewCalculationRequested() {
+    const params = new URLSearchParams(window.location.search);
+    const requested = params.get('new') === '1' || window.location.hash.includes('new');
+    if (requested) {
+        localStorage.removeItem(getDraftKey()); // per-user
+    }
+    return requested;
 }
 
 // Fetch the current formula version from backend
@@ -782,8 +924,18 @@ function showRatesBanner(meta) {
     if (meta.fallback) parts.push(`fallback: ${meta.fallback}`);
 
     el.innerHTML = '';
-    const msg = document.createElement('span');
-    msg.textContent = parts.join(' • ');
+
+    // Ticker: duplicated content for seamless loop
+    const ticker = document.createElement('div');
+    ticker.className = 'rates-banner-ticker';
+    const track = document.createElement('div');
+    track.className = 'rates-banner-track';
+    const content = parts.join(' • ');
+    track.innerHTML = `
+      <span class="rates-banner-item">${content}</span>
+      <span class="rates-banner-item">${content}</span>
+    `;
+    ticker.appendChild(track);
 
     const refresh = document.createElement('button');
     refresh.textContent = 'Refresh rates';
@@ -800,19 +952,20 @@ function showRatesBanner(meta) {
         refresh.disabled = true;
         refresh.textContent = 'Refreshing...';
         try {
-            await fetchInitialRates(); // re-pull base rates
+            await fetchInitialRates();
             const m = await fetchPricesMeta();
-            showRatesBanner(m);       // update banner text
+            showRatesBanner(m);
         } finally {
             refresh.disabled = false;
             refresh.textContent = 'Refresh rates';
         }
     };
 
-    el.appendChild(msg);
+    el.appendChild(ticker);
     el.appendChild(refresh);
     el.style.display = 'flex';
 }
+
 
 
 async function recalculateProject() {
@@ -857,6 +1010,54 @@ async function recalculateProject() {
 
 
 // --- REPLACE saveProjectAuto with progress-aware autosave and unique untitled naming ---
+
+/*async function saveProjectAuto() {
+    try {
+        const calculationData = gatherCalculationData();
+        const snapshot = buildCalculationSnapshot();
+        const totalCost = computeTotalCostFromUI();
+        const progressed = hasMeaningfulProgress(calculationData, totalCost);
+
+        // Always persist locally as a safety net
+        persistDraftLocally(calculationData, snapshot, totalCost);
+
+        // Skip backend activity if no meaningful progress
+        if (!progressed) {
+            console.log('[Autosave] Skipping backend save (no progress). Local draft updated.');
+            return;
+        }
+
+        // Ensure we have a backend project; create Untitled/Untitled N if missing
+        if (!currentProjectId) {
+            await ensureDraftProjectUnique(totalCost);
+            // Don't update UI button state from autosave
+        }
+        if (!currentProjectId) {
+            return;
+        }
+
+        await fetch(`/api/projects/${currentProjectId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+                calculation_data: JSON.stringify(calculationData),
+                calculation_snapshot: JSON.stringify({
+                    ...snapshot,
+                    prices: await fetchCurrentPrices().catch(() => null)
+                }),
+                total_cost: totalCost,
+                formula_version: currentFormulaVersion
+            })
+        });
+        console.log('[Autosave] Backend autosave complete');
+    } catch (e) {
+        console.warn('[Autosave] Backend autosave failed; local draft persisted.', e);
+    }
+}*/
+
+// --- REPLACE saveProjectAuto with this improved version ---
+// Modified autosave function to respect user-provided project names
 async function saveProjectAuto() {
     try {
         const calculationData = gatherCalculationData();
@@ -882,25 +1083,39 @@ async function saveProjectAuto() {
             return;
         }
 
+        // Use user's custom name if available, otherwise don't specify project_name
+        // to prevent overriding the existing name
+        const payload = {
+            calculation_data: JSON.stringify(calculationData),
+            calculation_snapshot: JSON.stringify({
+                ...snapshot,
+                prices: await fetchCurrentPrices().catch(() => null)
+            }),
+            total_cost: totalCost,
+            formula_version: currentFormulaVersion
+        };
+
+        // Only include project_name if user explicitly provided one
+        if (userProvidedProjectName) {
+            payload.project_name = userProvidedProjectName;
+            console.log(`[Autosave] Using user-provided name: "${userProvidedProjectName}"`);
+        } else {
+            console.log('[Autosave] No user-provided name, preserving existing project name');
+        }
+
         await fetch(`/api/projects/${currentProjectId}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
-            body: JSON.stringify({
-                calculation_data: JSON.stringify(calculationData),
-                calculation_snapshot: JSON.stringify({
-                    ...snapshot,
-                    prices: await fetchCurrentPrices().catch(() => null)
-                }),
-                total_cost: totalCost,
-                formula_version: currentFormulaVersion
-            })
+            body: JSON.stringify(payload)
         });
         console.log('[Autosave] Backend autosave complete');
     } catch (e) {
         console.warn('[Autosave] Backend autosave failed; local draft persisted.', e);
     }
 }
+
+
 
 
 // Debounced autosave trigger
@@ -1190,7 +1405,9 @@ async function renderProjectList(role) {
     projects.forEach(project => {
         const div = document.createElement('div');
         div.className = 'project-item' + (project.archived ? ' archived' : '') + (project.starred ? ' starred' : '');
-        div.innerHTML = `<span style="font-weight:bold">${project.project_name}</span>`;
+        const displayName = resolveProjectDisplayName(project);
+        div.innerHTML = `<span style="font-weight:bold">${displayName}</span>`;
+
         if (role !== 'student') {
             div.innerHTML += `
                 <span style="margin-left:1em;">GHS ${Number(project.total_cost).toLocaleString()}</span>
@@ -1358,11 +1575,20 @@ function renderResultItem(componentType, description, quantity, unit, totalMater
     resultItem.setAttribute('data-plant-cost', finalPlantCost);
     resultItem.setAttribute('data-currency', 'GHS');
     resultItem.setAttribute('data-inputs', JSON.stringify(inputs));
-    // NEW: persist quantity/unit/description for robust snapshots
     resultItem.setAttribute('data-quantity', Number(quantity) || 0);
     resultItem.setAttribute('data-unit', unit || '');
     resultItem.setAttribute('data-description', description || '');
+
+    // Add a small remove control
+    const removeBtnHTML = `
+      <button type="button" class="remove-result-btn" aria-label="Remove ${componentType}" title="Remove"
+        style="position:absolute; top:8px; right:8px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca; border-radius:4px; font-size:12px; padding:2px 6px; cursor:pointer;">
+        Remove
+      </button>
+    `;
+
     resultItem.innerHTML = `
+        ${removeBtnHTML}
         <h4>${componentType}</h4>
         <p>Description: ${description}</p>
         <p>Quantity: ${quantity.toFixed(2)} ${unit}</p>
@@ -1373,11 +1599,15 @@ function renderResultItem(componentType, description, quantity, unit, totalMater
         <p class="result-total-cost">Total Cost: GHS ${totalCostGHS}${totalCostConverted ? ' / ' + totalCostConverted : ''}</p>
     `;
 
+    // Ensure the card can host the absolute-positioned remove button
+    resultItem.style.position = 'relative';
+
     if (existing) {
         output.replaceChild(resultItem, existing);
     } else {
         output.appendChild(resultItem);
     }
+
 
     // Reset currency selector to GHS for new results, but do not overwrite lastUsedCurrency
     const currencySelect = document.getElementById('currency-select');
@@ -2000,18 +2230,9 @@ document.addEventListener('DOMContentLoaded', async function () {
 
         // Initialize Save/Update visibility
         (function initSaveUpdateButtons() {
-            const saveBtn = document.getElementById('save-project-btn');
-            const updateBtn = document.getElementById('update-project-btn');
-            if (currentProjectId) {
-                if (saveBtn) saveBtn.style.display = 'none';
-                if (updateBtn) updateBtn.style.display = 'inline-block';
-            } else {
-                if (document.querySelectorAll('.result-item').length > 0) {
-                    if (saveBtn) saveBtn.style.display = 'inline-block';
-                }
-                if (updateBtn) updateBtn.style.display = 'none';
-            }
+            showSaveOrUpdateButton();
         })();
+
 
         // Load and restore existing project (with banner guarantees)
         if (currentProjectId) {
@@ -2024,7 +2245,12 @@ document.addEventListener('DOMContentLoaded', async function () {
                 if (res.ok) {
                     const project = await res.json();
                     projectFormulaVersion = project.formula_version;
+                    const resolvedName = resolveProjectDisplayName(project);
+                    if (resolvedName && !resolvedName.toLowerCase().startsWith('untitled project')) {
+                        userProvidedProjectName = resolvedName;
+                    }
                     lastSavedData = project.calculation_data ? JSON.parse(project.calculation_data) : {};
+
                     const calculationSnapshot = project.calculation_snapshot ? JSON.parse(project.calculation_snapshot) : null;
 
                     // Ensure current version is known
@@ -2069,6 +2295,19 @@ document.addEventListener('DOMContentLoaded', async function () {
 
 // --- Modularized Functions ---
 
+/*async function checkAuthentication() {
+    try {
+        const res = await fetch('/api/verify-auth', { credentials: 'include' });
+        if (!res.ok) throw new Error("Not authenticated");
+        console.log("Authentication verified");
+    } catch (err) {
+        console.error("Authentication check failed:", err);
+        // CHANGE: use assign with mount-aware path
+        window.location.assign(toPage('/login'));
+        throw new Error("Redirecting to login");
+    }
+}*/
+
 async function checkAuthentication() {
     try {
         const res = await fetch('/api/verify-auth', { credentials: 'include' });
@@ -2076,23 +2315,12 @@ async function checkAuthentication() {
         console.log("Authentication verified");
     } catch (err) {
         console.error("Authentication check failed:", err);
-        window.location.href = '/login';
+        // Simplify to direct path without mount-awareness
+        window.location.assign('/login');
         throw new Error("Redirecting to login");
     }
 }
 
-async function fetchUserRoles() {
-    try {
-        const res = await fetch('/api/profile', { credentials: 'include' });
-        if (!res.ok) throw new Error("Profile fetch failed");
-        const profile = await res.json();
-        console.log("Fetched profile:", profile);
-        return profile.roles || [];
-    } catch (error) {
-        console.error('Error fetching profile:', error);
-        return [];
-    }
-}
 
 function checkRoleVisibility(userRoles) {
     console.log("Checking role-based visibility for:", userRoles);
@@ -2328,62 +2556,6 @@ function setupComponentDropdown() {
     // --- end block ---
 }
 
-// Special labor fetch handlers for scalable special-case logic
-/*const SPECIAL_LABOR_FETCH_HANDLERS = {
-    'tree cutting': async (component, region) => {
-        const girthTasks = [
-            'tree cutting 600-1500',
-            'tree cutting 1500-3000',
-            'tree cutting over 3000'
-        ];
-        const laborRates = {};
-        for (const task of girthTasks) {
-            const laborData = await fetchLaborRate(task, getNormalizedRegion());
-            if (laborData) {
-                laborRates[task] = laborData.rate;
-
-                // 👇 Optional fallback warning display
-                if (laborData.warning) {
-                    const fallbackNotice = document.getElementById('fallback-warning');
-                    fallbackNotice.textContent = `Fallback for "${task}" from ${laborData.region || 'unknown region'}: ${laborData.warning}`;
-                    fallbackNotice.style.display = 'block';
-                }
-            }
-        }
-        return laborRates;
-    },
-    // Add more special cases here as needed
-};*/
-
-/*const SPECIAL_LABOR_FETCH_HANDLERS = {
-    'tree cutting': async (component) => {
-        const girthTasks = [
-            'tree cutting 600-1500',
-            'tree cutting 1500-3000',
-            'tree cutting over 3000'
-        ];
-        const laborRates = {};
-        const region = getNormalizedRegion();
-        const regionSource = localStorage.getItem('preferred_supplier') ? 'preferred supplier' : 'dropdown';
-
-        console.log(`🌳 [tree cutting] Using region: ${region} (source: ${regionSource})`);
-
-        for (const task of girthTasks) {
-            const laborData = await fetchLaborRate(task, region);
-            if (laborData) {
-                laborRates[task] = laborData.rate;
-
-                if (laborData.fallback) {
-                    const fallbackNotice = document.getElementById('fallback-warning');
-                    fallbackNotice.textContent = `Fallback for "${task}": requested "${region}", used "${laborData.fallback}"`;
-                    fallbackNotice.style.display = 'block';
-                }
-            }
-        }
-        return laborRates;
-    }
-};*/
-
 const SPECIAL_LABOR_FETCH_HANDLERS = {
     'tree cutting': async () => {
         const girthTasks = [
@@ -2463,91 +2635,6 @@ const SPECIAL_LABOR_FETCH_HANDLERS = {
 };
 
 
-// Scalable price fetcher
-/*async function fetchPricesForComponent(componentKey) {
-    const component = SMM7_2023[componentKey];
-    if (!component) {
-        console.error(`Unknown component type: ${componentKey}`);
-        return null;
-    }
-
-    // Fetch material prices
-    const materialPrices = {};
-    for (const material of component.materials || []) {
-        const materialData = await fetchMaterialRate(material);
-        if (materialData) {
-            materialPrices[material] = materialData.unit_cost;
-        }
-    }
-    console.log(`Material Prices for ${componentKey}:`, materialPrices);
-
-    // Fetch labor rates (use special handler if exists)
-    let laborRates = {};
-    if (SPECIAL_LABOR_FETCH_HANDLERS[componentKey]) {
-        laborRates = await SPECIAL_LABOR_FETCH_HANDLERS[componentKey](component);
-    } else {
-        for (const task of component.laborTasks || []) {
-            const laborData = await fetchLaborRate(task);
-            if (laborData) {
-                laborRates[task] = laborData.rate;
-            }
-        }
-    }
-    console.log(`Labor Rates for ${componentKey}:`, laborRates);
-
-    return { materialPrices, laborRates };
-}*/
-
-/*async function fetchPricesForComponent(componentKey) {
-    const component = SMM7_2023[componentKey];
-    if (!component) {
-        console.error(`Unknown component type: ${componentKey}`);
-        return null;
-    }
-
-    const region = getNormalizedRegion();  // uses hybrid logic
-    const materialPrices = {};
-    const fallbackNotice = document.getElementById('fallback-warning');
-    fallbackNotice.innerHTML = '';  // Clear old warnings
-    fallbackNotice.style.display = 'none';
-
-    for (const material of component.materials || []) {
-        const materialData = await fetchMaterialRate(material, region);
-        if (materialData) {
-            materialPrices[material] = materialData.unit_cost;
-
-            if (materialData.fallback) {
-                fallbackNotice.innerHTML += `
-                    ⚠️ Material <strong>${material}</strong> used fallback region: <em>${materialData.region}</em><br>
-                `;
-                fallbackNotice.style.display = 'block';
-            }
-        }
-    }
-
-    let laborRates = {};
-    if (SPECIAL_LABOR_FETCH_HANDLERS[componentKey]) {
-        laborRates = await SPECIAL_LABOR_FETCH_HANDLERS[componentKey](component, region);
-    } else {
-        for (const task of component.laborTasks || []) {
-            const laborData = await fetchLaborRate(task, region);
-            if (laborData) {
-                laborRates[task] = laborData.rate;
-
-                if (laborData.fallback) {
-                    fallbackNotice.innerHTML += `
-                        ⚠️ Labor task <strong>${task}</strong> used fallback region: <em>${laborData.region}</em><br>
-                    `;
-                    fallbackNotice.style.display = 'block';
-                }
-            }
-        }
-    }
-
-    console.log(`Fetched material + labor for "${componentKey}" from region: ${region}`);
-    return { materialPrices, laborRates };
-}*/
-
 async function fetchPricesForComponent(componentKey) {
     const component = SMM7_2023[componentKey];
     if (!component) {
@@ -2616,16 +2703,141 @@ async function fetchPricesForComponent(componentKey) {
     return { materialPrices, laborRates };
 }
 
+
 function showSaveOrUpdateButton() {
     const saveBtn = document.getElementById('save-project-btn');
     const updateBtn = document.getElementById('update-project-btn');
-    if (currentProjectId) {
+    const hasCalculations = document.querySelectorAll('.result-item').length > 0;
+    
+    // Only show Update button if user has explicitly saved the project
+    if (currentProjectId && userExplicitlySaved && hasCalculations) {
         if (saveBtn) saveBtn.style.display = 'none';
         if (updateBtn) updateBtn.style.display = 'inline-block';
     } else {
         if (saveBtn) saveBtn.style.display = 'inline-block';
         if (updateBtn) updateBtn.style.display = 'none';
     }
+}
+
+
+// Delegated handler to remove result items
+document.getElementById('output')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.remove-result-btn');
+  if (!btn) return;
+
+  const item = btn.closest('.result-item');
+  const comp = item?.querySelector('h4')?.textContent || 'component';
+  console.debug('[Results] Removing result item:', comp);
+
+  item?.remove();
+  updateSectionAndGrandTotals();
+  showSaveOrUpdateButton();
+});
+
+
+// Keep spinner visible long enough to be noticed
+let calcOverlayState = { visibleSince: 0, minShowMs: 500, hideTimer: null };
+
+function ensureCalcOverlay() {
+  console.debug('[CalcOverlay] ensureCalcOverlay() called');
+  let ov = document.getElementById('calc-loading');
+  let host = document.querySelector('.right-section') || document.body;
+
+  if (!ov) {
+    console.debug('[CalcOverlay] overlay not found, creating...');
+    const hostCS = window.getComputedStyle(host);
+    if (hostCS.position === 'static') {
+      host.style.position = 'relative';
+      console.debug('[CalcOverlay] host had static positioning; set to relative');
+    }
+
+    ov = document.createElement('div');
+    ov.id = 'calc-loading';
+    ov.className = 'calc-loading-overlay';
+    ov.innerHTML = '<div class="spinner"></div><p>Calculating...</p>';
+
+    Object.assign(ov.style, {
+      position: 'absolute',
+      inset: '0',
+      background: 'rgba(255,255,255,0.65)',
+      display: 'none',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: '10px',
+      zIndex: '1200',
+      opacity: '0',
+      visibility: 'hidden',
+      transition: 'opacity 180ms ease'
+    });
+
+    const sp = ov.querySelector('.spinner');
+    if (sp) {
+      Object.assign(sp.style, {
+        width: '26px', height: '26px',
+        borderRadius: '50%',
+        border: '3px solid #cbd5e1',
+        borderTopColor: '#0073e6',
+        animation: 'spin 0.8s linear infinite'
+      });
+    }
+
+    host.appendChild(ov);
+    console.debug('[CalcOverlay] overlay appended to host:', host === document.body ? 'body' : '.right-section');
+  } else {
+    console.debug('[CalcOverlay] overlay already exists');
+  }
+
+  console.debug('[CalcOverlay] returning overlay element:', ov);
+  return ov;
+}
+
+function showCalcSpinner() {
+  console.debug('[CalcOverlay] showCalcSpinner()');
+  const ov = ensureCalcOverlay();
+  if (!ov) {
+    console.warn('[CalcOverlay] overlay not available to show');
+    return;
+  }
+  if (calcOverlayState.hideTimer) {
+    clearTimeout(calcOverlayState.hideTimer);
+    calcOverlayState.hideTimer = null;
+  }
+  if (ov.style.display !== 'flex') {
+    ov.style.display = 'flex';
+    // Allow layout to apply before transitioning opacity
+    requestAnimationFrame(() => {
+      ov.style.visibility = 'visible';
+      ov.style.opacity = '1';
+      console.debug('[CalcOverlay] overlay visible (opacity=1)');
+    });
+    calcOverlayState.visibleSince = Date.now();
+  } else {
+    // Already visible; refresh the timer
+    calcOverlayState.visibleSince = Date.now();
+  }
+}
+
+function hideCalcSpinner() {
+  console.debug('[CalcOverlay] hideCalcSpinner()');
+  const ov = document.getElementById('calc-loading');
+  if (!ov) {
+    console.warn('[CalcOverlay] overlay not found to hide');
+    return;
+  }
+  const elapsed = Date.now() - (calcOverlayState.visibleSince || 0);
+  const delay = Math.max(0, calcOverlayState.minShowMs - elapsed);
+  console.debug('[CalcOverlay] elapsed=', elapsed, 'ms; delaying hide by', delay, 'ms');
+
+  if (calcOverlayState.hideTimer) clearTimeout(calcOverlayState.hideTimer);
+  calcOverlayState.hideTimer = setTimeout(() => {
+    ov.style.opacity = '0';
+    console.debug('[CalcOverlay] overlay fading out (opacity=0)');
+    setTimeout(() => {
+      ov.style.display = 'none';
+      ov.style.visibility = 'hidden';
+      console.debug('[CalcOverlay] overlay hidden (display=none)');
+    }, 200); // match CSS transition
+  }, delay);
 }
 
 
@@ -2682,95 +2894,216 @@ function setupCalculateButtons() {
                 return;
             }
 
-            // --- 2. GATHER VALUES LOOP ---
-            const inputValues = {};
-            for (let j = 0; j < inputs.length; j++) {
-                const input = inputs[j];
-                const inputName = input.name;
+            showCalcSpinner();
+            try {
+                // --- 2. GATHER VALUES LOOP ---
+                const inputValues = {};
+                for (let j = 0; j < inputs.length; j++) {
+                    const input = inputs[j];
+                    const inputName = input.name;
 
-                // Special handling for custom_mix_ratio
-                if (input.id === "custom_mix_ratio") {
+                    // Special handling for custom_mix_ratio
+                    if (input.id === "custom_mix_ratio") {
+                        const mixRatioSelect = fieldset.querySelector('#mix_ratio');
+                        if (mixRatioSelect && mixRatioSelect.value === 'custom') {
+                            inputValues[inputName] = input.value.trim(); // Always as string
+                        }
+                        continue; // Skip numeric validation for this field
+                    }
+
+                    // For mix_ratio select, store as string
+                    if (input.id === "mix_ratio") {
+                        inputValues[inputName] = input.value;
+                        continue;
+                    }
+
+                    if (input.type === "number" || input.type === "text") {
+                        const val = parseFloat(input.value);
+                        if (isNaN(val)) {
+                            alert(`Please enter a valid number for ${inputName}`);
+                            return;
+                        }
+                        inputValues[inputName] = val;
+                    } else if (input.tagName === "SELECT") {
+                        inputValues[inputName] = input.value;
+                    }
+                }
+                
+                // For dynamic trench fields, collect arrays
+                if (fieldset.querySelectorAll('.internal-trench-input').length) {
+                    inputValues.int_hor_trenches = Array.from(fieldset.querySelectorAll('#int_hor_trenches input')).map(inp => parseFloat(inp.value) || 0);
+                    inputValues.int_ver_trenches = Array.from(fieldset.querySelectorAll('#int_ver_trenches input')).map(inp => parseFloat(inp.value) || 0);
+                }
+
+                // --- 3. SET mix_ratio CORRECTLY ---
+                if (componentType === "concrete in trench") {
                     const mixRatioSelect = fieldset.querySelector('#mix_ratio');
-                    if (mixRatioSelect && mixRatioSelect.value === 'custom') {
-                        inputValues[inputName] = input.value.trim(); // Always as string
+                    let mix_ratio = mixRatioSelect ? mixRatioSelect.value : "1:2:4";
+                    if (mix_ratio === 'custom') {
+                        const customMixInput = fieldset.querySelector('#custom_mix_ratio');
+                        if (customMixInput && customMixInput.value.trim()) {
+                            mix_ratio = customMixInput.value.trim();
+                        }
                     }
-                    continue; // Skip numeric validation for this field
+                    inputValues.mix_ratio = mix_ratio;
                 }
+                // --- END BLOCK ---
 
-                // For mix_ratio select, store as string
-                if (input.id === "mix_ratio") {
-                    inputValues[inputName] = input.value;
-                    continue;
-                }
-
-                if (input.type === "number" || input.type === "text") {
-                    const val = parseFloat(input.value);
-                    if (isNaN(val)) {
-                        alert(`Please enter a valid number for ${inputName}`);
-                        return;
+                // Convert units from mm to meters if applicable
+                Object.keys(inputValues).forEach(field => {
+                    if (INPUT_UNITS[field] === 'mm') {
+                        if (Array.isArray(inputValues[field])) {
+                            inputValues[field] = inputValues[field].map(val => val / 1000);
+                        } else {
+                            inputValues[field] = inputValues[field] / 1000;
+                        }
                     }
-                    inputValues[inputName] = val;
-                } else if (input.tagName === "SELECT") {
-                    inputValues[inputName] = input.value;
+                });
+
+                console.log("Input values for calculation:", inputValues);
+
+                const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
+                if (!formulaKey || !SMM7_2023[formulaKey]) {
+                    alert(`No formula found for component: ${componentType}. Please check your inputs.`);
+                    return;
                 }
-            }
-            // For dynamic trench fields, collect arrays
-            if (fieldset.querySelectorAll('.internal-trench-input').length) {
-                inputValues.int_hor_trenches = Array.from(fieldset.querySelectorAll('#int_hor_trenches input')).map(inp => parseFloat(inp.value) || 0);
-                inputValues.int_ver_trenches = Array.from(fieldset.querySelectorAll('#int_ver_trenches input')).map(inp => parseFloat(inp.value) || 0);
-            }
 
-            // --- 3. SET mix_ratio CORRECTLY ---
-            if (componentType === "concrete in trench") {
-                const mixRatioSelect = fieldset.querySelector('#mix_ratio');
-                let mix_ratio = mixRatioSelect ? mixRatioSelect.value : "1:2:4";
-                if (mix_ratio === 'custom') {
-                    const customMixInput = fieldset.querySelector('#custom_mix_ratio');
-                    if (customMixInput && customMixInput.value.trim()) {
-                        mix_ratio = customMixInput.value.trim();
-                    }
+                // --- Preliminaries short-circuit (lump-sum) ---
+                if (formulaKey === 'preliminaries_item') {
+                    const valueKey = Object.keys(inputValues).find(k => /_value$|^value$/i.test(k));
+                    const descKey  = Object.keys(inputValues).find(k => /_description$|^description$/i.test(k));
+                    const amount = Number(inputValues[valueKey] ?? inputValues.value) || 0;
+
+                    const unit = SMM7_2023[formulaKey].unit || 'item';
+                    // Prefer explicit description input, else show the component name
+                    const description =
+                        (descKey && inputValues[descKey]) ||
+                        (typeof SMM7_2023[formulaKey].description === 'function'
+                            ? SMM7_2023[formulaKey].description({ description: componentType })
+                            : componentType);
+
+                    const quantity = 1;
+                    const totalMaterialCost = amount;
+                    const labor = { totalDays: 0, laborCost: 0 };
+                    const finalPlantCost = 0;
+
+                    renderResultItem(
+                        componentType,
+                        description,
+                        quantity,
+                        unit,
+                        totalMaterialCost,
+                        labor,
+                        finalPlantCost,
+                        inputValues
+                    );
+
+                    updateSectionAndGrandTotals();
+                    calculatedComponents.add(componentType);
+                    
+                    // Only show based on explicit save status
+                    showSaveOrUpdateButton();
+                    
+                    // Schedule autosave but don't change button visibility
+                    scheduleAutoSave();
+                    
+                    return; // ⛔ do not proceed to pricing/materials/labor path
                 }
-                inputValues.mix_ratio = mix_ratio;
-            }
-            // --- END BLOCK ---
+                // --- end prelim short-circuit ---
 
-            // Convert units from mm to meters if applicable
-            Object.keys(inputValues).forEach(field => {
-                if (INPUT_UNITS[field] === 'mm') {
-                    if (Array.isArray(inputValues[field])) {
-                        inputValues[field] = inputValues[field].map(val => val / 1000);
-                    } else {
-                        inputValues[field] = inputValues[field] / 1000;
-                    }
+                // --- Add this block for trench excavation ---
+                if (formulaKey === "trench excavation") {
+                    // Replicate the mean girth logic from your formulas.js
+                    const extGirth = 2 * ((inputValues.ext_len || 0) + (inputValues.ext_width || 0)) - 4 * (inputValues.spread_trench || 0);
+                    const intHor = (inputValues.int_hor_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
+                    const intVer = (inputValues.int_ver_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
+                    lastMeanGirth = extGirth + intHor + intVer;
+                    // Optionally, update the mean girth field if visible
+                    const meanGirthInput = document.getElementById('mean_girth');
+                    if (meanGirthInput) meanGirthInput.value = (lastMeanGirth * 1000).toFixed(2); // show in mm
                 }
-            });
+                // --- end block ---
 
-            console.log("Input values for calculation:", inputValues);
+                // Clear previous fallback messages
+                const fallbackNotice = document.getElementById('fallback-warning');
+                if (fallbackNotice) {
+                    fallbackNotice.innerHTML = '';
+                    fallbackNotice.style.display = 'none';
+                }
 
-            const formulaKey = COMPONENT_TO_FORMULA_MAP[componentType];
-            if (!formulaKey || !SMM7_2023[formulaKey]) {
-                alert(`No formula found for component: ${componentType}. Please check your inputs.`);
-                return;
-            }
+                // Un-suppress fallback UI so warnings can be shown
+                suppressFallbackUI = false;
 
-            // --- Preliminaries short-circuit (lump-sum) ---
-            if (formulaKey === 'preliminaries_item') {
-                const valueKey = Object.keys(inputValues).find(k => /_value$|^value$/i.test(k));
-                const descKey  = Object.keys(inputValues).find(k => /_description$|^description$/i.test(k));
-                const amount = Number(inputValues[valueKey] ?? inputValues.value) || 0;
+                const region = getNormalizedRegion();
 
-                const unit = SMM7_2023[formulaKey].unit || 'item';
-                // Prefer explicit description input, else show the component name
-                const description =
-                    (descKey && inputValues[descKey]) ||
-                    (typeof SMM7_2023[formulaKey].description === 'function'
-                        ? SMM7_2023[formulaKey].description({ description: componentType })
-                        : componentType);
+                const prices = await fetchPricesForComponent(formulaKey, region);
 
-                const quantity = 1;
-                const totalMaterialCost = amount;
-                const labor = { totalDays: 0, laborCost: 0 };
-                const finalPlantCost = 0;
+                if (!prices) {
+                    alert(`Failed to fetch prices for ${componentType}. Please try again.`);
+                    return;
+                }
+
+                const { materialPrices, laborRates } = prices;
+                const formula = SMM7_2023[formulaKey].formula;
+                const quantity = formula(inputValues, adjustments.concrete_waste_factor || 1);
+                if (isNaN(quantity)) {
+                    alert("Failed to calculate quantity. Please check your inputs.");
+                    return;
+                }
+
+                // Material cost
+                let totalMaterialCost = 0;
+                for (const material of SMM7_2023[formulaKey].materials || []) {
+                    totalMaterialCost += (materialPrices[material] || 0) * quantity;
+                }
+
+                // Determine correct labor task (dynamic for tree cutting, static for others)
+                let laborTask;
+                if (typeof SMM7_2023[formulaKey].getLaborTask === 'function') {
+                    laborTask = SMM7_2023[formulaKey].getLaborTask(inputValues);
+                } else if (Array.isArray(SMM7_2023[formulaKey].laborTasks) && SMM7_2023[formulaKey].laborTasks.length > 0) {
+                    laborTask = SMM7_2023[formulaKey].laborTasks[0];
+                } else {
+                    laborTask = null;
+                }
+
+                // Labor cost calculation
+                let labor;
+                if (laborTask && typeof SMM7_2023[formulaKey].calculateLaborCost === 'function') {
+                    labor = SMM7_2023[formulaKey].calculateLaborCost(inputValues, laborRates);
+                } else {
+                    labor = SMM7_2023.calculateLaborCost(
+                        quantity,
+                        8,
+                        adjustments.labor_efficiency || 1,
+                        8,
+                        laborRates[laborTask] || 0,
+                        laborTask
+                    );
+                }
+                if (!labor || isNaN(labor.laborCost)) {
+                    alert("Failed to calculate labor cost. Please check your inputs.");
+                    return;
+                }
+
+                // Plant cost
+                const plantData = await fetchPlantData();
+                const equipmentList = SMM7_2023[formulaKey].equipment || [];
+                const relevantPlants = plantData.filter(plant =>
+                    equipmentList.includes(plant.equipment)
+                );
+                const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
+
+                // Apply haulage multiplier
+                totalMaterialCost *= haulageMultiplier;
+                labor.laborCost *= haulageMultiplier;
+                const finalPlantCost = plantCost * haulageMultiplier;
+
+                // Add these lines before renderResultItem:
+                const unit = SMM7_2023[formulaKey].unit || "m³";
+                const description = typeof SMM7_2023[formulaKey].description === 'function'
+                    ? SMM7_2023[formulaKey].description(inputValues)
+                    : (SMM7_2023[formulaKey].reference || componentType);
 
                 renderResultItem(
                     componentType,
@@ -2780,148 +3113,28 @@ function setupCalculateButtons() {
                     totalMaterialCost,
                     labor,
                     finalPlantCost,
-                    inputValues
+                    inputValues // <-- pass original inputs here
                 );
 
                 updateSectionAndGrandTotals();
                 calculatedComponents.add(componentType);
+
+                // Only show based on explicit save status
                 showSaveOrUpdateButton();
-                return; // ⛔ do not proceed to pricing/materials/labor path
-            }
-            // --- end prelim short-circuit ---
-
-
-            // --- Add this block for trench excavation ---
-            if (formulaKey === "trench excavation") {
-                // Replicate the mean girth logic from your formulas.js
-                const extGirth = 2 * ((inputValues.ext_len || 0) + (inputValues.ext_width || 0)) - 4 * (inputValues.spread_trench || 0);
-                const intHor = (inputValues.int_hor_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
-                const intVer = (inputValues.int_ver_trenches || []).reduce((a, b) => a + Number(b || 0), 0);
-                lastMeanGirth = extGirth + intHor + intVer;
-                // Optionally, update the mean girth field if visible
-                const meanGirthInput = document.getElementById('mean_girth');
-                if (meanGirthInput) meanGirthInput.value = (lastMeanGirth * 1000).toFixed(2); // show in mm
-            }
-            // --- end block ---
-
-            // Clear previous fallback messages
-            const fallbackNotice = document.getElementById('fallback-warning');
-            if (fallbackNotice) {
-                fallbackNotice.innerHTML = '';
-                fallbackNotice.style.display = 'none';
-            }
-
-            // Un-suppress fallback UI so warnings can be shown
-            suppressFallbackUI = false;
-
-            const region = getNormalizedRegion();
-
-            const prices = await fetchPricesForComponent(formulaKey, region);
-
-            if (!prices) {
-                alert(`Failed to fetch prices for ${componentType}. Please try again.`);
-                return;
-            }
-
-            const { materialPrices, laborRates } = prices;
-            const formula = SMM7_2023[formulaKey].formula;
-            const quantity = formula(inputValues, adjustments.concrete_waste_factor || 1);
-            if (isNaN(quantity)) {
-                alert("Failed to calculate quantity. Please check your inputs.");
-                return;
-            }
-
-            // Material cost
-            let totalMaterialCost = 0;
-            for (const material of SMM7_2023[formulaKey].materials || []) {
-                totalMaterialCost += (materialPrices[material] || 0) * quantity;
-            }
-
-            // Determine correct labor task (dynamic for tree cutting, static for others)
-            let laborTask;
-            if (typeof SMM7_2023[formulaKey].getLaborTask === 'function') {
-                laborTask = SMM7_2023[formulaKey].getLaborTask(inputValues);
-            } else if (Array.isArray(SMM7_2023[formulaKey].laborTasks) && SMM7_2023[formulaKey].laborTasks.length > 0) {
-                laborTask = SMM7_2023[formulaKey].laborTasks[0];
-            } else {
-                laborTask = null;
-            }
-
-            // Labor cost calculation
-            let labor;
-            if (laborTask && typeof SMM7_2023[formulaKey].calculateLaborCost === 'function') {
-                labor = SMM7_2023[formulaKey].calculateLaborCost(inputValues, laborRates);
-            } else {
-                labor = SMM7_2023.calculateLaborCost(
-                    quantity,
-                    8,
-                    adjustments.labor_efficiency || 1,
-                    8,
-                    laborRates[laborTask] || 0,
-                    laborTask
-                );
-            }
-            if (!labor || isNaN(labor.laborCost)) {
-                alert("Failed to calculate labor cost. Please check your inputs.");
-                return;
-            }
-
-            // Plant cost
-            const plantData = await fetchPlantData();
-            const equipmentList = SMM7_2023[formulaKey].equipment || [];
-            const relevantPlants = plantData.filter(plant =>
-                equipmentList.includes(plant.equipment)
-            );
-            const plantCost = SMM7_2023.calculatePlantCost(quantity, relevantPlants);
-
-            // Apply haulage multiplier
-            totalMaterialCost *= haulageMultiplier;
-            labor.laborCost *= haulageMultiplier;
-            const finalPlantCost = plantCost * haulageMultiplier;
-
-            // Add these lines before renderResultItem:
-            const unit = SMM7_2023[formulaKey].unit || "m³";
-            const description = typeof SMM7_2023[formulaKey].description === 'function'
-                ? SMM7_2023[formulaKey].description(inputValues)
-                : (SMM7_2023[formulaKey].reference || componentType);
-
-            renderResultItem(
-                componentType,
-                description,
-                quantity,
-                unit,
-                totalMaterialCost,
-                labor,
-                finalPlantCost,
-                inputValues // <-- pass original inputs here
-            );
-
-            updateSectionAndGrandTotals();
-
-            calculatedComponents.add(componentType);
-
-            const selectedComponents = Array.from(componentSelect.selectedOptions).map(option => option.value);
-            // Show appropriate Save/Update button depending on whether a project exists
-            if (selectedComponents.every(component => calculatedComponents.has(component))) {
-                showSaveOrUpdateButton();
-            } else {
-                // Even if not all selected components calculated, ensure correct button shown
-                showSaveOrUpdateButton();
-            }
-
-            // remove unconditional saveBtn display to avoid re-showing Save over Update
-            // const saveBtn = document.getElementById('save-project-btn');
-            // if (saveBtn) saveBtn.style.display = 'block';
+                
+                // Schedule autosave but don't change button visibility
+                scheduleAutoSave();
+            
+            } finally {
+                hideCalcSpinner();
+            }            
         });
     }
 }
 
 
-// Ensure globals
-//let currentProjectId = currentProjectId || null;
-
-// Setup initial Save button (existing) — augment to reveal Update after save
-function setupSaveProjectButton() {
+// Modify the Save button click handler to set the explicit save flag
+/*function setupSaveProjectButton() {
     console.log("Setting up save project button");
     const saveBtn = document.getElementById('save-project-btn');
     if (!saveBtn) {
@@ -2956,6 +3169,91 @@ function setupSaveProjectButton() {
             const newId = response.project_id || response.id || response.projectId || null;
             if (newId) currentProjectId = newId;
 
+            // NEW: Also set the project name in the project details form
+            // This ensures consistency between saved name and project details
+            const projectTitleInput = document.getElementById('project-title');
+            if (projectTitleInput && (!projectTitleInput.value || confirm("Update the project title field with this name?"))) {
+                projectTitleInput.value = projectName;
+                
+                // If we have project details, update the project title there as well
+                if (boqData && boqData.projectDetails) {
+                    boqData.projectDetails.projectTitle = projectName;
+                    refreshProjectDetailsUI();
+                }
+            }
+
+            // Set the explicit save flag to true since user clicked Save
+            userExplicitlySaved = true;
+
+            // Toggle buttons: hide initial save, show update
+            saveBtn.style.display = 'none';
+            const updateBtn = document.getElementById('update-project-btn');
+            if (updateBtn) updateBtn.style.display = 'inline-block';
+
+            alert(`Project "${projectName}" saved successfully! Total Cost: GHS ${totalCost.toFixed(2)}`);
+            await displayProjects();
+        } catch (e) {
+            alert("Failed to save project.");
+        }
+    });
+}*/
+
+// Update setupSaveProjectButton to track the user-provided project name
+// Update setupSaveProjectButton to capture user-provided name
+function setupSaveProjectButton() {
+    console.log("Setting up save project button");
+    const saveBtn = document.getElementById('save-project-btn');
+    if (!saveBtn) {
+        console.warn("Save project button not found");
+        return;
+    }
+
+    saveBtn.addEventListener('click', async function () {
+        const projectName = prompt("Enter a name for this project:");
+        if (!projectName) {
+            alert("Project name is required.");
+            return;
+        }
+
+        // Store the user-provided name in our global variable
+        userProvidedProjectName = projectName;
+        console.log(`User provided project name: "${userProvidedProjectName}"`);
+
+        // Collect results and totalCost
+        const results = document.querySelectorAll('.result-item');
+        let totalCost = 0;
+        results.forEach(result => {
+            const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+            const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+            const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+            totalCost += materialCost + laborCost + plantCost;
+        });
+
+        try {
+            const response = await saveProject({
+                project_name: projectName,
+                total_cost: totalCost
+            });
+
+            // Ensure currentProjectId reflects backend
+            const newId = response.project_id || response.id || response.projectId || null;
+            if (newId) currentProjectId = newId;
+
+            // Also set the project name in the project details form if available
+            const projectTitleInput = document.getElementById('project-title');
+            if (projectTitleInput) {
+                projectTitleInput.value = projectName;
+                
+                // If we have project details, update the project title there as well
+                if (boqData && boqData.projectDetails) {
+                    boqData.projectDetails.projectTitle = projectName;
+                    refreshProjectDetailsUI();
+                }
+            }
+
+            // Set the explicit save flag to true since user clicked Save
+            userExplicitlySaved = true;
+
             // Toggle buttons: hide initial save, show update
             saveBtn.style.display = 'none';
             const updateBtn = document.getElementById('update-project-btn');
@@ -2968,6 +3266,7 @@ function setupSaveProjectButton() {
         }
     });
 }
+
 
 // New: setup Update button for subsequent saves (PUT)
 function setupUpdateProjectButton() {
@@ -2999,10 +3298,11 @@ function setupUpdateProjectButton() {
         });
 
         try {
-            // Call saveProject with id to trigger update path
+            // CHANGED: Don't override the project_name when updating
+            // This preserves the original project name used when saving
             const resp = await saveProject({
                 project_id: currentProjectId,
-                project_name: (document.getElementById('project-title')?.value || undefined),
+                // REMOVED: project_name: (document.getElementById('project-title')?.value || undefined),
                 total_cost: totalCost
             });
 
@@ -3015,6 +3315,7 @@ function setupUpdateProjectButton() {
         }
     });
 }
+
 
 // --- Add these lines near the top (after your imports) ---
 let pendingBOQExportFn = null;
@@ -3097,7 +3398,7 @@ document.getElementById('save-and-continue-project-details').onclick = async fun
 };
 
 
-function setupLogoutButton() {
+/*function setupLogoutButton() {
     console.log("Setting up dashboard button");
     const dashboardBtn = document.getElementById('dashboard-btn');
     if (!dashboardBtn) {
@@ -3107,7 +3408,27 @@ function setupLogoutButton() {
     dashboardBtn.addEventListener('click', () => {
         window.location.href = '/dashboard';
     });
+}*/
+
+function setupLogoutButton() {
+    console.log("Setting up dashboard button");
+    const dashboardBtn = document.getElementById('dashboard-btn');
+    if (!dashboardBtn) {
+        console.warn("Dashboard button not found");
+        return;
+    }
+    dashboardBtn.addEventListener('click', () => {
+        // Simplify to direct path without mount-awareness
+        window.location.assign('/dashboard');
+
+    });
 }
+
+// Optional: clear this user’s draft on logout click if you have a logout button
+ document.getElementById('logout-btn')?.addEventListener('click', () => {
+     localStorage.removeItem(getDraftKey());
+ });
+
 
 // Validation functions
 function validateInput(input) {
@@ -3206,7 +3527,8 @@ console.log("Adjustments:", adjustments);
 const dashboardBtn = document.getElementById('dashboard-btn');
 if (dashboardBtn) {
     dashboardBtn.addEventListener('click', () => {
-        window.location.href = '/dashboard';
+        // Simplify to direct path
+        window.location.assign('/dashboard');
     });
 }
 
@@ -3336,7 +3658,7 @@ function clearInvalidProjects() {
 clearInvalidProjects();
 
 // Modified project saving with locations
-async function saveProject(projectData) {
+/*async function saveProject(projectData) {
     const projectLoc = document.getElementById('project-location')?.value || null;
     const supplierLoc = document.getElementById('supplier-location')?.value || null;
     const calculationData = gatherCalculationData();
@@ -3395,7 +3717,83 @@ async function saveProject(projectData) {
         console.error('Error saving project:', error);
         throw error;
     }
+}*/
+
+// Modified project saving with locations
+// Modified saveProject function to properly handle custom project names
+async function saveProject(projectData) {
+    const projectLoc = document.getElementById('project-location')?.value || null;
+    const supplierLoc = document.getElementById('supplier-location')?.value || null;
+    const calculationData = gatherCalculationData();
+    let totalCost = 0;
+    document.querySelectorAll('.result-item').forEach(result => {
+        const materialCost = parseFloat(result.getAttribute('data-material-cost')) || 0;
+        const laborCost = parseFloat(result.getAttribute('data-labor-cost')) || 0;
+        const plantCost = parseFloat(result.getAttribute('data-plant-cost')) || 0;
+        totalCost += materialCost + laborCost + plantCost;
+    });
+
+    // Store the custom name in our global variable for use in autosave
+    const projectName = projectData.projectName || projectData.project_name || projectData.projectTitle;
+    if (projectName && projectName !== 'Untitled Project' && !projectName.toLowerCase().startsWith('untitled project')) {
+        userProvidedProjectName = projectName;
+        console.log(`Setting userProvidedProjectName to: "${userProvidedProjectName}"`);
+    }
+    
+    // Always use the custom name if available, otherwise use the provided or fallback name
+    const finalProjectName = userProvidedProjectName || projectName || 'Untitled Project';
+
+    try {
+        const payload = {
+            ...projectData,
+            project_name: finalProjectName, // Use our final name that prioritizes user's custom name
+            project_location: projectLoc,
+            supplier_location: supplierLoc,
+            supplier_id: localStorage.getItem('preferredSupplierId') || null,
+            calculation_data: JSON.stringify(calculationData),
+            total_cost: typeof projectData.total_cost === 'number' ? projectData.total_cost : totalCost
+        };
+
+        // If a project_id exists in projectData or global currentProjectId, update instead of create
+        const createUrl = '/api/projects';
+        const updateId = projectData.project_id || projectData.id || currentProjectId || null;
+
+        let response;
+        if (updateId) {
+            // Log exactly what's being sent to the server
+            console.log(`Updating project ${updateId} with name: "${finalProjectName}"`);
+            
+            response = await fetch(`/api/projects/${encodeURIComponent(updateId)}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+        } else {
+            console.log(`Creating new project with name: "${finalProjectName}"`);
+            
+            response = await fetch(createUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+                body: JSON.stringify(payload)
+            });
+        }
+
+        if (!response.ok) throw new Error('Project save failed');
+        const json = await response.json();
+
+        // If backend returned a new id, set currentProjectId
+        const returnedId = json.project_id || json.id || json.projectId || null;
+        if (returnedId) currentProjectId = returnedId;
+
+        return json;
+    } catch (error) {
+        console.error('Error saving project:', error);
+        throw error;
+    }
 }
+
 
 
 // --- Unified project list display ---
@@ -3424,13 +3822,16 @@ async function displayProjects() {
                     : true;
                 if (incomplete) projectItem.classList.add('incomplete');
 
+                const displayName = resolveProjectDisplayName(project);
+
                 projectItem.innerHTML = `
-                    <h4>${project.project_name || 'Untitled Project'}</h4>
+                    <h4>${displayName}</h4>
                     <p>Total Cost: GHS ${project.total_cost}</p>
                     <p>Date: ${project.last_modified || ''}</p>
                 `;
                 projectList.appendChild(projectItem);
             });
+
         } else {
             console.error("Projects data is not an array:", projects);
         }
@@ -4384,3 +4785,64 @@ function generateBOQSpreadsheet(format) {
     console.log('[BOQ Export] Excel file generated and download triggered');
 }
 
+
+document.addEventListener('DOMContentLoaded', () => {
+  if (!document.body.classList.contains('calc-page')) return;
+
+  // Map selector values to fieldset IDs (keep IDs as in your page)
+  const componentToFieldset = {
+    'mobilization and demobilization': 'mobilizationField',
+    'site office and facilities': 'siteOfficeField',
+    'temporary fencing': 'tempFencingField',
+    'water for works': 'waterWorksField',
+    'electricity for works': 'electricityWorksField',
+    'insurance': 'insuranceField',
+    'health and safety': 'healthSafetyField',
+    'setting out': 'settingOutField',
+    'project signboard': 'projectSignboardField',
+    'other preliminaries': 'otherPrelimField',
+    'tree cutting': 'treeCuttingField',
+    'site clearance': 'siteClearanceField',
+    'topsoil excavation': 'topsoilExcavationField',
+    'retain topsoil': 'retainTopsoilField',
+    'trench excavation': 'trenchExcavationField',
+    'concrete in trench': 'trenchField',
+    'blockwork in foundation': 'blockworkField',
+    'concrete in pit': 'concretePitField' // if present
+  };
+
+  const selector = document.getElementById('elements');
+  if (selector && selector.multiple) selector.multiple = false; // one-at-a-time
+
+  function hideAll() {
+    Object.values(componentToFieldset).forEach(id => {
+      const fs = document.getElementById(id);
+      if (fs) fs.classList.add('hidden');
+    });
+  }
+  function showFor(value) {
+    const id = componentToFieldset[value];
+    const fs = id && document.getElementById(id);
+    if (fs) fs.classList.remove('hidden');
+  }
+
+  hideAll();
+  selector?.addEventListener('change', () => {
+    hideAll();
+    const val = selector.value;
+    if (val) showFor(val);
+  });
+
+  // BOQ modal behavior
+  const modal = document.getElementById('boq-format-modal');
+  const openBtn = document.getElementById('generate-boq');
+  const closeBtn = document.getElementById('close-boq-modal');
+
+  function openModal() { if (modal) modal.style.display = 'flex'; }
+  function closeModal() { if (modal) modal.style.display = 'none'; }
+
+  openBtn?.addEventListener('click', (e) => { e.preventDefault(); openModal(); });
+  closeBtn?.addEventListener('click', closeModal);
+  modal?.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+});

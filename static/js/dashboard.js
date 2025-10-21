@@ -1,409 +1,514 @@
-let currentFilter = 'recent';
-
-async function loadProjects(filter = 'recent', search = '') {
-    currentFilter = filter;
-    const projectList = document.getElementById('project-list');
-    if (!projectList) return;
-
-    projectList.innerHTML = '<p>Loading projects...</p>';
-
-    let url = `/api/projects?filter=${filter}`;
-    if (search) url += `&search=${encodeURIComponent(search)}`;
-
-    try {
-        const res = await fetch(url, { credentials: 'include' });
-        if (!res.ok) {
-            projectList.innerHTML = '<p>Could not load projects.</p>';
-            return;
-        }
-        const data = await res.json();
-
-        const projects = Array.isArray(data) ? data : (data.projects || data.results || []);
-        if (!projects || projects.length === 0) {
-            console.debug('loadProjects: backend returned no projects', data);
-            projectList.innerHTML = '<p>No projects found.</p>';
-            return;
-        }
-
-        projectList.innerHTML = '';
-        projects.forEach(project => {
-            const pid = project.id || project.project_id || project.projectId || project._id;
-            const name = project.project_name || project.name || project.projectName || 'Untitled Project';
-            const lastModifiedRaw = project.last_modified || project.updated_at || project.modified || project.lastModified;
-            const lastModified = lastModifiedRaw ? new Date(lastModifiedRaw).toLocaleString() : '';
-            if (!pid) return;
-
-            const row = document.createElement('div');
-            row.className = 'project-row';
-            row.style.display = 'flex';
-            row.style.alignItems = 'center';
-            row.style.gap = '8px';
-            row.style.margin = '6px 0';
-
-            const link = document.createElement('a');
-            link.href = `/calculation?project_id=${encodeURIComponent(pid)}`;
-            link.textContent = `${name}${ lastModified ? ' (Last modified: ' + lastModified + ')' : '' }`;
-            link.className = 'project-link';
-            link.style.flex = '1';
-
-            const archiveBtn = document.createElement('button');
-            archiveBtn.textContent = 'Archive';
-            archiveBtn.title = 'Archive project';
-            archiveBtn.onclick = async () => {
-                if (!confirm('Archive this project?')) return;
-                try {
-                    const r = await fetch(`/api/projects/${encodeURIComponent(pid)}/archive`, {
-                        method: 'POST',
-                        credentials: 'include'
-                    });
-                    if (r.ok) {
-                        row.remove();
-                    } else {
-                        alert('Failed to archive project');
-                    }
-                } catch (e) {
-                    console.error('archive error:', e);
-                    alert('Network error archiving project');
-                }
-            };
-
-            const deleteBtn = document.createElement('button');
-            deleteBtn.textContent = 'Delete';
-            deleteBtn.title = 'Delete project permanently';
-            deleteBtn.style.color = '#b00020';
-            deleteBtn.onclick = async () => {
-                if (!confirm('Delete this project permanently? This cannot be undone.')) return;
-                try {
-                    const r = await fetch(`/api/projects/${encodeURIComponent(pid)}`, {
-                        method: 'DELETE',
-                        credentials: 'include'
-                    });
-                    if (r.ok || r.status === 204) {
-                        row.remove();
-                    } else if (r.status === 405 || r.status === 404) {
-                        // If hard delete not supported, fallback to archive
-                        const ar = await fetch(`/api/projects/${encodeURIComponent(pid)}/archive`, {
-                            method: 'POST',
-                            credentials: 'include'
-                        });
-                        if (ar.ok) row.remove();
-                        else alert('Delete not supported and archive failed.');
-                    } else {
-                        alert('Failed to delete project');
-                    }
-                } catch (e) {
-                    console.error('delete error:', e);
-                    alert('Network error deleting project');
-                }
-            };
-
-            row.appendChild(link);
-            row.appendChild(archiveBtn);
-            row.appendChild(deleteBtn);
-            projectList.appendChild(row);
-        });
-    } catch (err) {
-        console.error('loadProjects error:', err);
-        projectList.innerHTML = '<p>Error loading projects.</p>';
-    }
+// Replace the app root detection with a simple empty string
+// No longer need to detect mount points since we're serving from root
+function detectAppRoot() {
+  return ''; // Always return empty string since we're at root
 }
 
-async function loadRecentActivity() {
-    try {
-        const response = await fetch('/api/activity', { credentials: 'include' });
-        if (!response.ok) return;
-        const activities = await response.json();
-        const feed = document.getElementById('activity-list');
-        if (!feed) return;
-        feed.innerHTML = '';
-        activities.forEach(activity => {
-            feed.innerHTML += `
-                <div class="activity-item">
-                    <small>${new Date(activity.timestamp).toLocaleString()}</small>
-                    <p>${activity.description}</p>
-                </div>
-            `;
-        });
-    } catch (e) {
-        console.debug('loadRecentActivity failed:', e);
-    }
-}
+const APP_ROOT = '';  // Directly set to empty string
+console.debug('[APP] root detected: (root)');
 
-function searchProjects() {
-    const search = document.getElementById('project-search')?.value || '';
-    loadProjects(currentFilter, search);
-}
+// Centralized API paths - simplified without APP_ROOT variable
+const API = {
+  projects: '/api/projects',
+  activity: '/api/activity',
+  uploaderStatus: '/api/uploader/status',
+  uploadPrices: (category) => `/api/upload-prices/${encodeURIComponent(category)}`,
+  uploaderRequest: '/api/uploader/request',
+  logoutExacto: '/logout',
+  logout: '/logout',
+  calculation: (pid) => `/calculation?project_id=${encodeURIComponent(pid)}`
+};
 
-// Uploader UX: status + staged upload modal
-async function getUploaderStatus() {
+// Helpers for rendering
+function normalizeTotalCost(val) {
+  if (val === null || val === undefined) return null;
+  const n = Number(val);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
+}
+function parseDateLike(val) {
   try {
-    console.log('[UPLOADER] fetching status...');
-    const res = await fetch('/api/uploader/status', { credentials: 'include' });
-    if (!res.ok) throw new Error(`status http=${res.status}`);
-    const json = await res.json();
-    console.log('[UPLOADER] status ok:', json);
-    return json;
-  } catch (e) {
-    const fallback = { has_role: (window.userRoles || []).includes('uploader'), latest_request: null };
-    console.warn('[UPLOADER] status fallback (likely unauth route or missing token):', e, '→', fallback);
-    return fallback;
-  }
-}
-
-function setUploaderControls(state) {
-  console.log('[UPLOADER] set controls with state:', state, 'roles:', window.userRoles);
-  const statusBadge = document.getElementById('uploader-status-badge');
-  const reqBtn = document.getElementById('request-uploader-btn');
-  const uploadBtn = document.getElementById('bulk-upload-btn');
-  const navBtn = document.getElementById('open-bulk-upload-nav');
-  const container = document.getElementById('uploader-controls');
-
-  const roles = window.userRoles || [];
-  const isAdmin = roles.includes('admin');
-  const isUploader = state.has_role || roles.includes('uploader');
-
-  if (container) container.style.display = (isAdmin || isUploader || roles.includes('professional') || roles.includes('firm')) ? 'block' : 'none';
-
-  let label = 'Uploader: ';
-  if (isUploader || isAdmin) {
-    label += 'Approved ✅';
-    if (reqBtn) reqBtn.style.display = 'none';
-    if (uploadBtn) { uploadBtn.disabled = false; uploadBtn.textContent = 'Bulk CSV Upload'; }
-    if (navBtn) { navBtn.disabled = false; }
-  } else {
-    const status = state.latest_request?.status;
-    if (status === 'pending') {
-      label += 'Pending ⏳';
-      if (reqBtn) { reqBtn.disabled = true; reqBtn.textContent = 'Request Pending'; reqBtn.style.display = 'inline-block'; }
-      if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = 'Awaiting Approval'; }
-      if (navBtn) { navBtn.disabled = true; }
-    } else {
-      label += 'Not requested ❌';
-      if (reqBtn) { reqBtn.disabled = false; reqBtn.textContent = 'Request Uploader Access'; reqBtn.style.display = 'inline-block'; }
-      if (uploadBtn) { uploadBtn.disabled = true; uploadBtn.textContent = 'Upload (requires approval)'; }
-      if (navBtn) { navBtn.disabled = true; }
+    if (!val) return null;
+    if (val instanceof Date) return isNaN(val) ? null : val;
+    if (typeof val === 'number') {
+      const d = new Date(val);
+      return isNaN(d) ? null : d;
     }
-  }
-  if (statusBadge) statusBadge.textContent = label;
-  console.log('[UPLOADER] controls set. label=', label, 'disabled upload=', uploadBtn?.disabled, 'nav disabled=', navBtn?.disabled);
-}
-
-async function submitStagedUpload() {
-  const fileEl = document.getElementById('upload-file');
-  const catEl = document.getElementById('upload-category');
-  const file = fileEl?.files?.[0];
-  const category = catEl?.value;
-
-  console.log('[UPLOAD] submit clicked. file?', !!file, 'category=', category);
-  if (!file) return alert('Select a CSV file.');
-  if (!category) return alert('Select a category.');
-
-  const form = new FormData();
-  form.append('file', file);
-
-  try {
-    const res = await fetch(`/api/upload-prices/${encodeURIComponent(category)}`, {
-      method: 'POST',
-      body: form,
-      credentials: 'include'
-    });
-    let data = {};
-    try { data = await res.json(); } catch {}
-    console.log('[UPLOAD] response http=', res.status, 'payload=', data);
-
-    if (res.status === 202 || res.ok) {
-      alert(data.message || 'File staged for validation/approval.');
-      closeUploadModal();
-    } else if (res.status === 403) {
-      alert('You are not approved to upload. Please request uploader access.');
-    } else {
-      alert(data.message || 'Upload failed.');
+    if (typeof val === 'string') {
+      const iso = val.includes('T') ? val : val.replace(' ', 'T');
+      const d = new Date(iso);
+      return isNaN(d) ? null : d;
     }
-  } catch (e) {
-    console.error('[UPLOAD] network error:', e);
-    alert('Network error during upload.');
-  }
+    return null;
+  } catch { return null; }
+}
+function formatDateSafe(val) {
+  const d = parseDateLike(val);
+  if (!d) return '';
+  const ds = d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: '2-digit' });
+  const ts = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${ds} ${ts}`;
 }
 
-async function requestUploaderAccess() {
-  const reason = prompt('Briefly explain why you need uploader access (optional):') || '';
-  console.log('[UPLOADER] request access clicked. reason length=', reason.length);
-  try {
-    const res = await fetch('/api/uploader/request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify({ reason })
-    });
-    let data = {};
-    try { data = await res.json(); } catch {}
-    console.log('[UPLOADER] request response http=', res.status, 'payload=', data);
-    alert(data.message || (res.ok ? 'Request submitted' : 'Request failed'));
-    const status = await getUploaderStatus();
-    setUploaderControls(status);
-  } catch (e) {
-    console.error('[UPLOADER] request error:', e);
-    alert('Network error. Try again.');
-  }
+// Lightweight toast (scoped to dashboard)
+function ensureToastStyles() {
+  if (document.getElementById('dash-toast-styles')) return;
+  const s = document.createElement('style');
+  s.id = 'dash-toast-styles';
+  s.textContent = `
+    #dash-toast { position: fixed; top: 16px; right: 16px; z-index: 2000; }
+    .dash-toast-item { min-width: 240px; max-width: 420px; margin: 8px 0; padding: 10px 12px;
+      border-radius: 6px; color: #fff; box-shadow: 0 6px 18px rgba(0,0,0,0.15); font-size: 14px; }
+    .dash-toast-item.success { background:#16a34a; }
+    .dash-toast-item.error { background:#dc2626; }
+    .dash-toast-item.info { background:#2563eb; }
+  `;
+  document.head.appendChild(s);
+}
+function showToast(msg, type='info', timeout=3200) {
+  ensureToastStyles();
+  let c = document.getElementById('dash-toast');
+  if (!c) { c = document.createElement('div'); c.id = 'dash-toast'; document.body.appendChild(c); }
+  const el = document.createElement('div');
+  el.className = `dash-toast-item ${type}`;
+  el.textContent = msg;
+  c.appendChild(el);
+  setTimeout(() => el.remove(), timeout);
 }
 
-async function generateUntitledName() {
+// Add these functions before the DOMContentLoaded event handler
+
+// Get unique project name that increments
+async function generateUniqueName() {
   try {
-    // Fetch enough to cover common cases
-    const res = await fetch('/api/projects?filter=all&page=1&page_size=300', { credentials: 'include' });
+    console.log('[Dashboard] Generating unique project name...');
+    // Fetch all projects first
+    const res = await fetch(`${API.projects}?filter=all&sort=date&order=desc&page=1&page_size=200`, 
+      { credentials: 'include' });
     if (!res.ok) return 'Untitled Project';
+    
     const data = await res.json();
-    const projects = Array.isArray(data) ? data : (data.projects || data.results || []);
-    const names = new Set(projects.map(p => String(p.project_name || p.name || '').trim().toLowerCase()));
-
+    // Handle different response formats
+    let projects = Array.isArray(data) ? data : 
+                  (data.projects || data.data || data.results || []);
+    
+    console.log('[Dashboard] Found projects:', projects.length);
+    
     // Find max suffix used
     let max = 0;
     const re = /^untitled project(?:\s*(\d+))?$/i;
-    for (const p of projects) {
-      const m = String(p.project_name || p.name || '').trim().match(re);
+    let hasBaseUntitled = false;
+    
+    projects.forEach(p => {
+      const name = String(p.project_name || '').trim();
+      const m = name.match(re);
       if (m) {
-        max = Math.max(max, m[1] ? parseInt(m[1], 10) : 1);
+        if (!m[1]) {
+          // Found "Untitled Project" with no number
+          hasBaseUntitled = true;
+          max = Math.max(max, 1); 
+        } else {
+          // Found "Untitled Project X" with a number
+          max = Math.max(max, parseInt(m[1], 10));
+        }
       }
+    });
+    
+    console.log('[Dashboard] Max number found:', max);
+    console.log('[Dashboard] Has base untitled:', hasBaseUntitled);
+    
+    // If we found any untitled projects, always return the next number
+    const result = (max > 0 || hasBaseUntitled) ? 
+      `Untitled Project ${max + 1}` : 'Untitled Project';
+    
+    console.log('[Dashboard] Generated name:', result);
+    return result;
+  } catch (error) {
+    console.error('[Dashboard] Error generating name:', error);
+    return 'Untitled Project'; // Fallback
+  }
+}
+
+// Skeletons
+function renderProjectSkeleton(container, n = 4) {
+  container.innerHTML = '';
+  for (let i = 0; i < n; i++) {
+    const row = document.createElement('div');
+    row.className = 'project-row skeleton';
+    row.innerHTML = `
+      <div class="skeleton-line" style="width: 60%"></div>
+    `;
+    container.appendChild(row);
+  }
+}
+
+// Set active filter button
+function setActiveFilter(filter) {
+  const wrap = document.getElementById('project-filters');
+  if (!wrap) return;
+  wrap.querySelectorAll('.filter-btn').forEach(btn => {
+    const isActive = btn.dataset.filter === filter;
+    btn.classList.toggle('active', !!isActive);
+    btn.setAttribute('aria-pressed', String(!!isActive));
+  });
+}
+
+// Debounced search
+let searchTimer = null;
+function searchProjects() {
+  const el = document.getElementById('project-search');
+  const q = el ? el.value.trim() : '';
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => loadProjects(currentFilter, q), 220);
+}
+
+// Add these functions to handle project deletion
+
+let projectToDelete = null;
+
+function showDeleteConfirmation(projectId, projectName) {
+  const modal = document.getElementById('delete-confirm-modal');
+  const projectNameEl = document.getElementById('delete-project-name');
+  
+  projectToDelete = projectId;
+  projectNameEl.textContent = projectName;
+  
+  modal.style.display = 'block';
+}
+
+async function deleteProject(projectId) {
+  try {
+    const res = await fetch(`${API.projects}/${projectId}`, {
+      method: 'DELETE',
+      credentials: 'include'
+    });
+    
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.message || `Failed to delete (${res.status})`);
     }
-    if (!names.has('untitled project')) return 'Untitled Project';
-    return `Untitled Project ${max + 1}`;
-  } catch {
-    return 'Untitled Project';
+    
+    // Remove from UI
+    const projectElement = document.querySelector(`.project-row[data-project-id="${projectId}"]`);
+    if (projectElement) {
+      projectElement.style.animation = 'fadeOut 0.3s';
+      setTimeout(() => projectElement.remove(), 300);
+    }
+    
+    showToast('Project deleted successfully', 'success');
+    
+    // Refresh list after a short delay
+    setTimeout(() => loadProjects(currentFilter), 500);
+    
+  } catch (error) {
+    console.error('Delete project error:', error);
+    showToast(`Error: ${error.message || 'Could not delete project'}`, 'error');
   }
 }
 
 
-document.addEventListener('DOMContentLoaded', async () => {
-  console.log('[BOOT] DOM ready. roles=', window.userRoles);
-  // Role-based visibility (guard userRoles)
-  try {
-    const roleElements = document.querySelectorAll('[data-role]');
-    roleElements.forEach(el => {
-      const requiredRole = el.dataset.role;
-      el.style.display = (window.userRoles || []).includes(requiredRole) ? 'block' : 'none';
-    });
-  } catch (e) {
-    console.debug('role visibility skipped:', e);
+let currentFilter = 'recent';
+
+async function loadProjects(filter = 'recent', search = '') {
+  currentFilter = filter;
+  setActiveFilter(filter);
+
+  const projectList = document.getElementById('project-list');
+  if (!projectList) {
+    console.warn('[UI] #project-list not found; cannot render projects');
+    return;
   }
 
-  // Activity stream (guard errors)
-  const activityList = document.getElementById('activity-list');
+  const base = API.projects;
+  const params = new URLSearchParams({
+    filter,
+    q: search || '',
+    page: '1',
+    page_size: '50'
+  });
+
+  projectList.setAttribute('aria-busy', 'true');
+  renderProjectSkeleton(projectList, 5);
+
   try {
-    const eventSource = new EventSource('/api/activity/stream');
-    eventSource.onmessage = (event) => {
+    const res = await fetch(`${base}?${params.toString()}`, { credentials: 'include' });
+    if (!res.ok) throw new Error(`http=${res.status}`);
+    const data = await res.json();
+
+    const items = Array.isArray(data)
+      ? data
+      : Array.isArray(data.projects)
+        ? data.projects
+        : [];
+
+    projectList.innerHTML = '';
+
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'empty-state';
+      empty.innerHTML = `
+        <div class="empty-title">No projects found</div>
+        <div class="empty-sub">Try a different filter or create your first project.</div>
+        <div><button class="primary" id="empty-create">Create Project</button></div>
+      `;
+      projectList.appendChild(empty);
+      document.getElementById('empty-create')?.addEventListener('click', () => {
+        document.getElementById('create-project-btn')?.click();
+      });
+      return;
+    }
+
+    for (const project of items) {
       try {
-        const activity = JSON.parse(event.data);
-        const div = document.createElement('div');
-        div.className = 'activity-item';
-        div.innerHTML = `
-          <span class="activity-time">${new Date(activity.timestamp).toLocaleString()}</span>
-          <span class="activity-type">${activity.type}</span>
-          <p>${activity.description}</p>
-        `;
-        if (activityList) activityList.prepend(div);
-      } catch (err) {
-        console.debug('Invalid activity message', err);
+        const pid = project.id ?? project.project_id ?? project.projectId ?? project._id;
+        if (!pid) continue;
+
+        const name = project.project_name || project.name || 'Untitled Project';
+        const lastModified = formatDateSafe(project.last_modified || project.updated_at);
+        const total = normalizeTotalCost(project.total_cost);
+        const totalStr = total == null ? '' : ` • Total: ${total.toLocaleString()}`;
+
+        const row = document.createElement('div');
+        row.className = 'project-row';
+        row.dataset.projectId = pid;
+        row.dataset.projectName = name;
+
+        // Create the project link
+        const link = document.createElement('a');
+        link.href = API.calculation(pid);
+        link.textContent = `${name}${ lastModified ? ' • ' + lastModified : '' }${totalStr}`;
+        link.className = 'project-link';
+        
+        // Create actions container with delete button
+        const actions = document.createElement('div');
+        actions.className = 'project-actions';
+        
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-project-btn';
+        deleteBtn.innerHTML = '🗑️ Delete';
+        deleteBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          showDeleteConfirmation(pid, name);
+        });
+        
+        actions.appendChild(deleteBtn);
+        
+        // Add both elements to the row
+        row.appendChild(link);
+        row.appendChild(actions);
+        projectList.appendChild(row);
+      } catch (rowErr) {
+        console.debug('Skipping project due to render error:', rowErr, project);
       }
-    };
-    eventSource.onerror = (err) => {
-      console.debug('EventSource error (activity stream):', err);
-      eventSource.close();
-    };
+    }
   } catch (err) {
-    console.debug('Could not open activity stream:', err);
+    console.error('loadProjects error:', err);
+    projectList.innerHTML = '<p class="error-text">Error loading projects.</p>';
+    showToast('Failed to load projects', 'error');
+  } finally {
+    projectList.setAttribute('aria-busy', 'false');
   }
+}
 
-  // Load initial data
-  loadProjects('recent');
-  loadRecentActivity();
 
-  // Wire uploader controls
-  const uploadBtn = document.getElementById('bulk-upload-btn');
-  const navBtn = document.getElementById('open-bulk-upload-nav');
-  const requestBtn = document.getElementById('request-uploader-btn');
-  const submitBtn = document.getElementById('upload-submit');
-  const cancelBtn = document.getElementById('upload-cancel');
+// Boot
+document.addEventListener('DOMContentLoaded', () => {
+  // Scope styles to dashboard only
+  document.body.classList.add('dashboard-page');
 
-  try {
-    const status = await getUploaderStatus();
-    setUploaderControls(status);
-  } catch (e) {
-    console.warn('[UPLOADER] status unavailable:', e);
-  }
-
-  if (uploadBtn) uploadBtn.addEventListener('click', () => { console.log('[UI] bulk-upload-btn click'); openUploadModal(); });
-  if (navBtn) navBtn.addEventListener('click', () => { console.log('[UI] open-bulk-upload-nav click'); openUploadModal(); });
-  if (requestBtn) requestBtn.addEventListener('click', () => { console.log('[UI] request-uploader-btn click'); requestUploaderAccess(); });
-  if (submitBtn) submitBtn.addEventListener('click', () => { console.log('[UI] upload-submit click'); submitStagedUpload(); });
-  if (cancelBtn) cancelBtn.addEventListener('click', () => { console.log('[UI] upload-cancel click'); closeUploadModal(); });
-
-  // ...existing code...
-  // Preferred supplier display
-  const supplier = JSON.parse(localStorage.getItem('preferred_supplier') || 'null');
-  const display = document.getElementById('preferred-supplier-name');
-  if (display) display.textContent = supplier?.name || 'None selected';
-
-  // Logout (guarded)
-  const logoutBtn = document.getElementById('logout-btn');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', async () => {
-      try {
-        const resp = await fetch('/logout', { method: 'POST', credentials: 'include' });
-        if (resp.ok) window.location.href = '/login';
-      } catch (error) {
-        console.error('Logout failed:', error);
+  // Mark active nav link
+  const nav = document.querySelector('body.dashboard-page nav');
+  if (nav) {
+    const here = location.pathname.replace(/\/+$/, '');
+    nav.querySelectorAll('a[href]').forEach(a => {
+      const p = new URL(a.href, location.href).pathname.replace(/\/+$/, '');
+      if (p && (here === p || (here.startsWith(p) && p !== '/'))) {
+        a.classList.add('is-active');
+        a.setAttribute('aria-current', 'page');
       }
     });
-  } else {
-    console.debug('logout-btn not found in DOM');
   }
 
- // Create project (guarded) — no prompt, auto-untitled unique name
+  console.log('[BOOT] DOM ready. roles=', window.userRoles);
+  loadProjects('recent', '');
+
+  const homeBtn = document.getElementById('go-home-btn');
+  if (homeBtn) {
+    const homeUrl = (homeBtn.dataset.homeUrl || '').trim();
+    homeBtn.addEventListener('click', () => {
+      const target = homeUrl || '/';  // Simplified to just use root
+      window.location.assign(target);
+    });
+  }
+
+  // Hide uploader request for admins
+  if (Array.isArray(window.userRoles) && window.userRoles.includes('admin')) {
+    const reqBtn = document.getElementById('request-uploader-btn');
+    if (reqBtn) reqBtn.style.display = 'none';
+  }
+
+  // Uploader status badge
+  (async function updateUploaderBadge() {
+    const badge = document.getElementById('uploader-status-badge');
+    if (!badge) return;
+    try {
+      const res = await fetch(API.uploaderStatus, { credentials: 'include' });
+      if (!res.ok) throw 0;
+      const data = await res.json().catch(() => ({}));
+      const status = (data.status || '').toLowerCase();
+      if (!status) return;
+      badge.textContent = status === 'approved' ? 'Uploader: Approved'
+        : status === 'pending' ? 'Uploader: Pending'
+        : 'Uploader: Not enabled';
+      badge.className = `status-badge ${status || 'none'}`;
+    } catch {}
+  })();
+
+  // Create Project
   const createBtn = document.getElementById('create-project-btn');
   if (createBtn) {
     createBtn.addEventListener('click', async () => {
       try {
         createBtn.disabled = true;
+        const prev = createBtn.textContent;
         createBtn.textContent = 'Creating...';
 
-        const name = await generateUntitledName();
-        const supplier = JSON.parse(localStorage.getItem('preferred_supplier') || 'null');
-        const supplierId = supplier?.id || supplier?.supplier_id || null;
-
-        const res = await fetch('/api/projects', {
+        // Get a unique name instead of hardcoding
+        const uniqueName = await generateUniqueName();
+        console.log('[Dashboard] Creating project with name:', uniqueName);
+        
+        const body = { project_name: uniqueName, total_cost: 0 };
+        const res = await fetch(API.projects, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'include',
-          body: JSON.stringify({ project_name: name, name, supplier_id: supplierId })
+          body: JSON.stringify(body)
         });
-
+        
+        // Parse the response and handle redirection
+        const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-          alert('Failed to create project');
+          showToast(data.message || `Create failed (${res.status})`, 'error');
           return;
         }
-
-        const data = await res.json();
-        const newId = data.id || data.project_id || data.projectId || data._id;
-        if (!newId) {
-          await loadProjects(currentFilter);
-          alert('Project created but no id returned. You should see it in the list.');
+        
+        const pid = data.project_id ?? data.id ?? data.projectId;
+        if (!pid) {
+          showToast('Project created but no id returned.', 'error');
           return;
         }
-
-        // Open the calculator with the new project_id
-        window.location.href = `/calculation?project_id=${encodeURIComponent(newId)}`;
-      } catch (err) {
-        console.error('create project error:', err);
-        alert('Failed to create project');
+        
+        showToast('Project created', 'success');
+        window.location.assign(API.calculation(pid));
+      } catch (e) {
+        console.error('Create project error:', e);
+        showToast('Network error creating project.', 'error');
       } finally {
         createBtn.disabled = false;
         createBtn.textContent = 'Create Project';
       }
     });
-  } else {
-    console.debug('create-project-btn not present for this role/view');
   }
 
+  // Setup delete confirmation modal
+  const deleteModal = document.getElementById('delete-confirm-modal');
+  const confirmBtn = document.getElementById('delete-confirm');
+  const cancelBtn = document.getElementById('delete-cancel');
+  
+  confirmBtn?.addEventListener('click', () => {
+    if (projectToDelete) {
+      deleteProject(projectToDelete);
+      deleteModal.style.display = 'none';
+      projectToDelete = null;
+    }
+  });
+  
+  cancelBtn?.addEventListener('click', () => {
+    deleteModal.style.display = 'none';
+    projectToDelete = null;
+  });
+  
+  // Close modal when clicking outside
+  deleteModal?.addEventListener('click', (e) => {
+    if (e.target === deleteModal) {
+      deleteModal.style.display = 'none';
+      projectToDelete = null;
+    }
+  });
+
+  // Admin nav/link targets - simplified paths
+  const navUR = document.getElementById('nav-uploader-requests');
+  if (navUR) {
+    navUR.addEventListener('click', (e) => {
+      e.preventDefault();
+      window.location.assign('/admin/uploader/requests-ui');
+    });
+  }
+  const goByTarget = (id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('click', () => {
+      let p = el.dataset.target || '';
+      if (p === '/admin/uploader/requests') p = '/admin/uploader/requests-ui';
+      window.location.assign(p.startsWith('/') ? p : '/' + p);
+    });
+  };
+
+  goByTarget('review-staged-btn');
+  goByTarget('review-uploader-requests-btn');
+
+  // Bulk CSV Upload modal wiring
+  const bulkBtn = document.getElementById('bulk-upload-btn');
+  const modal = document.getElementById('bulk-upload-modal');
+  const submitBtn = document.getElementById('upload-submit');
+  const uploadCancelBtn = document.getElementById('upload-cancel');
+  const fileInput = document.getElementById('upload-file');
+  const catSelect = document.getElementById('upload-category');
+
+  if (bulkBtn && modal) {
+    bulkBtn.addEventListener('click', () => {
+      modal.style.display = 'block';
+    });
+  }
+  uploadCancelBtn?.addEventListener('click', () => {
+    modal.style.display = 'none';
+    if (fileInput) fileInput.value = '';
+  });
+
+  submitBtn?.addEventListener('click', async () => {
+    try {
+      const file = fileInput?.files?.[0];
+      const category = catSelect?.value || 'materials';
+      if (!file) {
+        alert('Select a CSV file first.');
+        return;
+      }
+      const fd = new FormData();
+      fd.append('file', file);
+      // fd.append('category', category);
+
+      submitBtn.disabled = true;
+      submitBtn.textContent = 'Uploading...';
+      // Simplified URL construction using API object
+      const url = API.uploadPrices(category);
+
+      const res = await fetch(url, { method: 'POST', body: fd, credentials: 'include' });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        console.error('Upload failed', res.status, data);
+        showToast(data.message || `Upload failed (${res.status})`, 'error');
+        return;
+      }
+      showToast('File staged for review.', 'success');
+      modal.style.display = 'none';
+      if (fileInput) fileInput.value = '';
+    } catch (e) {
+      console.error('Upload error', e);
+      showToast('Network error during upload.', 'error');
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Upload';
+    }          
+  });
 });
-// Expose for inline handlers if used
-window.searchProjects = searchProjects;
