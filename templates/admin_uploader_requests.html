@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Uploader Access Requests</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 960px;
+        margin: auto;
+        padding: 2rem;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 1rem;
+      }
+      th,
+      td {
+        border: 1px solid #ddd;
+        padding: 8px;
+      }
+      th {
+        background: #f5f5f5;
+        text-align: left;
+      }
+      .actions button {
+        margin-right: 6px;
+      }
+    </style>
+
+    <!-- Mount-aware shim -->
+    <script>
+      // Simplified mount-aware script for root deployment
+      (function () {
+        // No need to detect BASE or API_BASE - we're at the root
+        window.API_BASE = "";
+
+        // Simplified URL normalization that just ensures leading slash
+        const toAbs = (url) => {
+          if (typeof url !== "string") return url;
+          if (url.startsWith("/")) return url;
+          return "/" + url.replace(/^\.?\/+/, "");
+        };
+
+        // Keep the redirect patching for relative URLs
+        const assignOrig = window.location.assign.bind(window.location);
+        const replaceOrig = window.location.replace.bind(window.location);
+        window.location.assign = (url) => assignOrig(toAbs(String(url)));
+        window.location.replace = (url) => replaceOrig(toAbs(String(url)));
+
+        // No need to rewrite anchors/forms since we're at root
+      })();
+    </script>
+  </head>
+  <body>
+    <header
+      style="display: flex; justify-content: space-between; align-items: center"
+    >
+      <h2>Uploader Access Requests</h2>
+      <nav>
+        <a href="{{ url_for('main.dashboard') }}">🏠 Dashboard</a> |
+        <a href="{{ url_for('admin_review_page') }}">🗂️ Staged Uploads</a> |
+        <a href="{{ url_for('admin_upload_page') }}">⬆️ Admin Uploads</a>
+      </nav>
+    </header>
+
+    <div>
+      <label for="status-filter">Filter:</label>
+      <select id="status-filter">
+        <option value="">All</option>
+        <option value="pending" selected>Pending</option>
+        <option value="approved">Approved</option>
+        <option value="rejected">Rejected</option>
+        <option value="revoked">Revoked</option>
+      </select>
+      <button id="refresh-btn">Refresh</button>
+    </div>
+
+    <div id="msg" style="margin-top: 8px; color: #555"></div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>User</th>
+          <th>Status</th>
+          <th>Reason</th>
+          <th>Admin Note</th>
+          <th>Created</th>
+          <th>Decided</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="requests-body"></tbody>
+    </table>
+
+    <script>
+      async function loadRequests() {
+        const status = document.getElementById("status-filter").value;
+        const url = status
+          ? `/api/admin/uploader/requests?status=${encodeURIComponent(status)}`
+          : "/api/admin/uploader/requests";
+        console.log("[REQ] loading", url);
+        const msg = document.getElementById("msg");
+        msg.textContent = "Loading...";
+        try {
+          const res = await fetch(url, { credentials: "include" });
+          const data = await res.json();
+          console.log(
+            "[REQ] list response http=",
+            res.status,
+            "items=",
+            data?.length
+          );
+          if (!res.ok) {
+            msg.textContent = `Error: ${data?.message || res.statusText}`;
+            return;
+          }
+          renderRequests(Array.isArray(data) ? data : []);
+          msg.textContent = "";
+        } catch (e) {
+          console.error("[REQ] list failed", e);
+          msg.textContent = "Network error loading requests";
+        }
+      }
+
+      function renderRequests(items) {
+        const tbody = document.getElementById("requests-body");
+        tbody.innerHTML = "";
+        if (!items.length) {
+          tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;color:#777;">No requests</td></tr>`;
+          return;
+        }
+        for (const r of items) {
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+          <td>${r.id}</td>
+          <td>${r.email || r.user_id}</td>
+          <td>${r.status}</td>
+          <td>${(r.reason || "").slice(0, 120)}</td>
+          <td>${r.admin_note || ""}</td>
+          <td>${r.created_at || ""}</td>
+          <td>${r.decided_at || ""}</td>
+          <td class="actions">
+            <button data-id="${r.id}" class="approve-btn"${
+            r.status !== "pending" ? " disabled" : ""
+          }>Approve</button>
+            <button data-id="${r.id}" class="reject-btn"${
+            r.status !== "pending" ? " disabled" : ""
+          }>Reject</button>
+          </td>
+        `;
+          tbody.appendChild(tr);
+        }
+        wireRowButtons();
+      }
+
+      function wireRowButtons() {
+        document.querySelectorAll(".approve-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            console.log("[REQ] approve id=", id);
+            await act(`/api/admin/uploader/requests/${id}/approve`, {
+              method: "POST",
+            });
+          });
+        });
+        document.querySelectorAll(".reject-btn").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const id = btn.getAttribute("data-id");
+            const note = prompt("Reason for rejection (optional):") || "";
+            console.log("[REQ] reject id=", id, "note.len=", note.length);
+            await act(`/api/admin/uploader/requests/${id}/reject`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ note }),
+            });
+          });
+        });
+      }
+
+      async function act(url, opts) {
+        try {
+          const res = await fetch(url, { credentials: "include", ...opts });
+          const data = await res.json().catch(() => ({}));
+          console.log(
+            "[REQ] action response http=",
+            res.status,
+            "payload=",
+            data
+          );
+          if (!res.ok) {
+            alert(data.message || "Action failed");
+            return;
+          }
+          await loadRequests();
+        } catch (e) {
+          console.error("[REQ] action failed", e);
+          alert("Network error");
+        }
+      }
+
+      document
+        .getElementById("status-filter")
+        .addEventListener("change", loadRequests);
+      document
+        .getElementById("refresh-btn")
+        .addEventListener("click", loadRequests);
+      loadRequests();
+    </script>
+  </body>
+</html>

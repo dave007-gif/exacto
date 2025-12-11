@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Select Preferred Supplier</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <style>
+      #go-dashboard {
+        margin-top: 20px;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Select Preferred Supplier</h2>
+
+    <label for="region-filter">Filter by Region:</label>
+    <select id="region-filter">
+      <option value="">All Regions</option>
+    </select>
+
+    <table id="suppliers-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Region</th>
+          <th>Contact</th>
+          <th>Select</th>
+        </tr>
+      </thead>
+      <tbody id="supplier-body"></tbody>
+    </table>
+
+    <button id="go-dashboard">Go to Dashboard</button>
+
+    <script>
+      // Replace this:
+      // const APP_ROOT = location.pathname.match(/^\/[^/]+/)?.[0] || "";
+      // const toPage = (p) => `${APP_ROOT}${p.startsWith("/") ? p : "/" + p}`;
+
+      // With this simplified version:
+      const toPage = (p) => (p.startsWith("/") ? p : "/" + p);
+
+      function getPreferredRegionDisplayName() {
+        const supplier = JSON.parse(localStorage.getItem("preferred_supplier"));
+        return supplier?.region || "Default Region";
+      }
+
+      async function loadSuppliers() {
+        const res = await fetch(toPage("/api/suppliers"), {
+          credentials: "include",
+        });
+        if (!res.ok) {
+          console.error("Failed to load suppliers", res.status);
+          return;
+        }
+        const suppliers = await res.json();
+
+        populateRegionFilter(suppliers);
+        renderTable(suppliers);
+
+        document
+          .getElementById("region-filter")
+          .addEventListener("change", () => {
+            const selected = document.getElementById("region-filter").value;
+            const filtered = suppliers.filter(
+              (s) =>
+                !selected || s.region?.toLowerCase() === selected.toLowerCase()
+            );
+            renderTable(filtered);
+          });
+      }
+
+      function populateRegionFilter(suppliers) {
+        const regionFilter = document.getElementById("region-filter");
+        const regions = [...new Set(suppliers.map((s) => s.region))].sort();
+        for (const region of regions) {
+          const opt = document.createElement("option");
+          opt.value = (region || "").toLowerCase();
+          opt.textContent = region || "";
+          regionFilter.appendChild(opt);
+        }
+      }
+
+      function renderTable(suppliers) {
+        const body = document.getElementById("supplier-body");
+        body.innerHTML = "";
+        suppliers.forEach((s) => {
+          const row = document.createElement("tr");
+          row.innerHTML = `
+            <td>${s.name || ""}</td>
+            <td>${s.region || ""}</td>
+            <td>${s.contact || ""}</td>
+            <td>
+              <button onclick='selectSupplier(${JSON.stringify(
+                JSON.stringify(s)
+              )})'>Select</button>
+            </td>
+          `;
+          body.appendChild(row);
+        });
+      }
+
+      function selectSupplier(json) {
+        const supplier = JSON.parse(json);
+        localStorage.setItem("preferred_supplier", JSON.stringify(supplier));
+        alert(
+          `✅ Preferred supplier set to: ${
+            supplier.name
+          } (${getPreferredRegionDisplayName()})`
+        );
+        document.getElementById("go-dashboard").style.display = "inline-block";
+      }
+
+      document.getElementById("go-dashboard").addEventListener("click", () => {
+        location.assign(toPage("/dashboard"));
+      });
+
+      loadSuppliers();
+    </script>
+  </body>
+</html>

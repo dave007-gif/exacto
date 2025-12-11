@@ -1,0 +1,15 @@
+task,rate,valid_from,valid_to,source,region
+site clearance,5.00,2025-07-01,2025-12-31,Eastern Workforce,eastern
+excavation,16.00,2025-07-01,2025-12-31,Volta Construction,volta
+bricklaying,26.00,2025-07-01,2025-12-31,Volta Masonry Ltd,volta
+concreting,32.00,2025-07-01,2025-12-31,Accra Concrete Crew,greater accra
+tree cutting 600-1500,22.00,2025-07-01,2025-12-31,Eastern Tree Services,eastern
+tree cutting 1500-3000,38.00,2025-07-01,2025-12-31,Volta Tree Experts,volta
+tree cutting over 3000,65.00,2025-07-01,2025-12-31,National Supplier,national
+bricklaying,24.00,2025-07-01,2025-12-31,National Supplier,national
+concreting,30.00,2025-07-01,2025-12-31,National Supplier,national
+tree cutting 600-1500,20.00,2025-07-01,2025-12-31,National Supplier,national
+tree cutting 1500-3000,35.00,2025-07-01,2025-12-31,National Supplier,national
+tree cutting over 3000,60.00,2025-07-01,2025-12-31,National Supplier,national
+site clearance,5.00,2025-07-01,2025-12-31,National Supplier,national
+excavation,16.00,2025-07-01,2025-12-31,National Supplier,national

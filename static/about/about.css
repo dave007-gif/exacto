@@ -1,0 +1,379 @@
+/* =========================
+   GOOGLE FONTS
+========================= */
+@import url('https://fonts.googleapis.com/css2?family=Oswald:wght@200..700&family=Poppins:ital,wght@0,100;0,200;0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,100;1,200;1,300;1,400;1,500;1,600;1,700;1,800;1,900&display=swap');
+
+/* =========================
+   ROOT VARIABLES
+========================= */
+:root {
+  --primary-color: #0073e6;
+  --primary-dark: #004d99;
+  --accent-color: #eef6ff;
+  --bg-color: #f5f7fa;
+  --text-color: #333;
+  --white: #ffffff;
+  --radius: 1rem;
+  --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  --transition: all 0.3s ease;
+  --font-main: "Poppins", sans-serif;
+  --font-title: "Oswald", serif;
+}
+
+/* =========================
+   GLOBAL RESET
+========================= */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  line-height: 1.6;
+}
+
+p {
+  font-size: 1rem;
+  color: var(--text-color);
+}
+
+/* =========================
+   NAVBAR
+========================= */
+.navbar-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 60px;
+  background: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(8px);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 60px;
+  z-index: 1000;
+}
+
+.navbar-transparent {
+  background-color: rgba(57, 61, 62, 0.4);
+  backdrop-filter: blur(5px);
+}
+
+.logo {
+  font-size: 28px;
+  font-weight: 600;
+  color: white;
+  font-family: var(--font-title);
+}
+
+.menu-links {
+  display: flex;
+  list-style: none;
+  gap: 30px;
+}
+
+.menu-links li a {
+  text-decoration: none;
+  font-size: 16px;
+  color: white;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: color 0.3s ease;
+}
+
+.menu-links li a:hover {
+  color: #f0f0f0;
+}
+
+.menu-links .dropdown {
+  margin-left: 5px;
+}
+
+/* Burger Icon Styles */
+.burger {
+  display: none;
+  cursor: pointer;
+  flex-direction: column;
+  justify-content: space-between;
+  height: 18px;
+  width: 25px;
+  margin-right: 20px;
+}
+
+.burger span {
+  height: 3px;
+  width: 100%;
+  background: var(--text-color);
+  border-radius: 2px;
+  transition: 0.3s ease;
+}
+
+/* Toggle Animation */
+.burger.toggle span:nth-child(1) {
+  transform: rotate(45deg) translate(5px, 5px);
+}
+.burger.toggle span:nth-child(2) {
+  opacity: 0;
+}
+.burger.toggle span:nth-child(3) {
+  transform: rotate(-45deg) translate(5px, -5px);
+}
+
+/* Mobile Nav */
+@media screen and (max-width: 768px) {
+  .burger {
+    display: flex;
+  }
+
+  .menu {
+    display: none;
+    position: absolute;
+    top: 60px;
+    right: 0;
+    width: 100%;
+    background-color: #3b4b4f;
+    box-shadow: 0 1px 2px rgba(202, 244, 232, 0.2);
+  }
+
+  .menu.nav-active {
+    display: flex;
+    justify-content: center;
+    padding: 20px 0;
+  }
+
+  .menu-links {
+    flex-direction: column;
+    gap: 15px;
+    align-items: center;
+  }
+}
+
+
+/* =========================
+   ABOUT SECTION
+========================= */
+.about-hero {
+  background: linear-gradient(to right, var(--primary-dark), var(--primary-color));
+  color: var(--white);
+  padding: 6rem 2rem 4rem;
+  text-align: center;
+}
+
+.about-hero h1 {
+  font-size: 3.5rem;
+  margin-bottom: 0.5rem;
+  font-family: var(--font-title);
+}
+
+.about-hero h2 {
+  font-size: 1.5rem;
+  font-weight: 300;
+}
+
+.about-section {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3rem;
+  padding: 4rem 2rem;
+  justify-content: center;
+  align-items: center;
+  background-color: var(--white);
+}
+
+.about-text {
+  flex: 1;
+  max-width: 600px;
+}
+
+.about-text h2 {
+  font-family: var(--font-title);
+  color: var(--primary-dark);
+  margin-bottom: 1rem;
+}
+
+.about-text p,
+.about-text ul {
+  line-height: 1.7;
+  font-size: 1rem;
+}
+
+.about-text ul {
+  padding-left: 1.5rem;
+}
+
+.about-text li {
+  margin-bottom: 0.5rem;
+}
+
+.about-image {
+  flex: 1;
+  max-width: 500px;
+  min-height: 600px;
+  background-image: url('../uploads/about.jpg');
+  background-size: cover;
+  background-position: center;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+/* =========================
+   WHY CHOOSE US
+========================= */
+.why-container {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 2rem;
+  padding: 4rem 2rem;
+  background-color: var(--white);
+}
+
+.why-card {
+  background-color: var(--accent-color);
+  padding: 2rem;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  text-align: center;
+  flex: 1;
+  max-width: 300px;
+  transition: var(--transition);
+}
+
+.why-card:hover {
+  transform: translateY(-5px);
+}
+
+.why-card h3 {
+  font-size: 1.3rem;
+  color: var(--primary-dark);
+  margin-bottom: 1rem;
+}
+
+/* =========================
+   TESTIMONIALS
+========================= */
+.testimonials-container {
+  background-color: #f7f7f7;
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.testimonial {
+  max-width: 600px;
+  margin: 2rem auto;
+  font-style: italic;
+  font-size: 1.1rem;
+  color: #555;
+}
+
+.testimonial h4 {
+  margin-top: 1rem;
+  font-weight: 600;
+  color: var(--primary-dark);
+}
+
+/* =========================
+   CTA BUTTON
+========================= */
+.cta-btn {
+  display: inline-block;
+  padding: 1rem 2rem;
+  background-color: var(--primary-color);
+  color: var(--white);
+  border-radius: 0.5rem;
+  text-decoration: none;
+  font-weight: bold;
+  transition: var(--transition);
+}
+
+.cta-btn:hover {
+  background-color: var(--primary-dark);
+}
+
+/* =========================
+   FOOTER
+========================= */
+.footer {
+  background: var(--primary-dark);
+  color: var(--white);
+  padding: 2rem 1rem;
+  text-align: center;
+}
+
+.footer-links {
+  margin-top: 1rem;
+}
+
+.footer-links a {
+  color: #dddddd;
+  margin: 0 0.5rem;
+  text-decoration: none;
+  transition: color 0.3s;
+}
+
+.footer-links a:hover {
+  color: white;
+}
+
+/* =========================
+   ANIMATIONS
+========================= */
+.fade-in {
+  animation: fadeInUp 1s ease forwards;
+  opacity: 0;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.typewriter-text::after {
+  content: '|';
+  animation: blink 1s step-end infinite;
+}
+
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* =========================
+   RESPONSIVE DESIGN
+========================= */
+@media (max-width: 768px) {
+  .navbar-bg {
+    padding: 0 20px;
+  }
+
+  .menu-links {
+    gap: 15px;
+    margin: 0;
+  }
+
+  .about-section {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .about-image {
+    min-height: 300px;
+  }
+}

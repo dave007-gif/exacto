@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Dashboard</title>
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='css/style.css') }}"
+    />
+    <!-- Put raw JSON here (not executed, so no JS lint errors) -->
+    <script id="bootstrap-user-roles" type="application/json">
+      {{ (current_user.roles or []) | tojson }}
+    </script>
+    <!-- Read it into window.userRoles with plain JS -->
+    <script>
+      (function () {
+        try {
+          const el = document.getElementById("bootstrap-user-roles");
+          window.userRoles = el ? JSON.parse(el.textContent) : [];
+        } catch (e) {
+          console.warn("Failed to parse user roles bootstrap JSON", e);
+          window.userRoles = [];
+        }
+      })();
+    </script>
+    <script>
+      (function () {
+        function toAbs(url) {
+          if (!url) return url;
+          if (/^[a-z]+:/i.test(url) || url.startsWith("//")) return url;
+          if (url.startsWith("/")) return url;
+          return "/" + url.replace(/^\.?\/+/, "");
+        }
+        const assignOrig = window.location.assign.bind(window.location);
+        const replaceOrig = window.location.replace.bind(window.location);
+        window.location.assign = (url) => assignOrig(toAbs(String(url)));
+        window.location.replace = (url) => replaceOrig(toAbs(String(url)));
+      })();
+    </script>
+    <style>
+      .project-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .project-actions {
+        display: flex;
+        gap: 8px;
+      }
+      .delete-project-btn {
+        background-color: transparent;
+        color: #dc2626;
+        border: none;
+        cursor: pointer;
+        padding: 4px 6px;
+        border-radius: 4px;
+        font-size: 14px;
+      }
+      .delete-project-btn:hover {
+        background-color: #fee2e2;
+      }
+
+      /* Modal confirmation dialog */
+      .modal-confirm {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+        z-index: 1000;
+      }
+      .modal-confirm-content {
+        background: #fff;
+        max-width: 400px;
+        margin: 20vh auto;
+        padding: 24px;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      }
+      .modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 24px;
+      }
+      .btn-danger {
+        background-color: #dc2626;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      .btn-cancel {
+        background-color: #e5e7eb;
+        color: #4b5563;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      /* Add this to the existing style block */
+      @keyframes fadeOut {
+        from {
+          opacity: 1;
+        }
+        to {
+          opacity: 0;
+          height: 0;
+          margin: 0;
+          padding: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav>
+      <a href="{{ url_for('main.dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('main.calculation_page') }}">Calculator</a>
+      {% if 'admin' in current_user.roles %}
+      <a href="{{ url_for('admin_upload_page') }}">Admin Uploads</a>
+      <a href="{{ url_for('admin_review_page') }}">Staged Uploads</a>
+      <a href="#" id="nav-uploader-requests">Uploader Requests</a>
+      {% endif %}
+      <!-- Always use teammate_home computed on the server -->
+      <button id="go-home-btn" data-home-url="{{ teammate_home }}">
+        Go to Home
+      </button>
+    </nav>
+
+    <div class="dashboard-container">
+      <!-- Profile Summary -->
+      <div class="profile-summary">
+        <h2>Welcome, {{ current_user.email }}</h2>
+        <p>
+          Role(s):
+          <span class="role-badges">
+            {% for r in current_user.roles %}
+            <span class="badge">{{ r }}</span>
+            {% endfor %}
+          </span>
+        </p>
+        <p>Verified: {% if current_user.verified %}✅{% else %}❌{% endif %}</p>
+        <p>Active Projects: {{ project_count }}</p>
+
+        <p>
+          Preferred Supplier:
+          <span id="preferred-supplier-name">None selected</span>
+        </p>
+      </div>
+
+      <!-- Role-Specific Sections -->
+      <div class="dashboard-section">
+        {% if 'student' in current_user.roles %}
+        <div class="student-dashboard">
+          <h3>Student Features</h3>
+          <div class="upgrade-prompt">
+            <p>Upgrade to Professional for full features!</p>
+            <button onclick="location.href='/pricing'">View Plans</button>
+          </div>
+        </div>
+        {% endif %} {% if 'professional' in current_user.roles or 'firm' in
+        current_user.roles or 'uploader' in current_user.roles or 'admin' in
+        current_user.roles %}
+        <div class="professional-dashboard">
+          <h3>Professional Tools</h3>
+          <div class="tool-grid">
+            <div
+              class="tool-card"
+              onclick="location.assign(`{{ url_for('supplier_page') }}`)"
+            >
+              <h4>Supplier Management</h4>
+              <p>Manage your preferred suppliers</p>
+            </div>
+            <div
+              class="tool-card"
+              onclick="location.assign(`{{ url_for('main.dashboard') }}`)"
+            >
+              <h4>Project History</h4>
+              <p>View and manage past projects</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-card">
+          <h3>Actions</h3>
+          <div class="actions-row">
+            <button onclick="location.assign(`{{ url_for('supplier_page') }}`)">
+              Manage Suppliers
+            </button>
+            <button
+              id="create-project-btn"
+              data-calc-url="{{ url_for('main.calculation_page') }}"
+            >
+              Create Project
+            </button>
+            <span
+              id="uploader-status-badge"
+              class="status-badge"
+              aria-live="polite"
+            ></span>
+          </div>
+
+          <div style="margin-top: 0.75rem">
+            <div id="uploader-controls">
+              <button type="button" id="bulk-upload-btn">
+                Bulk CSV Upload
+              </button>
+              <button type="button" id="request-uploader-btn">
+                Request Uploader Access
+              </button>
+            </div>
+
+            {% if 'admin' in current_user.roles %}
+            <div class="admin-quick">
+              <button
+                type="button"
+                id="review-staged-btn"
+                data-target="/admin_review"
+              >
+                Review Staged Uploads
+              </button>
+              <button
+                type="button"
+                id="review-uploader-requests-btn"
+                data-target="/admin/uploader/requests-ui"
+              >
+                Review Uploader Requests
+              </button>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+        {% endif %} {% if 'firm' in current_user.roles %}
+        <div class="firm-dashboard">
+          <h3>Firm Administration</h3>
+          <div class="tool-grid">
+            <div class="tool-card" onclick="location.href='/licenses'">
+              <h4>License Management</h4>
+              <p>Manage offline licenses</p>
+            </div>
+            <div class="tool-card" onclick="location.href='/team'">
+              <h4>Team Management</h4>
+              <p>Manage team members</p>
+            </div>
+          </div>
+        </div>
+        <div class="action-card">
+          <h3>Firm Administration</h3>
+          <button onclick="location.href='/licenses'">Manage Licenses</button>
+          <button onclick="location.href='/team'">View Team</button>
+        </div>
+        {% endif %}
+
+        <!-- Subscription Status -->
+        <div
+          class="subscription-status"
+          role="region"
+          aria-label="Subscription"
+        >
+          <h3>Subscription</h3>
+          {% if subscription %}
+          <p>Plan: {{ subscription[0] }}</p>
+          <p>Expires: {{ subscription[1] }}</p>
+          <button onclick="showRenewalModal()">Renew Plan</button>
+          {% else %}
+          <p>No active subscription</p>
+          <button onclick="location.href='/pricing'">Upgrade Now</button>
+          {% endif %}
+        </div>
+
+        <!-- Activity Feed -->
+        <div class="activity-feed" role="region" aria-label="Recent Activity">
+          <h3>Recent Activity</h3>
+          <div id="activity-list">
+            {% for activity in activities %}
+            <div class="activity-item">
+              <span class="activity-time">{{ activity[2] }}</span>
+              <span class="activity-type">{{ activity[0] }}</span>
+              <p>{{ activity[1] }}</p>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+
+        <!-- Project Filters and Search -->
+        <div
+          id="project-filters"
+          class="project-filters"
+          role="toolbar"
+          aria-label="Project filters"
+          aria-controls="project-list"
+        >
+          <button
+            id="filter-recent"
+            class="filter-btn active"
+            data-filter="recent"
+            onclick="loadProjects('recent')"
+          >
+            Recent
+          </button>
+          <button
+            id="filter-all"
+            class="filter-btn"
+            data-filter="all"
+            onclick="loadProjects('all')"
+          >
+            All
+          </button>
+          <button
+            id="filter-starred"
+            class="filter-btn"
+            data-filter="starred"
+            onclick="loadProjects('starred')"
+          >
+            Starred
+          </button>
+          <button
+            id="filter-archived"
+            class="filter-btn"
+            data-filter="archived"
+            onclick="loadProjects('archived')"
+          >
+            Archived
+          </button>
+          <input
+            type="text"
+            id="project-search"
+            placeholder="Search projects..."
+            oninput="searchProjects()"
+            class="search-input"
+            aria-label="Search projects"
+          />
+        </div>
+
+        <!-- Project List -->
+        <div
+          id="project-list"
+          role="region"
+          aria-live="polite"
+          aria-busy="false"
+        ></div>
+      </div>
+    </div>
+
+    <!-- Staged Bulk Upload Modal -->
+    <div
+      id="bulk-upload-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="bulk-upload-title"
+      style="
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.5);
+      "
+    >
+      <div
+        style="
+          background: #fff;
+          max-width: 520px;
+          margin: 10vh auto;
+          padding: 16px;
+          border-radius: 8px;
+        "
+      >
+        <h3 id="bulk-upload-title">Bulk CSV Upload (Staged)</h3>
+        <p style="font-size: 0.9em; color: #555">
+          Your file will be staged for admin validation. Non-admin uploads are
+          not applied directly.
+        </p>
+        <p>
+          <label for="upload-category">Category:</label>
+          <select id="upload-category">
+            <option value="materials">Materials</option>
+            <option value="labor">Labor</option>
+            <option value="plants">Plants</option>
+            <option value="adjustments">Adjustments</option>
+            <option value="sources">Sources</option>
+            <option value="locations">Locations</option>
+            <option value="haulage_bands">Haulage Bands</option>
+          </select>
+        </p>
+        <p>
+          <input type="file" id="upload-file" accept=".csv" />
+        </p>
+        <div style="display: flex; gap: 8px; justify-content: flex-end">
+          <button type="button" id="upload-cancel">Cancel</button>
+          <button type="button" id="upload-submit">Upload</button>
+        </div>
+      </div>
+    </div>
+    <!-- Add before closing body tag -->
+    <!-- Delete Project Confirmation Modal -->
+    <div
+      id="delete-confirm-modal"
+      class="modal-confirm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="delete-confirm-title"
+    >
+      <div class="modal-confirm-content">
+        <h3 id="delete-confirm-title">Delete Project</h3>
+        <p>
+          Are you sure you want to delete this project? This action cannot be
+          undone.
+        </p>
+        <p id="delete-project-name" style="font-weight: bold"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn-cancel" id="delete-cancel">
+            Cancel
+          </button>
+          <button type="button" class="btn-danger" id="delete-confirm">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Include a small, dashboard-only script after the existing one -->
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+  </body>
+</html>
