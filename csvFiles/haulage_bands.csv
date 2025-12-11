@@ -1,4 +1,0 @@
-label,min_km,max_km,multiplier
-Short (0-5km),0,5,1.0
-Medium (6-15km),6,15,1.5
-Long (16-50km),16,50,2.0

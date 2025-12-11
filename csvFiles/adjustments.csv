@@ -1,8 +1,0 @@
-region,concrete_waste_factor,labor_efficiency,thickness
-default,1.05,1.0,0.2
-greater-accra,1.07,0.92,0.25
-ashanti,1.06,0.95,0.22
-volta,1.04,0.97,0.21
-eastern,1.05,0.93,0.23
-western,1.06,0.91,0.24
-central,1.03,0.94,0.22

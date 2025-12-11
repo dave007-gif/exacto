@@ -147,7 +147,7 @@ p {
 #landing {
   position: relative;
   height: 80vh;
-  background: url('./uploads/bg-image.webp') no-repeat center/cover;
+  background: url('../static/uploads/bg-image.webp') no-repeat center/cover;
   display: flex;
   flex-direction: column;
   justify-content: center;
