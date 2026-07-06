@@ -25,6 +25,7 @@ import os
 
 # Create a single Blueprint instance instead of two
 main = Blueprint('main', __name__)
+CSS_VERSION = '20260706-1'
 
 # Define all routes for the main Blueprint
 @main.route('/')
@@ -77,6 +78,7 @@ def estimate():
 # Create and configure the app
 # --- Flask app setup ---
 app = Flask(__name__)
+app.config['SEND_FILE_MAX_AGE_DEFAULT'] = 0
 
 #app.config['API_BASE'] = '/exacto'  # keep this for client usage
 # Attach Dynaconf config
@@ -158,9 +160,9 @@ def _teammate_home():
 @app.context_processor
 def inject_teammate_home():
     try:
-        return {'teammate_home': _teammate_home()}
+        return {'teammate_home': _teammate_home(), 'css_version': CSS_VERSION}
     except Exception:
-        return {'teammate_home': '/'}
+        return {'teammate_home': '/', 'css_version': CSS_VERSION}
 
 
 def _logout_response():
@@ -581,8 +583,14 @@ def health_check():
         }), 500
 
 # Ensure database is populated on startup
-@app.before_first_request
+# Flask 3.0+ uses @app.record instead of @app.before_first_request
+_initialized = False
+
 def initialize_app():
+    global _initialized
+    if _initialized:
+        return
+    _initialized = True
     try:
         init_db()
         populate_initial_data()
@@ -629,6 +637,13 @@ def initialize_app():
         print(f"❌ Application initialization failed: {e}")
 
         # Don't raise here to allow the app to start, but log the error
+
+# Flask 3.0+ initialization hook (run once on first request)
+@app.before_request
+def _init_on_first_request():
+    global _initialized
+    if not _initialized:
+        initialize_app()
 
 # JWT Helpers
 def get_user_roles(user_id):

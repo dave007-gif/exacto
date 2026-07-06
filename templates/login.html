@@ -4,9 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Log In - BuildCost</title>
-    <link rel="stylesheet" href="static/css/style.css" />
+    <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='core.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='forms.css') }}" />
   </head>
   <body>
+    <nav id="nav" class="navbar-bg navbar-transparent">
+      <div class="logo">EXACTO</div>
+      <div class="menu">
+        <ul class="menu-links" id="menu-links">
+          <li><a href="{{ url_for('main.index') }}">Home</a></li>
+          <li><a href="{{ url_for('main.about') }}">About</a></li>
+          <li><a href="{{ url_for('main.contact') }}">Contact</a></li>
+          <li><a href="{{ url_for('main.estimate') }}">Estimate</a></li>
+          <li><a href="{{ url_for('main.projects') }}">Projects</a></li>
+        </ul>
+      </div>
+    </nav>
     <h1>Log In</h1>
     <form id="login-form">
       <p>

@@ -7,14 +7,24 @@
   box-sizing: border-box;
 }
 body {
-  font-family: "Oswald", serif;
-  background-color: white;
+  font-family: "Poppins", "Segoe UI", sans-serif;
+  background-color: #f6f8fc;
+  color: #1f2937;
 }
 html {
   scroll-behavior: smooth;
 }
 p {
-  color: black;
+  color: #4b5563;
+  line-height: 1.6;
+}
+h1, h2, h3, h4, h5, h6 {
+  font-family: "Oswald", serif;
+  color: #0f172a;
+  letter-spacing: 0.02em;
+}
+main, section {
+  padding-top: 80px;
 }
 
 /* Navbar Styling */

@@ -3,35 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <title>Admin Review - Staged Uploads</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        max-width: 1100px;
-        margin: auto;
-        padding: 1rem;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 1rem;
-      }
-      th,
-      td {
-        padding: 0.5rem;
-        border: 1px solid #ddd;
-        text-align: left;
-        vertical-align: top;
-      }
-      button {
-        margin-right: 0.4rem;
-      }
-      pre {
-        background: #f8f8f8;
-        padding: 0.5rem;
-        max-height: 140px;
-        overflow: auto;
-      }
-    </style>
+    <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='core.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin/admin-review.css') }}" />
     <script>
       // Replace the entire mount-aware shim script with this simplified version
       (function () {

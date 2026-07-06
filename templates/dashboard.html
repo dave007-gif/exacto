@@ -3,9 +3,18 @@
   <head>
     <meta charset="UTF-8" />
     <title>Dashboard</title>
+    <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon" />
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='css/style.css') }}"
+      href="{{ url_for('static', filename='main.css') }}?v={{ css_version }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='core.css') }}?v={{ css_version }}"
+    />
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='dashboard.css') }}?v={{ css_version }}"
     />
     <!-- Put raw JSON here (not executed, so no JS lint errors) -->
     <script id="bootstrap-user-roles" type="application/json">

@@ -4,50 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Upload Data CSV</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        max-width: 700px;
-        margin: auto;
-        padding: 2rem;
-      }
-
-      h2 {
-        color: #333;
-      }
-
-      #upload-result {
-        margin-top: 1rem;
-        border-top: 1px solid #ccc;
-        padding-top: 1rem;
-        font-size: 0.95rem;
-      }
-
-      #upload-result details summary {
-        cursor: pointer;
-        font-weight: bold;
-        margin-top: 0.5rem;
-      }
-
-      #upload-result ul {
-        padding-left: 1.5rem;
-      }
-
-      #upload-result li {
-        color: crimson;
-        margin-bottom: 0.3rem;
-      }
-
-      label {
-        font-weight: bold;
-      }
-
-      select,
-      input[type="file"],
-      button {
-        margin-top: 0.3rem;
-      }
-    </style>
+    <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='core.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin/admin-upload.css') }}" />
 
     <!-- Mount-aware shim -->
     <script>

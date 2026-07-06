@@ -1,0 +1,67 @@
+/* Estimate Section Styles */
+.estimate-container {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  max-width: 1200px;
+  margin: 0 auto 4rem auto;
+  padding: 3rem 1rem;
+  background-color: #f4f9fd;
+  border-top: 1px solid #ddd;
+  flex-wrap: wrap;
+}
+
+.estimate-image {
+  max-width: 100%;
+  width: 400px;
+  object-fit: cover;
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  margin-right: 30px;
+}
+
+.estimate-content {
+  max-width: 500px;
+  padding: 1rem;
+}
+
+.estimate-title {
+  font-size: 1.8rem;
+  color: #222;
+  margin-bottom: 1rem;
+}
+
+.estimate-description {
+  color: #444;
+  font-size: 1rem;
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+}
+
+.estimate-link {
+  display: inline-block;
+  background-color: #306bff;
+  color: white;
+  padding: 10px 20px;
+  border-radius: 6px;
+  text-decoration: none;
+  font-weight: bold;
+  transition: background-color 0.3s ease;
+}
+
+.estimate-link:hover {
+  background-color: #1f54d4;
+}
+
+@media (max-width: 768px) {
+  .estimate-container {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .estimate-image {
+    margin-right: 0;
+    margin-bottom: 20px;
+  }
+}

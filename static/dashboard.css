@@ -1,0 +1,258 @@
+/* Dashboard Page Specific Styles */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Manrope:wght@500;600;700&display=swap');
+
+body {
+  font-family: 'Inter', sans-serif;
+  background: #f5f7fa;
+  margin: 0;
+  padding: 0;
+}
+
+/* Main dashboard container */
+.dashboard-container {
+  max-width: 1080px;
+  margin: 24px auto;
+  padding: 0 16px 32px;
+}
+
+/* Profile summary section */
+.profile-summary {
+  background: #ffffff;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.profile-summary h2 {
+  margin-top: 0;
+  color: #2c3e50;
+}
+
+.role-badges {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.role-badges .badge {
+  display: inline-block;
+  background: #e3f2fd;
+  color: #1976d2;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Tool grid for dashboard cards */
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* Dashboard cards */
+.tool-card,
+.action-card,
+.subscription-status,
+.activity-feed {
+  background: #fff;
+  border: 1px solid #e9ecef;
+  border-radius: 10px;
+  padding: 14px;
+  margin: 12px 0;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.tool-card {
+  cursor: pointer;
+}
+
+.tool-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+}
+
+.tool-card h4 {
+  margin: 0 0 6px;
+  color: #2c3e50;
+  font-size: 16px;
+}
+
+.tool-card p {
+  margin: 0;
+  font-size: 13px;
+  color: #6c757d;
+  line-height: 1.4;
+}
+
+.action-card {
+  padding: 16px;
+  border-left: 4px solid #2196F3;
+}
+
+.action-card h3 {
+  margin-top: 0;
+  color: #2196F3;
+}
+
+/* Subscription status card */
+.subscription-status {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  padding: 20px;
+}
+
+.subscription-status h3 {
+  margin-top: 0;
+  font-size: 18px;
+}
+
+.subscription-status p {
+  margin: 8px 0;
+  font-size: 14px;
+  opacity: 0.95;
+}
+
+/* Activity feed */
+.activity-feed {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.activity-feed h3 {
+  margin-top: 0;
+  color: #2c3e50;
+}
+
+.activity-item {
+  padding: 10px 0;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 13px;
+  color: #555;
+}
+
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+.activity-timestamp {
+  font-size: 11px;
+  color: #999;
+  margin-top: 4px;
+}
+
+/* Action rows */
+.actions-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.admin-quick {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Buttons in dashboard */
+button, .button {
+  background: #2196F3;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 10px 14px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s ease;
+}
+
+button:hover, .button:hover {
+  background: #1769aa;
+}
+
+button.primary {
+  background: #2196F3;
+}
+
+button.primary:hover {
+  background: #1769aa;
+}
+
+button.secondary {
+  background: #e9ecef;
+  color: #333;
+}
+
+button.secondary:hover {
+  background: #dee2e6;
+}
+
+/* Skeleton loading */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200px 0; }
+  100% { background-position: calc(200px + 100%) 0; }
+}
+
+.skeleton .skeleton-line {
+  height: 14px;
+  border-radius: 6px;
+  background: #eef1f5;
+  background-image: linear-gradient(90deg, #eef1f5 0px, #f6f8fb 40px, #eef1f5 80px);
+  background-size: 200px 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+  margin-bottom: 8px;
+}
+
+/* Project item styling */
+.project-item {
+  background: white;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+  transition: all 0.2s ease;
+}
+
+.project-item:hover {
+  border-color: #2196F3;
+  box-shadow: 0 2px 8px rgba(33, 150, 243, 0.15);
+}
+
+.project-item.incomplete {
+  background: #fff3cd;
+  border-left: 5px solid #ffc107;
+  color: #856404;
+  position: relative;
+}
+
+.project-item.incomplete::after {
+  content: "Incomplete";
+  position: absolute;
+  top: 10px;
+  right: 15px;
+  background: #ffc107;
+  color: #fff;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.85em;
+  font-weight: bold;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .tool-grid {
+    grid-template-columns: 1fr;
+  }
+  
+  .dashboard-container {
+    padding: 0 12px 24px;
+  }
+}

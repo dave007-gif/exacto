@@ -4,8 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Projects | Exacto</title>
-  <link rel="stylesheet" href="projects.css" />
-  <link rel="icon" href="../uploads/favicon.ico" type="image/x-icon">
+  <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon">
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v={{ css_version }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='projects/projects.css') }}?v={{ css_version }}" />
 </head>
 <body>
   <!-- Navbar -->

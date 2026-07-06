@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon">
   <title>Contact | Exacto</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='contact/contacts.css') }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}?v={{ css_version }}" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='contact/contacts.css') }}?v={{ css_version }}" />
 </head>
 <body>
   <!-- Navbar -->

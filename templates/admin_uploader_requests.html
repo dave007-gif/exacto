@@ -3,31 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <title>Uploader Access Requests</title>
-    <style>
-      body {
-        font-family: Arial, sans-serif;
-        max-width: 960px;
-        margin: auto;
-        padding: 2rem;
-      }
-      table {
-        width: 100%;
-        border-collapse: collapse;
-        margin-top: 1rem;
-      }
-      th,
-      td {
-        border: 1px solid #ddd;
-        padding: 8px;
-      }
-      th {
-        background: #f5f5f5;
-        text-align: left;
-      }
-      .actions button {
-        margin-right: 6px;
-      }
-    </style>
+    <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='main.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='core.css') }}" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='admin/admin-requests.css') }}" />
 
     <!-- Mount-aware shim -->
     <script>

@@ -4,12 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Calculation Page</title>
-    <link rel="stylesheet" href="static/css/style.css" />
+    <link rel="icon" href="{{ url_for('static', filename='uploads/favicon.ico') }}" type="image/x-icon" />
     <link
       rel="stylesheet"
-      href="{{ url_for('static', filename='estimate/estimate.css') }}"
+      href="{{ url_for('static', filename='core.css') }}?v=1"
     />
-    2
+    <link
+      rel="stylesheet"
+      href="{{ url_for('static', filename='calculation.css') }}?v=1"
+    />
+  </head>
   <body class="calc-page">
     <header class="navbar-bg">
       <div class="logo">Exacto</div>
@@ -29,30 +33,12 @@
     <!-- Restored banners and project details -->
     <div
       id="project-details-banner"
-      style="
-        display: none;
-        background: #fff3cd;
-        color: #856404;
-        border: 1px solid #ffeeba;
-        padding: 10px;
-        margin: 10px 5%;
-        border-radius: 5px;
-      "
+      class="project-banner"
+      style="display: none"
     >
       <span id="project-details-banner-text">
         Project details are missing.
-        <button
-          id="edit-project-details-btn"
-          style="
-            margin-left: 10px;
-            background: #2196f3;
-            color: #fff;
-            border: none;
-            border-radius: 4px;
-            padding: 5px 15px;
-            cursor: pointer;
-          "
-        >
+        <button id="edit-project-details-btn" class="project-banner__button">
           Add Project Details
         </button>
       </span>
@@ -60,40 +46,22 @@
 
     <div
       id="project-details-summary"
-      style="
-        display: none;
-        background: #e3f2fd;
-        color: #0d47a1;
-        border: 1px solid #90caf9;
-        padding: 10px;
-        margin: 10px 5%;
-        border-radius: 5px;
-      "
+      class="project-banner"
+      style="display: none"
     >
       <strong>Project:</strong> <span id="summary-project-title"></span> |
       <strong>Client:</strong> <span id="summary-client-name"></span> |
       <strong>Company:</strong> <span id="summary-company-name"></span>
-      <button
-        id="edit-project-details-btn2"
-        style="
-          margin-left: 10px;
-          background: #2196f3;
-          color: #fff;
-          border: none;
-          border-radius: 4px;
-          padding: 5px 15px;
-          cursor: pointer;
-        "
-      >
+      <button id="edit-project-details-btn2" class="project-banner__button">
         Edit
       </button>
     </div>
 
     <div
       id="fallback-warning"
-      style="display: none; color: orange; font-weight: bold; margin: 10px 5%"
+      style="display: none"
     ></div>
-    <div id="version-warning" style="display: none; margin: 10px 5%"></div>
+    <div id="version-warning" style="display: none"></div>
 
     <!-- Project Details Modal + Loading -->
     <div id="project-details-modal" class="modal" style="display: none">
